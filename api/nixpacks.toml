@@ -1,0 +1,14 @@
+# Configuração do Railway para encontrar a API na subpasta api/
+# Railway usa Nixpacks para detectar e buildar o projeto automaticamente.
+
+[phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[phases.install]
+cmds = ["cd api && npm install"]
+
+[phases.build]
+cmds = ["cd api && npm run build"]
+
+[start]
+cmd = "cd api && npm start"
