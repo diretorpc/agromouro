@@ -18,6 +18,7 @@ create table if not exists fazenda (
 -- ─── TALHÕES ──────────────────────────────────────────────
 create table if not exists talhoes (
   id            uuid primary key default gen_random_uuid(),
+  fazenda_id    uuid references fazenda(id) on delete set null,
   nome          text not null,
   area_ha       numeric(10,2) not null,
   cultura_atual text,
