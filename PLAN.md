@@ -137,13 +137,14 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
   ```
 
 - [x] Ativar **Row Level Security** no Supabase em todas as tabelas
-- [ ] Popular `fazenda` com os dados reais da propriedade
-- [ ] Popular `talhoes` com os talhões existentes
-- [ ] Popular `insumos` com os produtos que já usa na fazenda
-  > ⚠️ **Importante:** o nome do insumo aqui precisa ser parecido com a descrição que aparece na NF-e.
-  > Ex: se a nota vem como "GLIFOSATO 480 SL", cadastre como "Glifosato 480 SL" (não "Herbicida A").
-  > O sistema usa busca por similaridade de texto — nome muito diferente = sem vínculo automático.
-- [ ] Popular `estoque` com as quantidades atuais
+- [x] Popular `fazenda` com os dados reais da propriedade
+- [x] Popular `talhoes` com os talhões existentes
+- [x] Popular `insumos` com os produtos que já usa na fazenda
+  > ✅ **Mudança de abordagem:** insumos não precisam ser pré-cadastrados manualmente.
+  > O sistema cria automaticamente qualquer produto novo que chegar via NF-e (nome da nota + tipo classificado pelo Claude + unidade da nota).
+  > 8 insumos placeholder foram mantidos como ponto de partida.
+- [x] Popular `estoque` com as quantidades atuais
+  > ✅ Estoque inicializado zerado. Atualizado automaticamente a cada NF-e processada via webhook.
 
 ---
 
@@ -156,15 +157,15 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 > Se o número for crítico para o negócio, considere usar um número dedicado só para o bot.
 
 ### 2.1 Setup do backend Node.js
-- [ ] Inicializar projeto: `cd api && npm init -y`
-- [ ] Instalar dependências:
+- [x] Inicializar projeto: `cd api && npm init -y`
+- [x] Instalar dependências:
   ```
   express cors helmet dotenv
   @supabase/supabase-js
   zod
   ```
-- [ ] Configurar TypeScript (`tsconfig.json`)
-- [ ] Criar estrutura:
+- [x] Configurar TypeScript (`tsconfig.json`)
+- [x] Criar estrutura:
   ```
   api/src/
   ├── routes/
@@ -173,25 +174,25 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
   ├── middleware/
   └── index.ts
   ```
-- [ ] Criar rota de saúde: `GET /health → { status: "ok" }`
-- [ ] Criar middleware de autenticação (token Supabase)
+- [x] Criar rota de saúde: `GET /health → { status: "ok" }`
+- [x] Criar middleware de autenticação (token Supabase)
 
 ### 2.2 Rotas básicas do CRUD
-- [ ] `GET  /talhoes` — listar talhões com cultura atual
-- [ ] `GET  /estoque` — estoque atual de todos os insumos
-- [ ] `GET  /operacoes` — últimas operações (com filtro por talhão)
-- [ ] `GET  /alertas` — alertas ativos não lidos
-- [ ] `POST /operacoes` — registrar operação manualmente
-- [ ] `PATCH /alertas/:id/lida` — marcar alerta como lido
+- [x] `GET  /talhoes` — listar talhões com cultura atual
+- [x] `GET  /estoque` — estoque atual de todos os insumos
+- [x] `GET  /operacoes` — últimas operações (com filtro por talhão)
+- [x] `GET  /alertas` — alertas ativos não lidos
+- [x] `POST /operacoes` — registrar operação manualmente
+- [x] `PATCH /alertas/:id/lida` — marcar alerta como lido
 
 ### 2.3 Webhook do WhatsApp (Z-API)
-- [ ] Criar rota: `POST /webhook/whatsapp`
-- [ ] Configurar Z-API para enviar mensagens para essa rota
+- [x] Criar rota: `POST /webhook/whatsapp`
+- [ ] Configurar Z-API para enviar mensagens para essa rota *(pendente — aguardando chip dedicado)*
 - [ ] Testar recebimento: mandar "oi" no WhatsApp e ver o log no Railway
 
 ### 2.4 Agente WhatsApp com Claude Haiku
-- [ ] Criar serviço `whatsapp.service.ts`
-- [ ] Montar prompt de classificação para Claude Haiku:
+- [x] Criar serviço `whatsapp.service.ts`
+- [x] Montar prompt de classificação para Claude Haiku:
   ```
   Você é um assistente de gestão agrícola. Classifique a mensagem abaixo em uma das categorias:
   OPERACAO, APLICACAO_INSUMO, CONSULTA, DESCONHECIDO
@@ -199,25 +200,25 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
   Responda SOMENTE em JSON:
   { "tipo": "...", "dados": { ... } }
   ```
-- [ ] Implementar parser para `OPERACAO`:
+- [x] Implementar parser para `OPERACAO`:
   - Entrada: `"Pulverizei o talhão 3 hoje com 2L/ha de Score"`
   - Saída: salva em `operacoes` + `movimentacoes_estoque` (saída)
   - Confirmação: `"✅ Pulverização salva no Talhão 3 — 2L/ha de Score. Área: 35ha."`
-- [ ] Implementar parser para `APLICACAO_INSUMO`:
+- [x] Implementar parser para `APLICACAO_INSUMO`:
   - Entrada: `"Plantei a soja no talhão 5 ontem, variedade NS 7338"`
   - Saída: salva operação de plantio + atualiza safra
   - Confirmação: `"✅ Plantio registrado — Talhão 5, Soja NS 7338."`
-- [ ] Implementar parser para `CONSULTA`:
+- [x] Implementar parser para `CONSULTA`:
   - Entrada: `"Quanto de glifosato tem em estoque?"`
   - Saída: consulta banco e responde com o número
-- [ ] Resposta padrão para `DESCONHECIDO`:
+- [x] Resposta padrão para `DESCONHECIDO`:
   - `"Não entendi bem. Pode reformular? Exemplos: 'pulverizei o talhão 2', 'qual o estoque de ureia'"`
-- [ ] Tratar erros com graciosidade (nunca deixar mensagem sem resposta)
+- [x] Tratar erros com graciosidade (nunca deixar mensagem sem resposta)
 
 ### 2.5 Deploy no Railway
-- [ ] **Antes:** garantir que o código está commitado e enviado para o GitHub (`git push`)
+- [x] **Antes:** garantir que o código está commitado e enviado para o GitHub (`git push`)
   > O Railway puxa o código direto do GitHub — sem push, o deploy não pega as últimas mudanças.
-- [ ] Gerar valor para `WEBHOOK_SECRET` (copiar e salvar no `.env`):
+- [x] Gerar valor para `WEBHOOK_SECRET` (copiar e salvar no `.env`):
   ```bash
   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
   ```
@@ -225,7 +226,7 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 - [ ] Configurar variáveis de ambiente (copiar do `.env`) — incluindo o `WEBHOOK_SECRET` gerado acima
 - [ ] Configurar deploy automático no push para `main`
 - [ ] Testar: `GET https://agrofazenda-api.railway.app/health`
-- [ ] Configurar URL do Railway no Z-API como webhook
+- [ ] Configurar URL do Railway no Z-API como webhook *(pendente — aguardando chip Z-API)*
 
 ### ✅ Checkpoint da Fase 2
 - [ ] Mandar 5 tipos de mensagem no WhatsApp e verificar se foram salvas corretamente
