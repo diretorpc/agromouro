@@ -222,10 +222,10 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
   ```bash
   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
   ```
-- [ ] Criar projeto no Railway conectado ao repositório GitHub
-- [ ] Configurar variáveis de ambiente (copiar do `.env`) — incluindo o `WEBHOOK_SECRET` gerado acima
-- [ ] Configurar deploy automático no push para `main`
-- [ ] Testar: `GET https://agrofazenda-api.railway.app/health`
+- [x] Criar projeto no Railway conectado ao repositório GitHub
+- [x] Configurar variáveis de ambiente (copiar do `.env`) — incluindo o `WEBHOOK_SECRET` gerado acima
+- [x] Configurar deploy automático no push para `main`
+- [x] Testar: `GET /health → {"status":"ok","timestamp":"..."}` ✅ API em produção
 - [ ] Configurar URL do Railway no Z-API como webhook *(pendente — aguardando chip Z-API)*
 
 ### ✅ Checkpoint da Fase 2
