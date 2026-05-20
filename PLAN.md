@@ -200,14 +200,16 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
   Responda SOMENTE em JSON:
   { "tipo": "...", "dados": { ... } }
   ```
-- [x] Implementar parser para `OPERACAO`:
+- [ ] Implementar parser para `OPERACAO`:
   - Entrada: `"Pulverizei o talhão 3 hoje com 2L/ha de Score"`
   - Saída: salva em `operacoes` + `movimentacoes_estoque` (saída)
   - Confirmação: `"✅ Pulverização salva no Talhão 3 — 2L/ha de Score. Área: 35ha."`
-- [x] Implementar parser para `APLICACAO_INSUMO`:
+  - ⚠️ Salva em `operacoes` ✅ — falta registrar saída em `movimentacoes_estoque`
+- [ ] Implementar parser para `APLICACAO_INSUMO`:
   - Entrada: `"Plantei a soja no talhão 5 ontem, variedade NS 7338"`
   - Saída: salva operação de plantio + atualiza safra
   - Confirmação: `"✅ Plantio registrado — Talhão 5, Soja NS 7338."`
+  - ⚠️ Salva em `operacoes` ✅ — falta criar/atualizar registro na tabela `safras`
 - [x] Implementar parser para `CONSULTA`:
   - Entrada: `"Quanto de glifosato tem em estoque?"`
   - Saída: consulta banco e responde com o número
@@ -222,10 +224,10 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
   ```bash
   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
   ```
-- [ ] Criar projeto no Railway conectado ao repositório GitHub
-- [ ] Configurar variáveis de ambiente (copiar do `.env`) — incluindo o `WEBHOOK_SECRET` gerado acima
-- [ ] Configurar deploy automático no push para `main`
-- [ ] Testar: `GET https://agrofazenda-api.railway.app/health`
+- [x] Criar projeto no Railway conectado ao repositório GitHub
+- [x] Configurar variáveis de ambiente (copiar do `.env`) — incluindo o `WEBHOOK_SECRET` gerado acima
+- [x] Configurar deploy automático no push para `main`
+- [x] Testar: `GET /health → {"status":"ok","timestamp":"..."}` ✅ API em produção
 - [ ] Configurar URL do Railway no Z-API como webhook *(pendente — aguardando chip Z-API)*
 
 ### ✅ Checkpoint da Fase 2
