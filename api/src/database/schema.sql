@@ -53,7 +53,7 @@ create table if not exists operacoes (
 create table if not exists insumos (
   id       uuid primary key default gen_random_uuid(),
   nome     text not null,
-  tipo     text not null check (tipo in ('herbicida','fungicida','inseticida','fertilizante_n','fertilizante_p','fertilizante_k','fertilizante_outro','semente','combustivel','lubrificante','peca_maquina','servico','outro')),
+  tipo     text not null check (tipo in ('herbicida','fungicida','inseticida','fertilizante_n','fertilizante_p','fertilizante_k','fertilizante_outro','semente','combustivel','lubrificante','peca_maquina','servico','rh','outro')),
   unidade  text not null default 'L',
   created_at timestamptz default now()
 );
