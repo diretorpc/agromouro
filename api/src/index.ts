@@ -19,13 +19,20 @@ const app  = express()
 const PORT = process.env.PORT || 3001
 
 // ─── Validação de variáveis obrigatórias na inicialização ─────────────────────
+// Fase 1: Supabase + segurança mínima
 const REQUIRED_ENV = [
   'SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'SUPABASE_ANON_KEY',
-  'ANTHROPIC_API_KEY', 'ZAPI_INSTANCE_ID', 'ZAPI_TOKEN', 'ZAPI_PHONE',
   'WEBHOOK_SECRET',
+]
+// Fase 2: Z-API (WhatsApp) — opcional até o chip dedicado estar disponível
+const OPTIONAL_WARN_ENV = [
+  'ANTHROPIC_API_KEY', 'ZAPI_INSTANCE_ID', 'ZAPI_TOKEN', 'ZAPI_PHONE',
 ]
 for (const key of REQUIRED_ENV) {
   if (!process.env[key]) throw new Error(`Variável de ambiente obrigatória não definida: ${key}`)
+}
+for (const key of OPTIONAL_WARN_ENV) {
+  if (!process.env[key]) console.warn(`⚠️  Variável não definida (funcionalidade limitada): ${key}`)
 }
 
 // ─── Segurança — Helmet ───────────────────────────────────────────────────────

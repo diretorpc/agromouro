@@ -34,7 +34,7 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 | Backend | **Node.js + Express** no Railway | Deploy simples, barato |
 | Frontend | **Next.js 14 + Tailwind** no Vercel | Gratuito, rápido de construir |
 | WhatsApp | **Z-API** + Claude Haiku | Barato para parsing |
-| NF-e | **NFE.io** | Maior ROI do projeto inteiro |
+| NF-e | **SEFAZ NFeDistribuicaoDFe** + e-CPF A1 | Gratuito, sem CNPJ, polling a cada 30min |
 | IA parsing | **Claude Haiku** | Rápido e barato (mensagens WhatsApp) |
 
 ---
@@ -43,18 +43,18 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 > Meta: ambiente configurado, banco rodando, projeto aberto no Cursor.
 
 ### 1.1 Criar contas essenciais (só as do MVP)
-- [ ] **Supabase** → supabase.com → criar projeto `agrofazenda` (região São Paulo)
-- [ ] **Railway** → railway.app → criar conta
-- [ ] **Vercel** → vercel.com → criar conta (gratuito)
-- [ ] **Z-API** → z-api.io → criar instância e conectar número WhatsApp
-- [ ] **NFE.io** → nfe.io → criar conta, cadastrar CNPJ da fazenda
-- [ ] **Anthropic** → console.anthropic.com → gerar API Key
+- [x] **Supabase** → supabase.com → criar projeto `agrofazenda` (região São Paulo)
+- [x] **Railway** → railway.app → criar conta
+- [x] **Vercel** → vercel.com → criar conta (gratuito)
+- [ ] **Z-API** → z-api.io → criar instância e conectar número WhatsApp *(pendente — aguardando chip dedicado)*
+- [x] **e-CPF A1** → garantir que o arquivo `.pfx` ou `.p12` está acessível para converter em base64 e subir no Railway como variável de ambiente
+- [x] **Anthropic** → console.anthropic.com → gerar API Key
 
 > As demais (JD Developer, Pluggy, Sentinel Hub) ficam para as fases de expansão.
 
 ### 1.2 Criar repositório e estrutura
-- [ ] Criar repositório no GitHub: `agromouro`
-- [ ] Criar estrutura de pastas:
+- [x] Criar repositório no GitHub: `agromouro`
+- [x] Criar estrutura de pastas:
   ```
   agromouro/
   ├── api/          ← Node.js + Express (Railway)
@@ -63,18 +63,19 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
   ├── PLAN.md
   └── README.md
   ```
-- [ ] Criar `.env.example` com as variáveis:
+- [x] Criar `.env.example` com as variáveis:
   ```
   SUPABASE_URL=
   SUPABASE_SERVICE_KEY=
   ZAPI_INSTANCE=
   ZAPI_TOKEN=
   ZAPI_PHONE=
-  NFEIO_API_KEY=
   ANTHROPIC_API_KEY=
+  ECPF_CERT_BASE64=
+  ECPF_CERT_PASSWORD=
   ```
-- [ ] Criar `.gitignore` (nunca commitar `.env`)
-- [ ] **Abrir no Cursor** e criar `CLAUDE.md` na raiz:
+- [x] Criar `.gitignore` (nunca commitar `.env`)
+- [x] **Abrir no Cursor** e criar `CLAUDE.md` na raiz:
   ```
   # AgroFazenda
 
@@ -90,52 +91,52 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 ### 1.3 Banco de dados MVP — só o essencial
 > 10 tabelas. Nada mais por enquanto.
 
-- [ ] Criar tabela `fazenda`
+- [x] Criar tabela `fazenda`
   ```sql
   id, nome, hectares, municipio, estado, lat, lng
   ```
-- [ ] Criar tabela `talhoes`
+- [x] Criar tabela `talhoes`
   ```sql
   id, nome, area_ha, cultura_atual, status [ativo/pousio/colhido]
   ```
-- [ ] Criar tabela `safras`
+- [x] Criar tabela `safras`
   ```sql
   id, talhao_id, cultura, data_plantio, data_colheita_prevista, status
   ```
-- [ ] Criar tabela `operacoes`
+- [x] Criar tabela `operacoes`
   ```sql
   id, talhao_id, safra_id, tipo, data, descricao, fonte [whatsapp/manual/jd]
   ```
-- [ ] Criar tabela `insumos`
+- [x] Criar tabela `insumos`
   ```sql
   id, nome, tipo [herbicida/fungicida/fertilizante/combustivel/semente/outro], unidade
   ```
-- [ ] Criar tabela `estoque`
+- [x] Criar tabela `estoque`
   ```sql
   id, insumo_id, quantidade_atual, quantidade_minima_alerta, preco_medio_unitario
   ```
-- [ ] Criar tabela `movimentacoes_estoque`
+- [x] Criar tabela `movimentacoes_estoque`
   ```sql
   id, insumo_id, tipo [entrada/saida], quantidade, data, origem [nfe/whatsapp/manual], nota_fiscal_id
   ```
-- [ ] Criar tabela `notas_fiscais`
+- [x] Criar tabela `notas_fiscais`
   ```sql
   id, numero, emitente_nome, emitente_cnpj, data_emissao, valor_total, status [recebida/processando/processada/erro], xml_raw
   ```
-- [ ] Criar tabela `lancamentos_financeiros` *(gerado automaticamente pela NF-e)*
+- [x] Criar tabela `lancamentos_financeiros` *(gerado automaticamente pela NF-e)*
   ```sql
   id, data, descricao, valor, tipo [receita/despesa], categoria, nota_fiscal_id
   ```
-- [ ] Criar tabela `itens_nfe`
+- [x] Criar tabela `itens_nfe`
   ```sql
   id, nota_fiscal_id, descricao, quantidade, unidade, valor_unitario, valor_total, insumo_id (nullable)
   ```
-- [ ] Criar tabela `alertas`
+- [x] Criar tabela `alertas`
   ```sql
   id, tipo, titulo, mensagem, nivel [info/aviso/critico], lido, enviado_whatsapp, created_at
   ```
 
-- [ ] Ativar **Row Level Security** no Supabase em todas as tabelas
+- [x] Ativar **Row Level Security** no Supabase em todas as tabelas
 - [ ] Popular `fazenda` com os dados reais da propriedade
 - [ ] Popular `talhoes` com os talhões existentes
 - [ ] Popular `insumos` com os produtos que já usa na fazenda
@@ -236,19 +237,44 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 ## FASE 3 — NF-e Automática (Semana 3)
 > Meta: NF-e chega, estoque atualiza, WhatsApp confirma. Sem nenhuma ação manual.
 > **Esta é a integração com maior ROI do projeto.**
+>
+> ⚠️ **Abordagem:** integração direta com o webservice `NFeDistribuicaoDFe` da SEFAZ usando
+> o e-CPF A1 da fazenda. Sem serviço terceiro, sem custo mensal extra. Um job roda a cada 30min
+> no Railway e puxa as NF-e novas automaticamente. Para o volume de uma fazenda (2–10 NF-e/semana),
+> o delay de até 30min é irrelevante na prática.
 
-### 3.1 Configurar NFE.io
-> ⚠️ **Pré-requisito:** o Railway precisa estar no ar (Fase 2.5 concluída) antes de configurar
-> o webhook aqui — a NFE.io vai pedir a URL do endpoint para enviar as notificações.
-- [ ] Criar conta e cadastrar CNPJ da fazenda
-- [ ] Ativar monitoramento de NF-e de **entrada** (notas que chegam para a fazenda)
-- [ ] Configurar webhook: NFE.io → `POST /webhook/nfe` (URL do Railway)
-- [ ] Testar com NF-e de sandbox (NFE.io fornece ambiente de teste)
+### 3.1 Preparar certificado e-CPF no Railway
+- [ ] Converter o arquivo `.pfx`/`.p12` do e-CPF A1 para base64:
+  ```bash
+  base64 -w 0 certificado.pfx
+  ```
+- [ ] Adicionar as variáveis no Railway (e no `.env` local):
+  ```
+  ECPF_CERT_BASE64=<saída do comando acima>
+  ECPF_CERT_PASSWORD=<senha do certificado>
+  ```
+- [ ] Instalar dependências:
+  ```
+  npm install soap node-forge
+  ```
+- [ ] Validar que o certificado carrega corretamente na inicialização da API
 
-### 3.2 Processar NF-e
-- [ ] Criar rota: `POST /webhook/nfe`
+### 3.2 Implementar job de polling SEFAZ
+- [ ] Criar serviço `sefaz.service.ts` com cliente SOAP para `NFeDistribuicaoDFe`
+- [ ] Implementar `buscarNFesNovas()`:
+  - Autenticar com e-CPF A1
+  - Consultar SEFAZ com `distNSU` (busca por NSU sequencial)
+  - Persistir o último NSU consultado no banco para não repuxar notas já vistas
+- [ ] Criar job em `api/src/jobs/` com `node-cron`: executa a cada 30min
+  ```
+  */30 * * * *  →  buscarNFesNovas()
+  ```
+- [ ] Registrar manifestação `Ciência da Operação` para cada NF-e recebida
+  > ⚠️ A manifestação é obrigatória para acessar o XML completo (sem ela, só o resumo fica disponível por 90 dias)
+
+### 3.3 Processar NF-e
 - [ ] Criar serviço `nfe.service.ts`
-- [ ] Ao receber webhook:
+- [ ] Ao receber NF-e nova do job:
   - [ ] Salvar registro em `notas_fiscais` com status `recebida`
   - [ ] Parsear itens do XML → salvar em `itens_nfe`
   - [ ] Criar lançamento financeiro (despesa) com valor total da NF-e
@@ -261,7 +287,7 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
   - `"NF-e de Cotrijal: item 'ROUNDUP ORIGINAL DI' não reconhecido.\nÉ qual insumo? Responda ou me diga para ignorar."`
 - [ ] Atualizar status para `processada` ou `erro`
 
-### 3.3 Testes com NF-e real
+### 3.4 Testes com NF-e real
 - [ ] Testar com 1 NF-e real de defensivo agrícola
 - [ ] Testar com 1 NF-e real de fertilizante
 - [ ] Testar com 1 NF-e real de combustível
@@ -457,9 +483,9 @@ Semana 9+ →  Fases 7 e 8: dados externos + dashboard completo
 | Railway (Starter) | R$ 25 – 50 |
 | Vercel (Hobby) | R$ 0 |
 | Z-API | R$ 90 – 150 |
-| NFE.io | R$ 100 |
+| SEFAZ NFeDistribuicaoDFe (direto) | R$ 0 |
 | Anthropic Claude (Haiku — uso baixo) | R$ 20 – 50 |
-| **Total MVP** | **R$ 235 – 350/mês** |
+| **Total MVP** | **R$ 135 – 250/mês** |
 
 > A partir da Fase 5 (expansões), o custo sobe gradualmente conforme o uso real justificar.
 
