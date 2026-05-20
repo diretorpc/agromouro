@@ -8,10 +8,10 @@ export const nfeWebhook = Router()
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 const TIPOS_VALIDOS = [
-  'herbicida', 'fungicida', 'inseticida',
-  'fertilizante_n', 'fertilizante_p', 'fertilizante_k', 'fertilizante_outro',
+  'herbicida', 'fungicida', 'inseticida', 'biologico',
+  'fertilizante_n', 'fertilizante_p', 'fertilizante_k', 'fertilizante_outro', 'calcario',
   'semente', 'combustivel', 'lubrificante', 'peca_maquina',
-  'servico', 'rh', 'outro',
+  'servico', 'frete', 'operacional', 'rh', 'outro',
 ] as const
 
 type TipoInsumo = typeof TIPOS_VALIDOS[number]
@@ -26,7 +26,7 @@ async function categorizarItem(descricao: string): Promise<TipoInsumo> {
     system:     'Classifique itens de nota fiscal agrícola. Responda SOMENTE com a categoria, sem texto extra.',
     messages:   [{
       role:    'user',
-      content: `Item: "${descSanitizada}"\nCategorias: herbicida, fungicida, inseticida, fertilizante_n, fertilizante_p, fertilizante_k, fertilizante_outro, semente, combustivel, lubrificante, peca_maquina, servico, rh, outro`,
+      content: `Item: "${descSanitizada}"\nCategorias: herbicida, fungicida, inseticida, biologico, fertilizante_n, fertilizante_p, fertilizante_k, fertilizante_outro, calcario, semente, combustivel, lubrificante, peca_maquina, servico, frete, operacional, rh, outro`,
     }],
   })
 
