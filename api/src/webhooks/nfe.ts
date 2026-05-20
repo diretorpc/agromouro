@@ -7,8 +7,17 @@ export const nfeWebhook = Router()
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
+const TIPOS_VALIDOS = [
+  'herbicida', 'fungicida', 'inseticida', 'biologico',
+  'fertilizante_n', 'fertilizante_p', 'fertilizante_k', 'fertilizante_outro', 'calcario',
+  'semente', 'combustivel', 'lubrificante', 'peca_maquina',
+  'servico', 'frete', 'operacional', 'rh', 'outro',
+] as const
+
+type TipoInsumo = typeof TIPOS_VALIDOS[number]
+
 // ─── Categorizar item da NF-e com Claude Haiku ────────────────────────────────
-async function categorizarItem(descricao: string): Promise<string> {
+async function categorizarItem(descricao: string): Promise<TipoInsumo> {
   const descSanitizada = descricao.trim().slice(0, 200)
 
   const response = await anthropic.messages.create({
@@ -17,16 +26,17 @@ async function categorizarItem(descricao: string): Promise<string> {
     system:     'Classifique itens de nota fiscal agrícola. Responda SOMENTE com a categoria, sem texto extra.',
     messages:   [{
       role:    'user',
-      content: `Item: "${descSanitizada}"\nCategorias: herbicida, fungicida, inseticida, fertilizante_n, fertilizante_p, fertilizante_k, fertilizante_outro, semente, combustivel, lubrificante, peca_maquina, servico, outro`,
+      content: `Item: "${descSanitizada}"\nCategorias: herbicida, fungicida, inseticida, biologico, fertilizante_n, fertilizante_p, fertilizante_k, fertilizante_outro, calcario, semente, combustivel, lubrificante, peca_maquina, servico, frete, operacional, rh, outro`,
     }],
   })
 
   const content = response.content[0]
-  return content.type === 'text' ? content.text.trim().toLowerCase() : 'outro'
+  const tipo = content.type === 'text' ? content.text.trim().toLowerCase() : 'outro'
+  return TIPOS_VALIDOS.includes(tipo as TipoInsumo) ? (tipo as TipoInsumo) : 'outro'
 }
 
-// ─── Tentar vincular item ao insumo cadastrado ────────────────────────────────
-async function vincularInsumo(descricao: string) {
+// ─── Buscar insumo existente por similaridade de nome ────────────────────────
+async function buscarInsumo(descricao: string) {
   const primeirasPalavras = descricao.trim().split(' ').slice(0, 2).join(' ')
 
   const { data } = await supabase
@@ -37,6 +47,33 @@ async function vincularInsumo(descricao: string) {
     .single()
 
   return data || null
+}
+
+// ─── Buscar ou criar insumo automaticamente ───────────────────────────────────
+async function vincularOuCriarInsumo(
+  descricao: string,
+  tipo: TipoInsumo,
+  unidadeNfe: string,
+): Promise<{ id: string; nome: string; unidade: string; autoCreated: boolean }> {
+  const existente = await buscarInsumo(descricao)
+  if (existente) return { ...existente, autoCreated: false }
+
+  const nome = descricao.trim().slice(0, 200)
+  const unidade = unidadeNfe?.trim().slice(0, 20) || 'un'
+
+  const { data: novoInsumo, error: errInsumo } = await supabase
+    .from('insumos')
+    .insert({ nome, tipo, unidade })
+    .select('id, nome, unidade')
+    .single()
+
+  if (errInsumo || !novoInsumo) throw new Error(`Falha ao criar insumo: ${errInsumo?.message}`)
+
+  await supabase
+    .from('estoque')
+    .insert({ insumo_id: novoInsumo.id, quantidade_atual: 0, quantidade_minima_alerta: 0 })
+
+  return { ...novoInsumo, autoCreated: true }
 }
 
 // ─── Processar NF-e recebida ──────────────────────────────────────────────────
@@ -56,7 +93,6 @@ nfeWebhook.post('/', async (req, res) => {
       items = [],
     } = payload
 
-    // Proteção: no máximo 200 itens por NF-e
     const itensSeguros = (items as any[]).slice(0, 200)
 
     // 1. Salvar NF-e no banco
@@ -69,7 +105,7 @@ nfeWebhook.post('/', async (req, res) => {
         data_emissao:   dataEmissao,
         valor_total:    valorTotal,
         status:         'processando',
-        xml_raw:        JSON.stringify(payload), // guardar para reprocessamento
+        xml_raw:        JSON.stringify(payload),
       })
       .select('id')
       .single()
@@ -78,12 +114,12 @@ nfeWebhook.post('/', async (req, res) => {
     nfeId = nfe.id
 
     // 2. Processar cada item
-    const itensProcessados: string[] = []
-    const itensSemVinculo: string[]  = []
+    const itensAtualizados:  string[] = []
+    const itensAutoCriados:  string[] = []
 
     for (const item of itensSeguros) {
-      const categoria = await categorizarItem(item.description || '')
-      const insumo    = await vincularInsumo(item.description || '')
+      const tipo   = await categorizarItem(item.description || '')
+      const insumo = await vincularOuCriarInsumo(item.description || '', tipo, item.unit || 'un')
 
       await supabase.from('itens_nfe').insert({
         nota_fiscal_id: nfeId,
@@ -92,34 +128,29 @@ nfeWebhook.post('/', async (req, res) => {
         unidade:        item.unit,
         valor_unitario: item.unitValue,
         valor_total:    item.totalValue,
-        insumo_id:      insumo?.id || null,
+        insumo_id:      insumo.id,
       })
 
-      if (insumo) {
-        await supabase.from('movimentacoes_estoque').insert({
-          insumo_id:      insumo.id,
-          tipo:           'entrada',
-          quantidade:     item.quantity,
-          data:           dataEmissao?.split('T')[0] || new Date().toISOString().split('T')[0],
-          origem:         'nfe',
-          nota_fiscal_id: nfeId,
-        })
+      await supabase.from('movimentacoes_estoque').insert({
+        insumo_id:      insumo.id,
+        tipo:           'entrada',
+        quantidade:     item.quantity,
+        data:           dataEmissao?.split('T')[0] || new Date().toISOString().split('T')[0],
+        origem:         'nfe',
+        nota_fiscal_id: nfeId,
+      })
 
-        // FIX #2 — atualização atômica via RPC para evitar race condition.
-        // A função incrementar_estoque(insumo_id, quantidade) faz o UPDATE
-        // diretamente no banco sem ler o valor antes — operação thread-safe.
-        await supabase.rpc('incrementar_estoque', {
-          p_insumo_id:  insumo.id,
-          p_quantidade: item.quantity,
-        })
+      await supabase.rpc('incrementar_estoque', {
+        p_insumo_id:  insumo.id,
+        p_quantidade: item.quantity,
+      })
 
-        itensProcessados.push(`• ${item.quantity}${item.unit} ${insumo.nome} → estoque atualizado`)
-      } else {
-        itensSemVinculo.push(`• ${item.description} (${item.quantity}${item.unit})`)
-      }
+      const linha = `• ${item.quantity}${item.unit} ${insumo.nome}`
+      if (insumo.autoCreated) itensAutoCriados.push(linha)
+      else                    itensAtualizados.push(linha)
     }
 
-    // 3. Criar lançamento financeiro (despesa) automático
+    // 3. Lançamento financeiro automático
     await supabase.from('lancamentos_financeiros').insert({
       data:           dataEmissao?.split('T')[0] || new Date().toISOString().split('T')[0],
       descricao:      `NF-e ${numero || ''} — ${emitenteNome}`,
@@ -133,17 +164,18 @@ nfeWebhook.post('/', async (req, res) => {
     await supabase
       .from('notas_fiscais')
       .update({ status: 'processada' })
-      .eq('id', nfeId) // FIX #3 — por ID, não por status
+      .eq('id', nfeId)
 
     // 5. Notificar no WhatsApp
-    const phone   = process.env.ZAPI_PHONE!
-    let mensagem  = `📄 *NF-e processada*\n👤 ${emitenteNome}\n💰 R$ ${Number(valorTotal).toFixed(2)}\n\n`
+    const phone  = process.env.ZAPI_PHONE!
+    let mensagem = `📄 *NF-e processada*\n👤 ${emitenteNome}\n💰 R$ ${Number(valorTotal).toFixed(2)}\n\n`
 
-    if (itensProcessados.length > 0) {
-      mensagem += `✅ *Estoque atualizado:*\n${itensProcessados.join('\n')}`
+    if (itensAtualizados.length > 0) {
+      mensagem += `✅ *Estoque atualizado:*\n${itensAtualizados.join('\n')}`
     }
-    if (itensSemVinculo.length > 0) {
-      mensagem += `\n\n⚠️ *Não reconhecidos (revisar no dashboard):*\n${itensSemVinculo.join('\n')}`
+    if (itensAutoCriados.length > 0) {
+      if (itensAtualizados.length > 0) mensagem += '\n\n'
+      mensagem += `🆕 *Novos insumos cadastrados automaticamente:*\n${itensAutoCriados.join('\n')}`
     }
 
     await enviarMensagem(phone, mensagem)
@@ -151,7 +183,6 @@ nfeWebhook.post('/', async (req, res) => {
   } catch (err) {
     console.error('[NFe] Erro ao processar:', err instanceof Error ? err.message : err)
 
-    // FIX #3 — marca SOMENTE esta NF-e como erro, não todas as que estão processando
     if (nfeId) {
       await supabase
         .from('notas_fiscais')
