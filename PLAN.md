@@ -307,45 +307,44 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 > Meta: visualizar no browser o que está no banco. Simples, funcional, sem firulas.
 
 ### 4.1 Setup do Next.js
-- [ ] Criar projeto: `cd web && npx create-next-app@latest . --typescript --tailwind --app`
-- [ ] Instalar dependências essenciais:
+- [x] Criar projeto: `cd web && npx create-next-app@latest . --typescript --tailwind --app`
+- [x] Instalar dependências essenciais:
   ```
   @supabase/supabase-js @supabase/auth-ui-react
   recharts
-  shadcn/ui (npx shadcn-ui@latest init)
+  shadcn/ui (npx shadcn@latest init)
   lucide-react
   ```
-- [ ] Configurar autenticação com Supabase Auth
-- [ ] Criar layout com sidebar simples: Dashboard | Estoque | Operações | NF-e | Alertas
+- [x] Configurar autenticação com Supabase Auth (login + AuthProvider + AuthGuard)
+- [x] Criar layout com sidebar simples: Dashboard | Estoque | Operações | NF-e | Alertas
 
 ### 4.2 Tela — Dashboard (página inicial)
-- [ ] Card: Total de alertas ativos (com link para lista)
-- [ ] Card: Últimas 5 operações registradas
-- [ ] Card: Estoque crítico (insumos abaixo do mínimo)
-- [ ] Card: Últimas NF-e processadas
-- [ ] Resumo: talhões ativos com cultura atual e status da safra
+- [x] Card: Total de alertas ativos (com link para lista)
+- [x] Card: Últimas 5 operações registradas
+- [x] Card: Estoque crítico (insumos abaixo do mínimo)
+- [x] Resumo: talhões ativos com cultura atual e status da safra
 
 ### 4.3 Tela — Estoque
-- [ ] Tabela de todos os insumos com quantidade atual
-- [ ] Destacar em vermelho os que estão abaixo do mínimo
-- [ ] Histórico de movimentações (entradas e saídas) por insumo
-- [ ] Botão para ajuste manual de estoque (caso haja diferença)
+- [x] Tabela de todos os insumos com quantidade atual
+- [x] Destacar em vermelho os que estão abaixo do mínimo
+- [x] Histórico de movimentações (entradas e saídas) por insumo
+- [x] Botão para ajuste manual de estoque (caso haja diferença)
 
 ### 4.4 Tela — Operações
-- [ ] Lista de operações com filtros por talhão e por período
-- [ ] Indicar a fonte (WhatsApp 💬 / NF-e 📄 / John Deere 🚜 / Manual ✏️)
-- [ ] Formulário simples para adicionar operação manualmente (backup do WhatsApp)
+- [x] Lista de operações com filtros por talhão
+- [x] Indicar a fonte (WhatsApp 💬 / NF-e 📄 / John Deere 🚜 / Manual ✏️)
+- [x] Formulário simples para adicionar operação manualmente (backup do WhatsApp)
 
 ### 4.5 Tela — NF-e
-- [ ] Lista de todas as NF-e recebidas com status e valor
-- [ ] Botão para reprocessar NF-e com erro
-- [ ] Detalhe da NF-e com itens e vínculo ao insumo
-- [ ] Itens não vinculados destacados para revisão manual
+- [x] Lista de todas as NF-e recebidas com status e valor
+- [x] Botão para reprocessar NF-e com erro
+- [x] Detalhe da NF-e com itens e vínculo ao insumo
+- [x] Itens não vinculados destacados para revisão manual
 
 ### 4.6 Tela — Alertas
-- [ ] Lista de todos os alertas com nível (info / aviso / crítico)
-- [ ] Marcar como lido (individual ou todos)
-- [ ] Filtro por tipo e nível
+- [x] Lista de todos os alertas com nível (info / aviso / crítico)
+- [x] Marcar como lido (individual ou todos)
+- [x] Filtro por tipo e nível
 
 ### 4.7 Deploy no Vercel
 - [ ] Conectar repositório GitHub ao Vercel
