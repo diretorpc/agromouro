@@ -14,7 +14,7 @@ import { nfeEmailWebhook }   from './webhooks/nfeEmailWebhook'
 import { errorHandler }    from './middleware/errorHandler'
 import { requestLogger }   from './middleware/requestLogger'
 import { requireAuth }          from './middleware/auth'
-import { validateNfeWebhook, validateZapiWebhook } from './middleware/validateWebhook'
+import { validateNfeWebhook, validateZapiWebhook, validateN8nWebhook } from './middleware/validateWebhook'
 import { iniciarJobs }     from './jobs'
 
 const app  = express()
@@ -98,7 +98,7 @@ app.use('/alertas',   requireAuth, alertaRoutes)
 // ─── Webhooks externos — rate limit próprio, validação de origem no handler ───
 app.use('/webhook/whatsapp',   webhookLimiter, validateZapiWebhook, whatsappWebhook)
 app.use('/webhook/nfe',        webhookLimiter, validateNfeWebhook,  nfeWebhook)
-app.use('/webhook/nfe-email',  webhookLimiter, validateNfeWebhook,  nfeEmailWebhook)
+app.use('/webhook/nfe-email',  webhookLimiter, validateN8nWebhook,  nfeEmailWebhook)
 
 // ─── Erros ────────────────────────────────────────────────────────────────────
 app.use(errorHandler)

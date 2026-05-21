@@ -44,6 +44,26 @@ export function validateNfeWebhook(req: Request, res: Response, next: NextFuncti
   }
 }
 
+// ─── Validação para n8n (token fixo no header x-webhook-secret) ──────────────
+export function validateN8nWebhook(req: Request, res: Response, next: NextFunction) {
+  const token = req.headers['x-webhook-secret'] as string | undefined
+
+  if (!token) {
+    console.warn('[n8n] Webhook recebido sem secret — bloqueado')
+    return res.status(401).json({ error: 'Assinatura ausente' })
+  }
+
+  const tokenBuffer  = Buffer.from(token)
+  const secretBuffer = Buffer.from(SECRET)
+
+  if (tokenBuffer.length !== secretBuffer.length || !crypto.timingSafeEqual(tokenBuffer, secretBuffer)) {
+    console.warn('[n8n] Secret inválido — bloqueado')
+    return res.status(401).json({ error: 'Assinatura inválida' })
+  }
+
+  next()
+}
+
 // ─── Validação para Z-API (token fixo no header) ──────────────────────────────
 export function validateZapiWebhook(req: Request, res: Response, next: NextFunction) {
   const token = req.headers['x-z-api-token'] as string | undefined
