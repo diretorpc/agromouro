@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+  <NFe>
+    <infNFe Id="NFe35250512345678000195550010000000051000000051" versao="4.00">
+      <ide>
+        <nNF>5</nNF>
+        <dhEmi>2026-05-21T10:00:00-03:00</dhEmi>
+      </ide>
+      <emit>
+        <CNPJ>12345678000195</CNPJ>
+        <xNome>Distribuidora Agrícola Teste Ltda</xNome>
+      </emit>
+      <dest>
+        <CPF>12345678901</CPF>
+        <xNome>Fazenda AgroMouro</xNome>
+      </dest>
+      <det nItem="1">
+        <prod>
+          <xProd>Glifosato 480 SL</xProd>
+          <qCom>200.0000</qCom>
+          <uCom>L</uCom>
+          <vUnCom>12.5000</vUnCom>
+          <vProd>2500.00</vProd>
+        </prod>
+      </det>
+      <det nItem="2">
+        <prod>
+          <xProd>MAP Fertilizante 11-52-00</xProd>
+          <qCom>1000.0000</qCom>
+          <uCom>kg</uCom>
+          <vUnCom>3.2000</vUnCom>
+          <vProd>3200.00</vProd>
+        </prod>
+      </det>
+      <total>
+        <ICMSTot>
+          <vNF>5700.00</vNF>
+        </ICMSTot>
+      </total>
+    </infNFe>
+  </NFe>
+</nfeProc>
