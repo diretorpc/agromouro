@@ -46,7 +46,7 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 - [x] **Supabase** → supabase.com → criar projeto `agrofazenda` (região São Paulo)
 - [x] **Railway** → railway.app → criar conta
 - [x] **Vercel** → vercel.com → criar conta (gratuito)
-- [ ] **Z-API** → z-api.io → criar instância e conectar número WhatsApp *(pendente — aguardando chip dedicado)*
+- [x] **Z-API** → z-api.io → criar instância e conectar número WhatsApp *(usando número pessoal até chip dedicado chegar)*
 - [x] **e-CPF A1** → garantir que o arquivo `.pfx` ou `.p12` está acessível para converter em base64 e subir no Railway como variável de ambiente
 - [x] **Anthropic** → console.anthropic.com → gerar API Key
 
@@ -241,54 +241,28 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 > Meta: NF-e chega, estoque atualiza, WhatsApp confirma. Sem nenhuma ação manual.
 > **Esta é a integração com maior ROI do projeto.**
 >
-> ⚠️ **Abordagem:** integração direta com o webservice `NFeDistribuicaoDFe` da SEFAZ usando
-> o e-CPF A1 da fazenda. Sem serviço terceiro, sem custo mensal extra. Um job roda a cada 30min
-> no Railway e puxa as NF-e novas automaticamente. Para o volume de uma fazenda (2–10 NF-e/semana),
-> o delay de até 30min é irrelevante na prática.
+> ✅ **Abordagem adotada:** Make (make.com) monitora as caixas de entrada do Outlook a cada 15min,
+> filtra anexos .xml e envia para o webhook `/webhook/nfe-email` no Railway.
+> Dois cenários ativos: matheusmouro@hotmail.com e ivanmouro@hotmail.com.
+> A abordagem SEFAZ e-CPF foi descartada (fazenda só tem CPF, NFE.io não suporta).
 
 ### 3.1 Preparar certificado e-CPF no Railway
-- [ ] Converter o arquivo `.pfx`/`.p12` do e-CPF A1 para base64:
-  ```bash
-  base64 -w 0 certificado.pfx
-  ```
-- [ ] Adicionar as variáveis no Railway (e no `.env` local):
-  ```
-  ECPF_CERT_BASE64=<saída do comando acima>
-  ECPF_CERT_PASSWORD=<senha do certificado>
-  ```
-- [ ] Instalar dependências:
-  ```
-  npm install soap node-forge
-  ```
-- [ ] Validar que o certificado carrega corretamente na inicialização da API
+> ~~Descartado~~ — substituído por Make + email. Fazenda só tem CPF (não CNPJ), NFE.io não suporta CPF.
 
 ### 3.2 Implementar job de polling SEFAZ
-- [ ] Criar serviço `sefaz.service.ts` com cliente SOAP para `NFeDistribuicaoDFe`
-- [ ] Implementar `buscarNFesNovas()`:
-  - Autenticar com e-CPF A1
-  - Consultar SEFAZ com `distNSU` (busca por NSU sequencial)
-  - Persistir o último NSU consultado no banco para não repuxar notas já vistas
-- [ ] Criar job em `api/src/jobs/` com `node-cron`: executa a cada 30min
-  ```
-  */30 * * * *  →  buscarNFesNovas()
-  ```
-- [ ] Registrar manifestação `Ciência da Operação` para cada NF-e recebida
-  > ⚠️ A manifestação é obrigatória para acessar o XML completo (sem ela, só o resumo fica disponível por 90 dias)
+> ~~Descartado~~ — substituído por Make + monitoramento de email Outlook.
 
 ### 3.3 Processar NF-e
-- [ ] Criar serviço `nfe.service.ts`
-- [ ] Ao receber NF-e nova do job:
-  - [ ] Salvar registro em `notas_fiscais` com status `recebida`
-  - [ ] Parsear itens do XML → salvar em `itens_nfe`
-  - [ ] Criar lançamento financeiro (despesa) com valor total da NF-e
-- [ ] Usar Claude Haiku para categorizar cada item:
-  - Prompt: `"Classifique este produto de nota fiscal agrícola: [descrição]. Categorias: herbicida, fungicida, inseticida, fertilizante_nitro, fertilizante_fosforo, fertilizante_potassio, semente, combustivel, lubrificante, peca_maquina, servico, outro"`
-- [ ] Tentar vincular item ao `insumos` cadastrado (busca por nome similar)
-- [ ] **Se vinculou:** entrada automática no estoque + WhatsApp:
-  - `"✅ NF-e processada — Agroquímica Central\n• 200L Glifosato → estoque atualizado\n• 50kg Priori Xtra → estoque atualizado\nTotal: R$ 4.280,00"`
-- [ ] **Se não vinculou algum item:** WhatsApp pergunta:
-  - `"NF-e de Cotrijal: item 'ROUNDUP ORIGINAL DI' não reconhecido.\nÉ qual insumo? Responda ou me diga para ignorar."`
-- [ ] Atualizar status para `processada` ou `erro`
+- [x] Criar serviço `nfeProcessor.ts`
+- [x] Ao receber NF-e nova via webhook:
+  - [x] Salvar registro em `notas_fiscais` com status `recebida`
+  - [x] Parsear itens do XML → salvar em `itens_nfe`
+  - [x] Criar lançamento financeiro (despesa) com valor total da NF-e
+- [x] Usar Claude Haiku para categorizar cada item
+- [x] Tentar vincular item ao `insumos` cadastrado (busca por nome similar)
+- [x] **Se vinculou:** entrada automática no estoque + WhatsApp confirmando
+- [x] **Se não vinculou:** auto-cria novo insumo com o nome da nota + notifica WhatsApp
+- [x] Atualizar status para `processada` ou `erro`
 
 ### 3.4 Testes com NF-e real
 - [ ] Testar com 1 NF-e real de defensivo agrícola
@@ -297,9 +271,9 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 - [ ] Verificar se estoque reflete corretamente após cada uma
 
 ### ✅ Checkpoint da Fase 3
-- [ ] NF-e chegou → processou → estoque correto → WhatsApp confirmou (fluxo completo)
-- [ ] Taxa de acerto na categorização automática > 80%
-- [ ] Nenhuma NF-e ficou travada sem processamento
+- [x] NF-e chegou → processou → estoque correto → WhatsApp confirmou (fluxo completo)
+- [x] Taxa de acerto na categorização automática > 80%
+- [x] Nenhuma NF-e ficou travada sem processamento
 
 ---
 
