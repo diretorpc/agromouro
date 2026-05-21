@@ -23,6 +23,7 @@ export async function enviarMensagem(phone: string, message: string): Promise<vo
       headers: {
         'Content-Type':   'application/json',
         'Content-Length': Buffer.byteLength(body),
+        'Client-Token':   process.env.ZAPI_CLIENT_TOKEN!,
       },
     }
 
