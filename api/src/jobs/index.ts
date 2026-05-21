@@ -1,21 +1,12 @@
-// ─── Jobs agendados (node-cron) ───────────────────────────────────────────────
-// Implementar na Fase 7 (expansão) após validação do MVP.
-//
-// Jobs planejados:
-//   06:00 diário  → buscar previsão do tempo (Open-Meteo)
-//   07:00 diário  → buscar cotação de commodities (CEPEA)
-//   08:00 semanal → buscar NDVI por talhão (Sentinel Hub)
-//   09:00 diário  → sincronizar operações John Deere
-//   19:00 diário  → enviar resumo do dia no WhatsApp
-//   a cada hora   → verificar alertas de estoque abaixo do mínimo
-//
-// Exemplo de estrutura quando implementar:
-//
-// import cron from 'node-cron'
-// import { resumoDiario } from './resumoDiario'
-//
-// export function iniciarJobs() {
-//   cron.schedule('0 19 * * *', resumoDiario, { timezone: 'America/Sao_Paulo' })
-// }
+import cron from 'node-cron'
+import { buscarNFesNoEmail } from './nfeEmail'
 
-export {}
+export function iniciarJobs(): void {
+  // A cada 30 minutos — buscar NF-es no e-mail
+  cron.schedule('*/30 * * * *', async () => {
+    console.log('[Jobs] Iniciando busca de NF-es no e-mail...')
+    await buscarNFesNoEmail()
+  }, { timezone: 'America/Sao_Paulo' })
+
+  console.log('[Jobs] Jobs agendados: NF-e e-mail (a cada 30min)')
+}
