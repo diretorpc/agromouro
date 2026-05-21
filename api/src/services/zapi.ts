@@ -34,7 +34,7 @@ export async function enviarMensagem(phone: string, message: string): Promise<vo
         if (res.statusCode && res.statusCode >= 400) {
           console.error(`[Z-API] Erro ${res.statusCode} ao enviar mensagem:`, data.slice(0, 200))
         } else {
-          console.log(`[Z-API] Mensagem enviada — status ${res.statusCode}`)
+          console.log(`[Z-API] Resposta ${res.statusCode}:`, data.slice(0, 200))
         }
         resolve()
       })
