@@ -20,6 +20,9 @@ import { iniciarJobs }     from './jobs'
 const app  = express()
 const PORT = process.env.PORT || 3001
 
+// Railway / Render ficam atrás de proxy reverso — necessário para rate-limit funcionar corretamente
+app.set('trust proxy', 1)
+
 // ─── Validação de variáveis obrigatórias na inicialização ─────────────────────
 // Fase 1: Supabase + segurança mínima
 const REQUIRED_ENV = [
