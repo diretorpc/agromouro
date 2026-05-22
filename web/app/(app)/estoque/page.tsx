@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Package, AlertTriangle, Plus } from 'lucide-react'
+import { Package, AlertTriangle, Plus, Pencil, Trash2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -42,6 +42,16 @@ export default function EstoquePage() {
   const [selectedItem, setSelectedItem] = useState<Estoque | null>(null)
   const [ajuste, setAjuste] = useState('')
   const [salvando, setSalvando] = useState(false)
+
+  // editar movimentação
+  const [editMov, setEditMov] = useState<MovimentacaoEstoque | null>(null)
+  const [editMovForm, setEditMovForm] = useState({ tipo: 'entrada' as 'entrada' | 'saida', quantidade: '', data: '' })
+  const [salvandoEditMov, setSalvandoEditMov] = useState(false)
+
+  // excluir movimentação
+  const [deleteMov, setDeleteMov] = useState<MovimentacaoEstoque | null>(null)
+  const [deleteMovErro, setDeleteMovErro] = useState<string | null>(null)
+  const [deletandoMov, setDeletandoMov] = useState(false)
 
   // novo insumo
   const [novoDialog, setNovoDialog] = useState(false)
@@ -87,6 +97,73 @@ export default function EstoquePage() {
     setSalvando(false)
     setSelectedItem(null)
     setAjuste('')
+    loadData()
+  }
+
+  function abrirEditMov(m: MovimentacaoEstoque) {
+    setEditMovForm({ tipo: m.tipo, quantidade: String(m.quantidade), data: m.data.slice(0, 10) })
+    setEditMov(m)
+  }
+
+  async function handleEditMov() {
+    if (!editMov) return
+    setSalvandoEditMov(true)
+
+    const novaQtd = parseFloat(editMovForm.quantidade) || 0
+    const novoTipo = editMovForm.tipo
+
+    // calcula delta no estoque: reverte o efeito antigo, aplica o novo
+    let delta = editMov.tipo === 'entrada' ? -editMov.quantidade : editMov.quantidade
+    delta += novoTipo === 'entrada' ? novaQtd : -novaQtd
+
+    await supabase.from('movimentacoes_estoque').update({
+      tipo: novoTipo,
+      quantidade: novaQtd,
+      data: editMovForm.data,
+    }).eq('id', editMov.id)
+
+    if (delta !== 0) {
+      const { data: row } = await supabase
+        .from('estoque').select('id, quantidade_atual').eq('insumo_id', editMov.insumo_id).single()
+      if (row) {
+        await supabase.from('estoque')
+          .update({ quantidade_atual: Math.max(0, row.quantidade_atual + delta) })
+          .eq('id', row.id)
+      }
+    }
+
+    setSalvandoEditMov(false)
+    setEditMov(null)
+    loadData()
+  }
+
+  async function handleDeleteMov() {
+    if (!deleteMov) return
+    setDeletandoMov(true)
+    setDeleteMovErro(null)
+
+    const { data: deleted, error } = await supabase
+      .from('movimentacoes_estoque').delete().eq('id', deleteMov.id).select('id')
+
+    setDeletandoMov(false)
+
+    if (error) { setDeleteMovErro(`Erro: ${error.message}`); return }
+    if (!deleted || deleted.length === 0) {
+      setDeleteMovErro('Sem permissão para excluir. Verifique as políticas do banco.')
+      return
+    }
+
+    // reverte efeito no estoque
+    const delta = deleteMov.tipo === 'entrada' ? -deleteMov.quantidade : deleteMov.quantidade
+    const { data: row } = await supabase
+      .from('estoque').select('id, quantidade_atual').eq('insumo_id', deleteMov.insumo_id).single()
+    if (row) {
+      await supabase.from('estoque')
+        .update({ quantidade_atual: Math.max(0, row.quantidade_atual + delta) })
+        .eq('id', row.id)
+    }
+
+    setDeleteMov(null)
     loadData()
   }
 
@@ -227,12 +304,13 @@ export default function EstoquePage() {
                 <TableHead>Tipo</TableHead>
                 <TableHead className="text-right">Quantidade</TableHead>
                 <TableHead>Origem</TableHead>
+                <TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
               {movimentacoes.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                     Nenhuma movimentação registrada.
                   </TableCell>
                 </TableRow>
@@ -255,6 +333,16 @@ export default function EstoquePage() {
                   </TableCell>
                   <TableCell>
                     <OrigemLabel origem={m.origem} />
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-0.5">
+                      <Button size="sm" variant="ghost" title="Editar" onClick={() => abrirEditMov(m)}>
+                        <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                      </Button>
+                      <Button size="sm" variant="ghost" title="Excluir" onClick={() => { setDeleteMov(m); setDeleteMovErro(null) }}>
+                        <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -302,6 +390,79 @@ export default function EstoquePage() {
               </DialogFooter>
             </form>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Editar Movimentação */}
+      <Dialog open={!!editMov} onOpenChange={open => { if (!open) setEditMov(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Editar Movimentação</DialogTitle></DialogHeader>
+          {editMov && (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Insumo: <span className="font-medium text-foreground">{editMov.insumos.nome}</span>
+              </p>
+              <div className="space-y-1.5">
+                <Label>Tipo</Label>
+                <select
+                  className={SELECT_CLASS}
+                  value={editMovForm.tipo}
+                  onChange={e => setEditMovForm(f => ({ ...f, tipo: e.target.value as 'entrada' | 'saida' }))}
+                >
+                  <option value="entrada">+ Entrada</option>
+                  <option value="saida">− Saída</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Quantidade ({editMov.insumos.unidade})</Label>
+                <Input
+                  type="number" step="0.01" min="0"
+                  value={editMovForm.quantidade}
+                  onChange={e => setEditMovForm(f => ({ ...f, quantidade: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Data</Label>
+                <Input
+                  type="date"
+                  value={editMovForm.data}
+                  onChange={e => setEditMovForm(f => ({ ...f, data: e.target.value }))}
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditMov(null)}>Cancelar</Button>
+            <Button onClick={handleEditMov} disabled={salvandoEditMov || !editMovForm.quantidade}>
+              {salvandoEditMov ? 'Salvando...' : 'Salvar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Excluir Movimentação */}
+      <Dialog open={!!deleteMov} onOpenChange={open => { if (!open) { setDeleteMov(null); setDeleteMovErro(null) } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Excluir movimentação?</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Será removida a {deleteMov?.tipo === 'entrada' ? 'entrada' : 'saída'} de{' '}
+            <span className="font-medium text-foreground">
+              {deleteMov?.quantidade} {deleteMov?.insumos.unidade}
+            </span>{' '}
+            de <span className="font-medium text-foreground">{deleteMov?.insumos.nome}</span>.
+            O saldo do estoque será ajustado automaticamente.
+          </p>
+          {deleteMovErro && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              {deleteMovErro}
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setDeleteMov(null); setDeleteMovErro(null) }}>Cancelar</Button>
+            <Button variant="destructive" onClick={handleDeleteMov} disabled={deletandoMov}>
+              {deletandoMov ? 'Excluindo...' : 'Excluir'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
