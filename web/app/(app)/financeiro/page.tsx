@@ -2,6 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import { DollarSign, TrendingDown, Package, Filter, Plus, Pencil, Trash2 } from 'lucide-react'
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip,
+  ResponsiveContainer, Cell, LabelList,
+} from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -88,6 +92,28 @@ const CENTRO_CUSTO_STYLE: Record<string, string> = {
   operacional:        'bg-gray-100 text-gray-600 border-gray-200',
   rh:                 'bg-rose-100 text-rose-700 border-rose-200',
   outro:              'bg-gray-100 text-gray-700 border-gray-200',
+}
+
+const CENTRO_CUSTO_COLOR: Record<string, string> = {
+  herbicida:          '#ef4444',
+  fungicida:          '#a855f7',
+  inseticida:         '#f97316',
+  adjuvante:          '#06b6d4',
+  biologico:          '#14b8a6',
+  fertilizante_n:     '#22c55e',
+  fertilizante_p:     '#16a34a',
+  fertilizante_k:     '#15803d',
+  fertilizante_outro: '#166534',
+  calcario:           '#78716c',
+  semente:            '#eab308',
+  combustivel:        '#3b82f6',
+  lubrificante:       '#2563eb',
+  peca_maquina:       '#6366f1',
+  servico:            '#ec4899',
+  frete:              '#64748b',
+  operacional:        '#6b7280',
+  rh:                 '#f43f5e',
+  outro:              '#9ca3af',
 }
 
 function fmtBRL(value: number) {
@@ -274,6 +300,10 @@ export default function FinanceiroPage() {
   }, {})
   const maiorCategoria = Object.entries(porCategoria).sort((a, b) => b[1] - a[1])[0]
 
+  const chartData = Object.entries(porCategoria)
+    .map(([key, value]) => ({ key, label: tipoLabel(key), value }))
+    .sort((a, b) => b.value - a.value)
+
   if (loading) return <PageSkeleton />
 
   function FormFields() {
@@ -418,6 +448,48 @@ export default function FinanceiroPage() {
           </CardContent>
         </Card>
       </div>
+
+      {chartData.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Gastos por Categoria</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={chartData.length * 48 + 16}>
+              <BarChart
+                data={chartData}
+                layout="vertical"
+                margin={{ top: 0, right: 80, bottom: 0, left: 8 }}
+              >
+                <XAxis type="number" hide />
+                <YAxis
+                  type="category"
+                  dataKey="label"
+                  width={130}
+                  tick={{ fontSize: 13 }}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <RechartsTooltip
+                  formatter={(value: unknown) => [fmtBRL(Number(value ?? 0)), 'Total']}
+                  cursor={{ fill: 'rgba(0,0,0,0.04)' }}
+                />
+                <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                  {chartData.map(entry => (
+                    <Cell key={entry.key} fill={CENTRO_CUSTO_COLOR[entry.key] ?? '#9ca3af'} />
+                  ))}
+                  <LabelList
+                    dataKey="value"
+                    position="right"
+                    formatter={(v: unknown) => fmtBRL(Number(v ?? 0))}
+                    style={{ fontSize: 12, fill: '#6b7280' }}
+                  />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
