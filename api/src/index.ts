@@ -49,7 +49,8 @@ app.use(helmet({
 // ─── CORS — apenas origens permitidas ────────────────────────────────────────
 const allowedOrigins = [
   'http://localhost:3000',
-  process.env.FRONTEND_URL, // ex: https://agromouro.vercel.app
+  // suporta múltiplas URLs separadas por vírgula: https://a.vercel.app,https://meudominio.com
+  ...(process.env.FRONTEND_URL ?? '').split(',').map(s => s.trim()).filter(Boolean),
 ].filter(Boolean) as string[]
 
 app.use(cors({
