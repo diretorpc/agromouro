@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { FileText, RefreshCw, Plus, Download, Upload } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { FileText, RefreshCw, Plus, Download, Upload, CircleDollarSign, Trash2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -104,11 +105,17 @@ ${itensXml}
 }
 
 export default function NfePage() {
+  const router = useRouter()
   const [notas, setNotas] = useState<NotaFiscal[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<NotaFiscal | null>(null)
   const [itens, setItens] = useState<ItemNfe[]>([])
   const [loadingItens, setLoadingItens] = useState(false)
+
+  // excluir NF
+  const [deleteNota, setDeleteNota] = useState<NotaFiscal | null>(null)
+  const [deleteNotaErro, setDeleteNotaErro] = useState<string | null>(null)
+  const [deletandoNota, setDeletandoNota] = useState(false)
 
   // adicionar NF
   const [addDialog, setAddDialog] = useState(false)
@@ -142,6 +149,36 @@ export default function NfePage() {
       .eq('nota_fiscal_id', nota.id)
     setItens((data ?? []) as ItemNfe[])
     setLoadingItens(false)
+  }
+
+  async function handleDeleteNota() {
+    if (!deleteNota) return
+    setDeletandoNota(true)
+    setDeleteNotaErro(null)
+
+    await supabase.from('itens_nfe').delete().eq('nota_fiscal_id', deleteNota.id)
+
+    const { data: deleted, error } = await supabase
+      .from('notas_fiscais')
+      .delete()
+      .eq('id', deleteNota.id)
+      .select('id')
+
+    setDeletandoNota(false)
+
+    if (error) {
+      setDeleteNotaErro(`Erro: ${error.message}`)
+      return
+    }
+
+    if (!deleted || deleted.length === 0) {
+      setDeleteNotaErro('Sem permissão para excluir esta nota. Verifique as políticas do banco.')
+      return
+    }
+
+    if (selected?.id === deleteNota.id) setSelected(null)
+    setDeleteNota(null)
+    loadNotas()
   }
 
   async function reprocessar(nota: NotaFiscal) {
@@ -282,11 +319,29 @@ export default function NfePage() {
                       <Button size="sm" variant="ghost" title="Exportar XML" onClick={() => exportarXML(nota)}>
                         <Download className="h-3.5 w-3.5" />
                       </Button>
+                      {nota.status === 'processada' && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          title="Ver no Financeiro"
+                          onClick={() => router.push('/financeiro')}
+                        >
+                          <CircleDollarSign className="h-3.5 w-3.5 text-green-600" />
+                        </Button>
+                      )}
                       {nota.status === 'erro' && (
                         <Button size="sm" variant="ghost" onClick={() => reprocessar(nota)}>
                           <RefreshCw className="h-3 w-3" />
                         </Button>
                       )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Excluir nota"
+                        onClick={() => { setDeleteNota(nota); setDeleteNotaErro(null) }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -358,6 +413,29 @@ export default function NfePage() {
               )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Excluir NF */}
+      <Dialog open={!!deleteNota} onOpenChange={open => { if (!open) { setDeleteNota(null); setDeleteNotaErro(null) } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Excluir nota fiscal?</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            A NF-e <span className="font-medium text-foreground">nº {deleteNota?.numero}</span> de{' '}
+            <span className="font-medium text-foreground">{deleteNota?.emitente_nome}</span> será removida permanentemente,
+            incluindo todos os seus itens.
+          </p>
+          {deleteNotaErro && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              {deleteNotaErro}
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setDeleteNota(null); setDeleteNotaErro(null) }}>Cancelar</Button>
+            <Button variant="destructive" onClick={handleDeleteNota} disabled={deletandoNota}>
+              {deletandoNota ? 'Excluindo...' : 'Excluir'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

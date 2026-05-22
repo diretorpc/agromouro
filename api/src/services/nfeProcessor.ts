@@ -6,7 +6,7 @@ import { enviarMensagem } from './zapi'
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 const TIPOS_VALIDOS = [
-  'herbicida', 'fungicida', 'inseticida', 'biologico',
+  'herbicida', 'fungicida', 'inseticida', 'biologico', 'adjuvante',
   'fertilizante_n', 'fertilizante_p', 'fertilizante_k', 'fertilizante_outro', 'calcario',
   'semente', 'combustivel', 'lubrificante', 'peca_maquina',
   'servico', 'frete', 'operacional', 'rh', 'outro',
@@ -98,7 +98,7 @@ async function categorizarItem(descricao: string): Promise<TipoInsumo> {
     model:      'claude-haiku-4-5',
     max_tokens: 50,
     system:     'Classifique itens de nota fiscal agrícola. Responda SOMENTE com a categoria, sem texto extra.',
-    messages:   [{ role: 'user', content: `Item: "${descSanitizada}"\nCategorias: herbicida, fungicida, inseticida, biologico, fertilizante_n, fertilizante_p, fertilizante_k, fertilizante_outro, calcario, semente, combustivel, lubrificante, peca_maquina, servico, frete, operacional, rh, outro` }],
+    messages:   [{ role: 'user', content: `Item: "${descSanitizada}"\nCategorias: herbicida, fungicida, inseticida, biologico, adjuvante, fertilizante_n, fertilizante_p, fertilizante_k, fertilizante_outro, calcario, semente, combustivel, lubrificante, peca_maquina, servico, frete, operacional, rh, outro\nDica: adjuvante = espalhante, óleo mineral/vegetal, surfactante, regulador de pH, antiespumante` }],
   })
   const content = response.content[0]
   const tipo    = content.type === 'text' ? content.text.trim().toLowerCase() : 'outro'
