@@ -17,6 +17,8 @@ import { supabase } from '@/lib/supabase'
 import { api } from '@/lib/api'
 import type { Estoque, MovimentacaoEstoque } from '@/lib/types'
 
+type MovimentacaoComFornecedor = MovimentacaoEstoque & { fornecedor_nome?: string }
+
 const TIPOS: [string, string][] = [
   ['herbicida', 'Herbicida'],
   ['fungicida', 'Fungicida'],
@@ -35,7 +37,7 @@ const SELECT_CLASS = 'flex h-9 w-full rounded-md border border-input bg-backgrou
 
 export default function EstoquePage() {
   const [estoque, setEstoque] = useState<Estoque[]>([])
-  const [movimentacoes, setMovimentacoes] = useState<MovimentacaoEstoque[]>([])
+  const [movimentacoes, setMovimentacoes] = useState<MovimentacaoComFornecedor[]>([])
   const [loading, setLoading] = useState(true)
 
   // ajuste
@@ -44,12 +46,12 @@ export default function EstoquePage() {
   const [salvando, setSalvando] = useState(false)
 
   // editar movimentação
-  const [editMov, setEditMov] = useState<MovimentacaoEstoque | null>(null)
+  const [editMov, setEditMov] = useState<MovimentacaoComFornecedor | null>(null)
   const [editMovForm, setEditMovForm] = useState({ tipo: 'entrada' as 'entrada' | 'saida', quantidade: '', data: '' })
   const [salvandoEditMov, setSalvandoEditMov] = useState(false)
 
   // excluir movimentação
-  const [deleteMov, setDeleteMov] = useState<MovimentacaoEstoque | null>(null)
+  const [deleteMov, setDeleteMov] = useState<MovimentacaoComFornecedor | null>(null)
   const [deleteMovErro, setDeleteMovErro] = useState<string | null>(null)
   const [deletandoMov, setDeletandoMov] = useState(false)
 
@@ -62,7 +64,7 @@ export default function EstoquePage() {
   const [salvandoNovo, setSalvandoNovo] = useState(false)
 
   async function loadData() {
-    const [e, m] = await Promise.all([
+    const [e, movs] = await Promise.all([
       api.get<Estoque[]>('/estoque').catch(() => [] as Estoque[]),
       supabase
         .from('movimentacoes_estoque')
@@ -71,8 +73,21 @@ export default function EstoquePage() {
         .limit(50)
         .then(({ data }) => (data ?? []) as MovimentacaoEstoque[]),
     ])
+
+    // busca nomes dos fornecedores para movimentações de NF-e
+    const nfeIds = [...new Set(movs.filter(m => m.nota_fiscal_id).map(m => m.nota_fiscal_id!))]
+    let fornecedorMap: Record<string, string> = {}
+    if (nfeIds.length > 0) {
+      const { data: notas } = await supabase
+        .from('notas_fiscais').select('id, emitente_nome').in('id', nfeIds)
+      fornecedorMap = Object.fromEntries((notas ?? []).map(n => [n.id, n.emitente_nome]))
+    }
+
     setEstoque(e)
-    setMovimentacoes(m)
+    setMovimentacoes(movs.map(m => ({
+      ...m,
+      fornecedor_nome: m.nota_fiscal_id ? fornecedorMap[m.nota_fiscal_id] : undefined,
+    })))
     setLoading(false)
   }
 
@@ -332,7 +347,7 @@ export default function EstoquePage() {
                     {m.quantidade} {m.insumos.unidade}
                   </TableCell>
                   <TableCell>
-                    <OrigemLabel origem={m.origem} />
+                    <OrigemLabel origem={m.origem} fornecedor={m.fornecedor_nome} />
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-0.5">
@@ -560,8 +575,20 @@ export default function EstoquePage() {
   )
 }
 
-function OrigemLabel({ origem }: { origem: string }) {
-  const map: Record<string, string> = { nfe: '📄 NF-e', whatsapp: '💬 WhatsApp', manual: '✏️ Manual' }
+function OrigemLabel({ origem, fornecedor }: { origem: string; fornecedor?: string }) {
+  if (origem === 'nfe') {
+    return (
+      <div>
+        <p className="text-xs text-muted-foreground">📄 NF-e</p>
+        {fornecedor && (
+          <p className="text-xs font-medium text-foreground truncate max-w-[160px]" title={fornecedor}>
+            {fornecedor}
+          </p>
+        )}
+      </div>
+    )
+  }
+  const map: Record<string, string> = { whatsapp: '💬 WhatsApp', manual: '✏️ Manual' }
   return <span className="text-sm text-muted-foreground">{map[origem] ?? origem}</span>
 }
 
