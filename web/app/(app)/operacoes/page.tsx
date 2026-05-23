@@ -16,18 +16,22 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { api } from '@/lib/api'
+import { supabase } from '@/lib/supabase'
 import type { Operacao, Talhao } from '@/lib/types'
 
 const TIPOS_OPERACAO = [
-  'Pulverização',
-  'Adubação',
-  'Plantio',
-  'Colheita',
-  'Calagem',
-  'Irrigação',
-  'Outro',
+  { value: 'pulverizacao', label: 'Pulverização' },
+  { value: 'adubacao',     label: 'Adubação' },
+  { value: 'plantio',      label: 'Plantio' },
+  { value: 'colheita',     label: 'Colheita' },
+  { value: 'calagem',      label: 'Calagem' },
+  { value: 'irrigacao',    label: 'Irrigação' },
+  { value: 'outro',        label: 'Outro' },
 ]
+
+function tipoLabel(value: string) {
+  return TIPOS_OPERACAO.find(t => t.value === value)?.label ?? value
+}
 
 export default function OperacoesPage() {
   const [operacoes, setOperacoes] = useState<Operacao[]>([])
@@ -45,12 +49,12 @@ export default function OperacoesPage() {
   })
 
   async function loadData() {
-    const [o, t] = await Promise.all([
-      api.get<Operacao[]>('/operacoes').catch(() => [] as Operacao[]),
-      api.get<Talhao[]>('/talhoes').catch(() => [] as Talhao[]),
+    const [{ data: ops }, { data: t }] = await Promise.all([
+      supabase.from('operacoes').select('*, talhoes(nome)').order('data', { ascending: false }).limit(50),
+      supabase.from('talhoes').select('id, nome, area_ha').order('nome'),
     ])
-    setOperacoes(o)
-    setTalhoes(t)
+    setOperacoes((ops ?? []) as Operacao[])
+    setTalhoes((t ?? []) as Talhao[])
     setLoading(false)
   }
 
@@ -61,7 +65,15 @@ export default function OperacoesPage() {
     if (!form.talhao_id || !form.tipo) return
     setSalvando(true)
 
-    await api.post('/operacoes', { ...form, fonte: 'manual' }).catch(() => null)
+    const { error } = await supabase.from('operacoes').insert({
+      talhao_id: form.talhao_id,
+      tipo: form.tipo,
+      data: form.data,
+      descricao: form.descricao || null,
+      fonte: 'manual',
+    })
+
+    if (error) console.error('[Operações] Erro ao criar:', error)
 
     setSalvando(false)
     setModalOpen(false)
@@ -124,7 +136,7 @@ export default function OperacoesPage() {
                   <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                     {new Date(op.data).toLocaleDateString('pt-BR')}
                   </TableCell>
-                  <TableCell className="font-medium">{op.tipo}</TableCell>
+                  <TableCell className="font-medium">{tipoLabel(op.tipo)}</TableCell>
                   <TableCell>{op.talhoes?.nome ?? '—'}</TableCell>
                   <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
                     {op.descricao || '—'}
@@ -167,7 +179,7 @@ export default function OperacoesPage() {
                 </SelectTrigger>
                 <SelectContent>
                   {TIPOS_OPERACAO.map(t => (
-                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                    <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
