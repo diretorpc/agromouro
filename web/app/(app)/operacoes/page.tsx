@@ -50,12 +50,15 @@ export default function OperacoesPage() {
   })
 
   async function loadData() {
-    const [{ data: ops }, { data: t }] = await Promise.all([
+    const [resOps, resTalhoes] = await Promise.all([
       supabase.from('operacoes').select('*, talhoes(nome)').order('data', { ascending: false }).limit(50),
-      supabase.from('talhoes').select('id, nome, area_ha').order('nome'),
+      supabase.from('talhoes').select('*').order('nome'),
     ])
-    setOperacoes((ops ?? []) as Operacao[])
-    setTalhoes((t ?? []) as Talhao[])
+    if (resOps.error) console.error('[Operações] Erro ao carregar operações:', resOps.error)
+    if (resTalhoes.error) console.error('[Operações] Erro ao carregar talhões:', resTalhoes.error)
+    console.log('[Operações] Talhões carregados:', resTalhoes.data)
+    setOperacoes((resOps.data ?? []) as Operacao[])
+    setTalhoes((resTalhoes.data ?? []) as Talhao[])
     setLoading(false)
   }
 
