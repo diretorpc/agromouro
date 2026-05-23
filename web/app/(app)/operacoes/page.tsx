@@ -94,12 +94,14 @@ export default function OperacoesPage() {
         .order('data', { ascending: false })
         .limit(50),
       supabase.from('talhoes').select('*').order('nome'),
-      supabase.from('estoque').select('insumo_id, quantidade_atual, insumos(id, nome, unidade)').order('insumos(nome)'),
+      supabase.from('estoque').select('insumo_id, quantidade_atual, insumos(id, nome, unidade)'),
     ])
 
     if (resOps.error) console.error('[Operações] ops:', resOps.error)
     if (resTalhoes.error) console.error('[Operações] talhoes:', resTalhoes.error)
     if (resInsumos.error) console.error('[Operações] insumos:', resInsumos.error)
+    console.log('[debug] talhoes[0]:', resTalhoes.data?.[0])
+    console.log('[debug] insumos[0]:', resInsumos.data?.[0])
 
     setOperacoes((resOps.data ?? []) as unknown as OperacaoCompleta[])
     setTalhoes((resTalhoes.data ?? []) as Talhao[])
@@ -306,7 +308,11 @@ export default function OperacoesPage() {
               <Label>Talhão</Label>
               <Select value={form.talhao_id} onValueChange={v => setForm(f => ({ ...f, talhao_id: v ?? '' }))}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Selecionar talhão..." />
+                  <SelectValue placeholder="Selecionar talhão...">
+                    {talhoes.find(t => t.id === form.talhao_id)
+                      ? `${talhoes.find(t => t.id === form.talhao_id)!.nome} — ${talhoes.find(t => t.id === form.talhao_id)!.area_ha} ha`
+                      : undefined}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {talhoes.map(t => (
@@ -322,7 +328,9 @@ export default function OperacoesPage() {
               <Label>Tipo de Operação</Label>
               <Select value={form.tipo} onValueChange={v => setForm(f => ({ ...f, tipo: v ?? '' }))}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Selecionar tipo..." />
+                  <SelectValue placeholder="Selecionar tipo...">
+                    {TIPOS_OPERACAO.find(t => t.value === form.tipo)?.label}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {TIPOS_OPERACAO.map(t => (
@@ -407,7 +415,9 @@ export default function OperacoesPage() {
                         onValueChange={v => updateProduto(idx, 'insumo_id', v ?? '')}
                       >
                         <SelectTrigger className="h-8 text-sm">
-                          <SelectValue placeholder="Selecionar insumo do estoque..." />
+                          <SelectValue placeholder="Selecionar insumo do estoque...">
+                            {insumos.find(i => i.insumo_id === prod.insumo_id)?.insumos.nome}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           {insumos.map(i => (
