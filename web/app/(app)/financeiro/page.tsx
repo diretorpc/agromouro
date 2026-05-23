@@ -465,8 +465,8 @@ export default function FinanceiroPage() {
                 <YAxis
                   type="category"
                   dataKey="label"
-                  width={130}
-                  tick={{ fontSize: 13 }}
+                  width={140}
+                  tick={{ fontSize: 15 }}
                   tickLine={false}
                   axisLine={false}
                 />
@@ -482,7 +482,7 @@ export default function FinanceiroPage() {
                     dataKey="value"
                     position="right"
                     formatter={(v: unknown) => fmtBRL(Number(v ?? 0))}
-                    style={{ fontSize: 12, fill: '#6b7280' }}
+                    style={{ fontSize: 14, fill: '#6b7280' }}
                   />
                 </Bar>
               </BarChart>
