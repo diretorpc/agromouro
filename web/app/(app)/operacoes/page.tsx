@@ -39,6 +39,7 @@ export default function OperacoesPage() {
   const [loading, setLoading] = useState(true)
   const [modalOpen, setModalOpen] = useState(false)
   const [salvando, setSalvando] = useState(false)
+  const [erroSalvar, setErroSalvar] = useState<string | null>(null)
 
   const [filtroTalhao, setFiltroTalhao] = useState('todos')
   const [form, setForm] = useState({
@@ -64,19 +65,26 @@ export default function OperacoesPage() {
     e.preventDefault()
     if (!form.talhao_id || !form.tipo) return
     setSalvando(true)
+    setErroSalvar(null)
 
     const { error } = await supabase.from('operacoes').insert({
       talhao_id: form.talhao_id,
       tipo: form.tipo,
       data: form.data,
-      descricao: form.descricao || null,
+      descricao: form.descricao || '',
       fonte: 'manual',
     })
 
-    if (error) console.error('[Operações] Erro ao criar:', error)
-
     setSalvando(false)
+
+    if (error) {
+      console.error('[Operações] Erro ao criar:', error)
+      setErroSalvar(error.message)
+      return
+    }
+
     setModalOpen(false)
+    setErroSalvar(null)
     setForm({ talhao_id: '', tipo: '', data: new Date().toISOString().split('T')[0], descricao: '' })
     loadData()
   }
@@ -151,7 +159,7 @@ export default function OperacoesPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+      <Dialog open={modalOpen} onOpenChange={open => { setModalOpen(open); if (!open) setErroSalvar(null) }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Nova Operação</DialogTitle>
@@ -206,6 +214,12 @@ export default function OperacoesPage() {
                 rows={3}
               />
             </div>
+
+            {erroSalvar && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+                Erro ao salvar: {erroSalvar}
+              </p>
+            )}
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setModalOpen(false)}>
