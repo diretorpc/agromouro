@@ -21,11 +21,12 @@ import type { Talhao } from '@/lib/types'
 
 type ItemOperacao = {
   id: string
-  insumo_id: string
+  insumo_id: string | null
+  descricao: string | null
   quantidade: number
   dose_por_ha: number | null
   unidade: string | null
-  insumos: { nome: string; unidade: string }
+  insumos?: { nome: string; unidade: string }
 }
 
 type OperacaoCompleta = {
@@ -46,7 +47,10 @@ type InsumoEstoque = {
 }
 
 type ProdutoForm = {
+  modo: 'estoque' | 'manual'
   insumo_id: string
+  nome_manual: string
+  unidade_manual: string
   dose_por_ha: string
 }
 
@@ -106,7 +110,7 @@ export default function OperacoesPage() {
   useEffect(() => { loadData() }, [])
 
   function addProduto() {
-    setProdutos(p => [...p, { insumo_id: '', dose_por_ha: '' }])
+    setProdutos(p => [...p, { modo: 'estoque', insumo_id: '', nome_manual: '', unidade_manual: '', dose_por_ha: '' }])
   }
 
   function removeProduto(idx: number) {
@@ -143,34 +147,50 @@ export default function OperacoesPage() {
 
     const talhao = talhoes.find(t => t.id === form.talhao_id)
     const areaHa = talhao?.area_ha ?? 1
-    const produtosValidos = produtos.filter(p => p.insumo_id && p.dose_por_ha)
+    const produtosValidos = produtos.filter(p =>
+      p.dose_por_ha && (p.modo === 'estoque' ? p.insumo_id : p.nome_manual.trim())
+    )
 
     for (const prod of produtosValidos) {
       const doseHa = parseFloat(prod.dose_por_ha)
       const quantidade = parseFloat((doseHa * areaHa).toFixed(4))
-      const estoqueItem = insumos.find(i => i.insumo_id === prod.insumo_id)
-      const unidade = estoqueItem?.insumos.unidade ?? ''
 
-      await supabase.from('itens_operacao').insert({
-        operacao_id: op.id,
-        insumo_id: prod.insumo_id,
-        quantidade,
-        dose_por_ha: doseHa,
-        unidade,
-      })
+      if (prod.modo === 'estoque') {
+        const estoqueItem = insumos.find(i => i.insumo_id === prod.insumo_id)
+        const unidade = estoqueItem?.insumos.unidade ?? ''
 
-      await supabase.from('movimentacoes_estoque').insert({
-        insumo_id: prod.insumo_id,
-        tipo: 'saida',
-        quantidade,
-        data: form.data,
-        origem: 'manual',
-      })
+        await supabase.from('itens_operacao').insert({
+          operacao_id: op.id,
+          insumo_id: prod.insumo_id,
+          descricao: null,
+          quantidade,
+          dose_por_ha: doseHa,
+          unidade,
+        })
 
-      if (estoqueItem) {
-        await supabase.from('estoque')
-          .update({ quantidade_atual: Math.max(0, estoqueItem.quantidade_atual - quantidade) })
-          .eq('insumo_id', prod.insumo_id)
+        await supabase.from('movimentacoes_estoque').insert({
+          insumo_id: prod.insumo_id,
+          tipo: 'saida',
+          quantidade,
+          data: form.data,
+          origem: 'manual',
+        })
+
+        if (estoqueItem) {
+          await supabase.from('estoque')
+            .update({ quantidade_atual: Math.max(0, estoqueItem.quantidade_atual - quantidade) })
+            .eq('insumo_id', prod.insumo_id)
+        }
+      } else {
+        // produto manual — só registra, sem mexer no estoque
+        await supabase.from('itens_operacao').insert({
+          operacao_id: op.id,
+          insumo_id: null,
+          descricao: prod.nome_manual.trim(),
+          quantidade,
+          dose_por_ha: doseHa,
+          unidade: prod.unidade_manual.trim() || null,
+        })
       }
     }
 
@@ -243,16 +263,20 @@ export default function OperacoesPage() {
                   <TableCell>
                     {op.itens_operacao && op.itens_operacao.length > 0 ? (
                       <div className="space-y-0.5">
-                        {op.itens_operacao.map(item => (
-                          <div key={item.id} className="text-xs">
-                            <span className="font-medium">{item.insumos.nome}</span>
-                            <span className="text-muted-foreground ml-1.5">
-                              {item.dose_por_ha != null
-                                ? `${item.dose_por_ha} ${item.unidade ?? item.insumos.unidade}/ha`
-                                : `${item.quantidade} ${item.unidade ?? item.insumos.unidade}`}
-                            </span>
-                          </div>
-                        ))}
+                        {op.itens_operacao.map(item => {
+                          const nome = item.insumos?.nome ?? item.descricao ?? '—'
+                          const unid = item.unidade ?? item.insumos?.unidade ?? ''
+                          return (
+                            <div key={item.id} className="text-xs">
+                              <span className="font-medium">{nome}</span>
+                              <span className="text-muted-foreground ml-1.5">
+                                {item.dose_por_ha != null
+                                  ? `${item.dose_por_ha} ${unid}/ha`
+                                  : `${item.quantidade} ${unid}`}
+                              </span>
+                            </div>
+                          )
+                        })}
                       </div>
                     ) : (
                       <span className="text-muted-foreground text-xs">—</span>
@@ -337,49 +361,86 @@ export default function OperacoesPage() {
                 const estoqueItem = insumos.find(i => i.insumo_id === prod.insumo_id)
                 const talhao = talhoes.find(t => t.id === form.talhao_id)
                 const areaHa = talhao?.area_ha ?? 0
+                const unidade = prod.modo === 'estoque'
+                  ? (estoqueItem?.insumos.unidade ?? '—')
+                  : (prod.unidade_manual || '—')
                 const qtdTotal = prod.dose_por_ha && areaHa
                   ? (parseFloat(prod.dose_por_ha) * areaHa).toFixed(2)
                   : null
 
                 return (
                   <div key={idx} className="border rounded-lg p-3 space-y-2 bg-muted/30">
+                    {/* Toggle modo + botão remover */}
                     <div className="flex items-center gap-2">
-                      <div className="flex-1">
-                        <Select
-                          value={prod.insumo_id}
-                          onValueChange={v => updateProduto(idx, 'insumo_id', v ?? '')}
+                      <div className="flex rounded-md border overflow-hidden text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setProdutos(p => p.map((x, i) => i === idx ? { ...x, modo: 'estoque', insumo_id: '', nome_manual: '', unidade_manual: '' } : x))}
+                          className={`px-2.5 py-1 transition-colors ${prod.modo === 'estoque' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}`}
                         >
-                          <SelectTrigger className="h-8 text-sm">
-                            <SelectValue placeholder="Selecionar insumo..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {insumos.map(i => (
-                              <SelectItem key={i.insumo_id} value={i.insumo_id}>
-                                {i.insumos.nome}
-                                <span className="text-muted-foreground ml-1 text-xs">
-                                  ({i.quantidade_atual} {i.insumos.unidade})
-                                </span>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          Do estoque
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setProdutos(p => p.map((x, i) => i === idx ? { ...x, modo: 'manual', insumo_id: '' } : x))}
+                          className={`px-2.5 py-1 transition-colors ${prod.modo === 'manual' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}`}
+                        >
+                          Manual
+                        </button>
                       </div>
+                      <div className="flex-1" />
                       <Button
                         type="button"
                         size="sm"
                         variant="ghost"
                         onClick={() => removeProduto(idx)}
-                        className="h-8 w-8 p-0 text-red-400 shrink-0"
+                        className="h-7 w-7 p-0 text-red-400 shrink-0"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
 
+                    {/* Campo de seleção conforme o modo */}
+                    {prod.modo === 'estoque' ? (
+                      <Select
+                        value={prod.insumo_id}
+                        onValueChange={v => updateProduto(idx, 'insumo_id', v ?? '')}
+                      >
+                        <SelectTrigger className="h-8 text-sm">
+                          <SelectValue placeholder="Selecionar insumo do estoque..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {insumos.map(i => (
+                            <SelectItem key={i.insumo_id} value={i.insumo_id}>
+                              {i.insumos.nome}
+                              <span className="text-muted-foreground ml-1 text-xs">
+                                ({i.quantidade_atual} {i.insumos.unidade})
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <div className="flex gap-2">
+                        <Input
+                          className="h-8 text-sm flex-1"
+                          placeholder="Nome do produto..."
+                          value={prod.nome_manual}
+                          onChange={e => setProdutos(p => p.map((x, i) => i === idx ? { ...x, nome_manual: e.target.value } : x))}
+                        />
+                        <Input
+                          className="h-8 text-sm w-20"
+                          placeholder="Unid."
+                          value={prod.unidade_manual}
+                          onChange={e => setProdutos(p => p.map((x, i) => i === idx ? { ...x, unidade_manual: e.target.value } : x))}
+                        />
+                      </div>
+                    )}
+
+                    {/* Dose por ha + total */}
                     <div className="flex items-end gap-2">
                       <div className="flex-1 space-y-1">
-                        <Label className="text-xs">
-                          Dose por ha ({estoqueItem?.insumos.unidade ?? '—'}/ha)
-                        </Label>
+                        <Label className="text-xs">Dose por ha ({unidade}/ha)</Label>
                         <Input
                           type="number"
                           step="any"
@@ -393,7 +454,7 @@ export default function OperacoesPage() {
                       {qtdTotal && (
                         <p className="text-xs text-muted-foreground pb-2">
                           = <span className="font-semibold text-foreground">
-                            {qtdTotal} {estoqueItem?.insumos.unidade}
+                            {qtdTotal} {unidade}
                           </span> total
                         </p>
                       )}
