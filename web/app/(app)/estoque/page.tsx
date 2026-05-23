@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { supabase } from '@/lib/supabase'
 import { api } from '@/lib/api'
 import type { Estoque, MovimentacaoEstoque } from '@/lib/types'
@@ -581,9 +582,14 @@ function OrigemLabel({ origem, fornecedor }: { origem: string; fornecedor?: stri
       <div>
         <p className="text-xs text-muted-foreground">📄 NF-e</p>
         {fornecedor && (
-          <p className="text-xs font-medium text-foreground truncate max-w-[160px]" title={fornecedor}>
-            {fornecedor}
-          </p>
+          <Tooltip>
+            <TooltipTrigger className="text-xs font-medium text-foreground truncate max-w-[160px] cursor-default block w-full text-left bg-transparent border-0 p-0">
+              {fornecedor}
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-xs text-xs">
+              {fornecedor}
+            </TooltipContent>
+          </Tooltip>
         )}
       </div>
     )
