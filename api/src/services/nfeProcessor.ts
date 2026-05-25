@@ -217,7 +217,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
             nfe_id:                   nfeId,
             insumo_id:                insumo.id,
             insumo_nome:              insumo.nome,
-            unidade_base:             insumo.unidade,
+            unidade_base:             unidadeBase,
             unidade_comercial:        item.unit,
             quantidade_comercial:     item.quantity,
             valor_unitario_comercial: item.unitValue,
