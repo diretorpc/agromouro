@@ -60,6 +60,7 @@ export default function EstoquePage() {
 
   // excluir insumo
   const [deleteInsumo, setDeleteInsumo] = useState<Estoque | null>(null)
+  const [deleteInsumoErro, setDeleteInsumoErro] = useState<string | null>(null)
   const [deletandoInsumo, setDeletandoInsumo] = useState(false)
 
   // converter unidade
@@ -234,8 +235,10 @@ export default function EstoquePage() {
   async function handleDeleteInsumo() {
     if (!deleteInsumo) return
     setDeletandoInsumo(true)
-    await supabase.from('insumos').delete().eq('id', deleteInsumo.insumo_id)
+    setDeleteInsumoErro(null)
+    const { error } = await supabase.from('insumos').delete().eq('id', deleteInsumo.insumo_id)
     setDeletandoInsumo(false)
+    if (error) { setDeleteInsumoErro(`Erro: ${error.message}`); return }
     setDeleteInsumo(null)
     loadData()
   }
@@ -646,7 +649,7 @@ export default function EstoquePage() {
       </Dialog>
 
       {/* Dialog: Excluir Insumo */}
-      <Dialog open={!!deleteInsumo} onOpenChange={open => { if (!open) setDeleteInsumo(null) }}>
+      <Dialog open={!!deleteInsumo} onOpenChange={open => { if (!open) { setDeleteInsumo(null); setDeleteInsumoErro(null) } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>Excluir insumo?</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">
@@ -654,8 +657,13 @@ export default function EstoquePage() {
             <span className="font-medium text-foreground">{deleteInsumo?.insumos.nome}</span>{' '}
             e todo o seu histórico de movimentações. Esta ação não pode ser desfeita.
           </p>
+          {deleteInsumoErro && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              {deleteInsumoErro}
+            </p>
+          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteInsumo(null)}>Cancelar</Button>
+            <Button variant="outline" onClick={() => { setDeleteInsumo(null); setDeleteInsumoErro(null) }}>Cancelar</Button>
             <Button variant="destructive" onClick={handleDeleteInsumo} disabled={deletandoInsumo}>
               {deletandoInsumo ? 'Excluindo...' : 'Excluir'}
             </Button>
