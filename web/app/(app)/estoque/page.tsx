@@ -293,7 +293,6 @@ export default function EstoquePage() {
                 <TableHead>Produto</TableHead>
                 <TableHead>Tipo</TableHead>
                 <TableHead className="text-right">Qtd. Atual</TableHead>
-                <TableHead className="text-right">Mínimo</TableHead>
                 <TableHead className="text-right">Preço Médio</TableHead>
                 <TableHead className="text-right">Situação</TableHead>
                 <TableHead />
@@ -302,7 +301,7 @@ export default function EstoquePage() {
             <TableBody>
               {estoque.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                     Nenhum insumo cadastrado.
                   </TableCell>
                 </TableRow>
@@ -316,9 +315,6 @@ export default function EstoquePage() {
                     </TableCell>
                     <TableCell className={`text-right font-semibold ${critico ? 'text-red-600' : ''}`}>
                       {item.quantidade_atual} {item.insumos.unidade}
-                    </TableCell>
-                    <TableCell className="text-right text-muted-foreground text-sm">
-                      {item.quantidade_minima_alerta} {item.insumos.unidade}
                     </TableCell>
                     <TableCell className="text-right text-sm">
                       {item.preco_medio_unitario > 0
