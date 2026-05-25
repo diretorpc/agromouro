@@ -172,6 +172,54 @@ async function buscarInsumo(nome: string) {
   return data
 }
 
+// ─── Resolver insumos: nome textual → dados prontos para o banco ─────────────
+type InsumoBruto = {
+  nome: string
+  dose_valor: number | null
+  dose_unidade: string | null
+  dose_tipo: string | null   // 'por_ha' | 'total' | null
+}
+
+type InsumoResolvido =
+  | { ok: true;  insumo_id: string; nome: string; quantidade: number; unidade: string }
+  | { ok: false; nome: string; erro: string }
+
+async function resolverInsumos(
+  insumos: InsumoBruto[],
+  talhao: { area_ha: number } | null,
+): Promise<InsumoResolvido[]> {
+  return Promise.all(insumos.map(async (item): Promise<InsumoResolvido> => {
+    const insumo = await buscarInsumo(item.nome)
+    if (!insumo) {
+      return { ok: false, nome: item.nome, erro: 'insumo não encontrado no banco' }
+    }
+
+    if (item.dose_valor == null || !item.dose_tipo) {
+      return { ok: false, nome: item.nome, erro: 'dose não extraída' }
+    }
+
+    let quantidade: number
+    if (item.dose_tipo === 'total') {
+      quantidade = item.dose_valor
+    } else if (item.dose_tipo === 'por_ha') {
+      if (!talhao?.area_ha) {
+        return { ok: false, nome: item.nome, erro: 'dose por hectare mas talhão sem área' }
+      }
+      quantidade = item.dose_valor * talhao.area_ha
+    } else {
+      return { ok: false, nome: item.nome, erro: `dose_tipo desconhecido: ${item.dose_tipo}` }
+    }
+
+    return {
+      ok:        true,
+      insumo_id: insumo.id,
+      nome:      insumo.nome,
+      quantidade,
+      unidade:   item.dose_unidade || insumo.unidade,
+    }
+  }))
+}
+
 // ─── Processar mensagem recebida ──────────────────────────────────────────────
 async function processarMensagem(telefone: string, texto: string) {
   try {
