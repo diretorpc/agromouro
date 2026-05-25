@@ -181,7 +181,7 @@ type InsumoBruto = {
 }
 
 type InsumoResolvido =
-  | { ok: true;  insumo_id: string; nome: string; quantidade: number; unidade: string }
+  | { ok: true;  insumo_id: string; nome: string; quantidade: number; unidade: string; dose_por_ha: number | null }
   | { ok: false; nome: string; erro: string }
 
 async function resolverInsumos(
@@ -199,6 +199,7 @@ async function resolverInsumos(
     }
 
     let quantidade: number
+    let dosePorHa: number | null = null
     if (item.dose_tipo === 'total') {
       quantidade = item.dose_valor
     } else if (item.dose_tipo === 'por_ha') {
@@ -206,16 +207,18 @@ async function resolverInsumos(
         return { ok: false, nome: item.nome, erro: 'dose por hectare mas talhão sem área' }
       }
       quantidade = item.dose_valor * talhao.area_ha
+      dosePorHa  = item.dose_valor
     } else {
       return { ok: false, nome: item.nome, erro: `dose_tipo desconhecido: ${item.dose_tipo}` }
     }
 
     return {
-      ok:        true,
-      insumo_id: insumo.id,
-      nome:      insumo.nome,
+      ok:          true,
+      insumo_id:   insumo.id,
+      nome:        insumo.nome,
       quantidade,
-      unidade:   item.dose_unidade || insumo.unidade,
+      unidade:     item.dose_unidade || insumo.unidade,
+      dose_por_ha: dosePorHa,
     }
   }))
 }
@@ -269,13 +272,15 @@ async function processarMensagem(telefone: string, texto: string) {
       let saidasProcessadas: SaidaProcessada[] = []
 
       if (okItems.length > 0) {
-        // Batch insert em itens_operacao (alimenta a página /custos)
+        // Batch insert em itens_operacao (alimenta /custos e /operacoes)
+        // descricao=null quando há insumo_id (espelha o form web: descricao é só para entradas manuais sem cadastro)
         const { error: itensErr } = await supabase.from('itens_operacao').insert(
           okItems.map(item => ({
             operacao_id: operacaoId,
             insumo_id:   item.insumo_id,
-            descricao:   item.nome,
+            descricao:   null,
             quantidade:  item.quantidade,
+            dose_por_ha: item.dose_por_ha,
             unidade:     item.unidade,
           })),
         )
