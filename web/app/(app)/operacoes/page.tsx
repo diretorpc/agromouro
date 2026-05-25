@@ -338,7 +338,7 @@ export default function OperacoesPage() {
               ) : operacoesFiltradas.map(op => (
                 <TableRow key={op.id}>
                   <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                    {new Date(op.data).toLocaleDateString('pt-BR')}
+                    {op.data.slice(0, 10).split('-').reverse().join('/')}
                   </TableCell>
                   <TableCell className="font-medium">{tipoLabel(op.tipo)}</TableCell>
                   <TableCell>{op.talhoes?.nome ?? '—'}</TableCell>

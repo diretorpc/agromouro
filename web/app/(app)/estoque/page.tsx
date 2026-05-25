@@ -391,7 +391,7 @@ export default function EstoquePage() {
               ) : movimentacoes.map(m => (
                 <TableRow key={m.id}>
                   <TableCell className="text-sm text-muted-foreground">
-                    {new Date(m.data).toLocaleDateString('pt-BR')}
+                    {m.data.slice(0, 10).split('-').reverse().join('/')}
                   </TableCell>
                   <TableCell className="font-medium">{m.insumos.nome}</TableCell>
                   <TableCell>

@@ -301,7 +301,7 @@ export default function NfePage() {
                     </div>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                    {new Date(nota.data_emissao).toLocaleDateString('pt-BR')}
+                    {nota.data_emissao.slice(0, 10).split('-').reverse().join('/')}
                   </TableCell>
                   <TableCell className="text-right font-semibold">
                     {nota.valor_total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}

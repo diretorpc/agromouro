@@ -353,7 +353,7 @@ export default function CustosPage() {
                           {t.operacoes.map(op => (
                             <TableRow key={op.id}>
                               <TableCell className="pl-10 text-sm text-muted-foreground whitespace-nowrap">
-                                {new Date(op.data).toLocaleDateString('pt-BR')}
+                                {op.data.slice(0, 10).split('-').reverse().join('/')}
                               </TableCell>
                               <TableCell>
                                 <Badge variant="outline" className="text-xs">

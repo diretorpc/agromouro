@@ -279,7 +279,7 @@ export default function DashboardPage() {
       )
       case 'ultima-op': return (
         <SmallCard href="/operacoes" label="Última Operação"
-          value={operacoes[0] ? new Date(operacoes[0].data).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '—'}
+          value={operacoes[0] ? operacoes[0].data.slice(5, 10).split('-').reverse().join('/') : '—'}
           sub={operacoes[0]?.tipo ?? 'nenhuma registrada'}
           accent="#6B7280" dragHandle={dragHandle} />
       )
@@ -437,7 +437,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="text-right shrink-0">
                     <FonteLabel fonte={op.fonte} />
-                    <p className="text-xs text-muted-foreground">{new Date(op.data).toLocaleDateString('pt-BR')}</p>
+                    <p className="text-xs text-muted-foreground">{op.data.slice(0, 10).split('-').reverse().join('/')}</p>
                   </div>
                 </div>
               ))}
