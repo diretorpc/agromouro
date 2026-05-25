@@ -275,17 +275,13 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 
 > **Pós-MVP — Adubação com taxa variável:** agricultura de precisão usa mapas de prescrição (shapefile/ISO-XML), não dose homogênea. O fluxo WhatsApp atual não cobre isso — virá da integração John Deere ou import de prescrição em fase posterior.
 
-#### Passo 4 — Inserir em `itens_operacao` (loop)
-- [ ] **N inserts**, um por insumo, todos com o mesmo `operacao_id` (guarda-chuva)
-  ```ts
-  for (const item of insumosResolvidos) {
-    supabase.from('itens_operacao').insert({
-      operacao_id, insumo_id: item.insumo_id, descricao: item.nome,
-      quantidade: item.quantidade, unidade: item.unidade,
-    })
-  }
-  ```
-- [ ] Custo total da operação na página /custos = soma de todos os itens
+#### Passo 4 — Inserir em `itens_operacao` (batch) ✅
+- [x] INSERT em `operacoes` agora captura o id gerado (`.select('id').single()`)
+- [x] Chama `resolverInsumos()` (Passo 3) após criar a operação
+- [x] **1 round-trip único** (batch insert com array), não loop — N insumos viram 1 INSERT
+- [x] Filtra apenas itens `ok: true` com type guard TypeScript (`Extract<..., { ok: true }>`)
+- [x] Itens com falha (`ok: false`) viram avisos no WhatsApp, não bloqueiam o sucesso parcial
+- [x] Custo total da operação na página /custos = soma de todos os itens (calcula automaticamente)
 
 #### Passo 5 — Inserir em `movimentacoes_estoque` (loop)
 - [ ] **N inserts**, um por insumo, todos com o mesmo `operacao_id`

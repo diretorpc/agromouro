@@ -237,27 +237,51 @@ async function processarMensagem(telefone: string, texto: string) {
     } else if (tipo === 'OPERACAO' || tipo === 'APLICACAO_INSUMO') {
       const talhao = dados.talhao ? await buscarTalhao(dados.talhao) : null
 
-      const { error } = await supabase.from('operacoes').insert({
-        talhao_id: talhao?.id || null,
-        tipo:      dados.operacao_tipo || 'outro',
-        data:      dados.data || new Date().toISOString().split('T')[0],
-        descricao: texto.slice(0, 500),
-        fonte:     'whatsapp',
-      })
+      // Insert da operação capturando o id gerado
+      const { data: operacao, error: opErr } = await supabase
+        .from('operacoes')
+        .insert({
+          talhao_id: talhao?.id || null,
+          tipo:      dados.operacao_tipo || 'outro',
+          data:      dados.data || new Date().toISOString().split('T')[0],
+          descricao: texto.slice(0, 500),
+          fonte:     'whatsapp',
+        })
+        .select('id')
+        .single()
 
-      if (error) throw error
+      if (opErr || !operacao) throw opErr ?? new Error('Falha ao criar operação')
+      const operacaoId = operacao.id
 
-      const nomeLocal = talhao ? `Talhão ${talhao.nome} (${talhao.area_ha}ha)` : 'talhão não identificado'
-      const insumosInfo = insumos.length > 0
-        ? '\n' + insumos.map(i => {
-            const dose = i.dose_valor != null
-              ? `${i.dose_valor}${i.dose_unidade ?? ''}${i.dose_tipo === 'por_ha' ? '/ha' : ''}`
-              : ''
-            return `📦 ${i.nome}${dose ? ` — ${dose}` : ''}`
-          }).join('\n')
-        : ''
+      // Resolve insumos (busca id no banco, calcula quantidade total)
+      const resolvidos = await resolverInsumos(insumos, talhao)
+      const okItems   = resolvidos.filter((i): i is Extract<InsumoResolvido, { ok: true }>  => i.ok === true)
+      const failItems = resolvidos.filter((i): i is Extract<InsumoResolvido, { ok: false }> => i.ok === false)
 
-      resposta = `✅ Registrado!\n📍 ${nomeLocal}\n🔧 ${dados.operacao_tipo || 'Operação'}${insumosInfo}\n📅 ${dados.data || 'hoje'}`
+      // Batch insert em itens_operacao (alimenta a página /custos)
+      if (okItems.length > 0) {
+        const { error: itensErr } = await supabase.from('itens_operacao').insert(
+          okItems.map(item => ({
+            operacao_id: operacaoId,
+            insumo_id:   item.insumo_id,
+            descricao:   item.nome,
+            quantidade:  item.quantidade,
+            unidade:     item.unidade,
+          })),
+        )
+        if (itensErr) {
+          console.error('[WhatsApp] Erro ao inserir itens_operacao:', itensErr.message)
+        }
+      }
+
+      // Compor resposta no WhatsApp
+      const nomeLocal  = talhao ? `Talhão ${talhao.nome} (${talhao.area_ha}ha)` : 'talhão não identificado'
+      const linhasOk   = okItems.map(i => `📦 ${i.nome}: ${i.quantidade}${i.unidade}`).join('\n')
+      const linhasFail = failItems.map(f => `❌ ${f.nome}: ${f.erro}`).join('\n')
+
+      resposta = `✅ Registrado!\n📍 ${nomeLocal}\n🔧 ${dados.operacao_tipo || 'Operação'}\n📅 ${dados.data || 'hoje'}`
+      if (linhasOk)   resposta += `\n\n${linhasOk}`
+      if (linhasFail) resposta += `\n\n⚠️ Não processados:\n${linhasFail}`
 
       if (!talhao && dados.talhao) {
         resposta += `\n\n⚠️ Não encontrei o talhão "${dados.talhao}". Verifique o nome.`
