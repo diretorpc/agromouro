@@ -283,9 +283,12 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 - [x] Itens com falha (`ok: false`) viram avisos no WhatsApp, não bloqueiam o sucesso parcial
 - [x] Custo total da operação na página /custos = soma de todos os itens (calcula automaticamente)
 
-#### Passo 5 — Inserir em `movimentacoes_estoque` (loop)
-- [ ] **N inserts**, um por insumo, todos com o mesmo `operacao_id`
-- [ ] Cada linha aparece separada no histórico de estoque
+#### Passo 5 — Inserir em `movimentacoes_estoque` (batch) ✅
+- [x] Batch insert (1 round-trip) reaproveitando os mesmos `okItems` e `operacaoId` do Passo 4
+- [x] `origem: 'operacao'` semanticamente correto — `operacoes.fonte = 'whatsapp'` já registra que veio do WA
+- [x] Página `/estoque` mostra cada saída automaticamente com etiqueta "🌾 Operação / Lagoa" (via join `operacoes(talhoes(nome))` que já existia desde PR #8)
+- [x] Espelha exatamente o que o formulário web em `/operacoes` faz desde o PR #7
+- [x] Falha no insert é logada mas não aborta — itens_operacao continuam válidos
 
 #### Passo 6 — Decrementar `estoque.quantidade_atual` (loop)
 - [ ] **N updates**, um por insumo, subtraindo a quantidade usada de cada um

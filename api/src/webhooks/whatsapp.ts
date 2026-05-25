@@ -236,6 +236,7 @@ async function processarMensagem(telefone: string, texto: string) {
 
     } else if (tipo === 'OPERACAO' || tipo === 'APLICACAO_INSUMO') {
       const talhao = dados.talhao ? await buscarTalhao(dados.talhao) : null
+      const dataOp = dados.data || new Date().toISOString().split('T')[0]
 
       // Insert da operação capturando o id gerado
       const { data: operacao, error: opErr } = await supabase
@@ -243,7 +244,7 @@ async function processarMensagem(telefone: string, texto: string) {
         .insert({
           talhao_id: talhao?.id || null,
           tipo:      dados.operacao_tipo || 'outro',
-          data:      dados.data || new Date().toISOString().split('T')[0],
+          data:      dataOp,
           descricao: texto.slice(0, 500),
           fonte:     'whatsapp',
         })
@@ -258,8 +259,8 @@ async function processarMensagem(telefone: string, texto: string) {
       const okItems   = resolvidos.filter((i): i is Extract<InsumoResolvido, { ok: true }>  => i.ok === true)
       const failItems = resolvidos.filter((i): i is Extract<InsumoResolvido, { ok: false }> => i.ok === false)
 
-      // Batch insert em itens_operacao (alimenta a página /custos)
       if (okItems.length > 0) {
+        // Batch insert em itens_operacao (alimenta a página /custos)
         const { error: itensErr } = await supabase.from('itens_operacao').insert(
           okItems.map(item => ({
             operacao_id: operacaoId,
@@ -271,6 +272,21 @@ async function processarMensagem(telefone: string, texto: string) {
         )
         if (itensErr) {
           console.error('[WhatsApp] Erro ao inserir itens_operacao:', itensErr.message)
+        }
+
+        // Batch insert em movimentacoes_estoque (alimenta o histórico em /estoque)
+        const { error: movErr } = await supabase.from('movimentacoes_estoque').insert(
+          okItems.map(item => ({
+            insumo_id:   item.insumo_id,
+            tipo:        'saida' as const,
+            quantidade:  item.quantidade,
+            data:        dataOp,
+            origem:      'operacao' as const,
+            operacao_id: operacaoId,
+          })),
+        )
+        if (movErr) {
+          console.error('[WhatsApp] Erro ao inserir movimentacoes_estoque:', movErr.message)
         }
       }
 
