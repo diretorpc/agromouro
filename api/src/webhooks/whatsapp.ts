@@ -142,6 +142,23 @@ async function buscarTalhao(nomeTalhao: string) {
   return data
 }
 
+// ─── Buscar insumo por nome ──────────────────────────────────────────────────
+// Decisão MVP: sem auto-criação. Se não achar, retorna null e o chamador avisa
+// o agricultor no WA. Fuzzy match + confirmação ficam para pós-MVP.
+async function buscarInsumo(nome: string) {
+  const nomeSanitizado = nome.trim().slice(0, 100)
+  if (!nomeSanitizado) return null
+
+  const { data } = await supabase
+    .from('insumos')
+    .select('id, nome, unidade')
+    .ilike('nome', `%${nomeSanitizado}%`)
+    .limit(1)
+    .maybeSingle()
+
+  return data
+}
+
 // ─── Processar mensagem recebida ──────────────────────────────────────────────
 async function processarMensagem(telefone: string, texto: string) {
   try {

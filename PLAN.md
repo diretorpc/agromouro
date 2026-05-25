@@ -249,10 +249,15 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
   - Para `CONSULTA_ESTOQUE`: `insumos[]` com 1+ produtos (permite "quanto tem de glifosato e ureia?")
   - Adicionar exemplo de múltiplos insumos no prompt para ensinar o padrão ao Haiku
 
-#### Passo 2 — Buscar insumo no banco
-- [ ] Adicionar função `buscarInsumo(nome)` — busca por `ilike` como já existe em `consultarEstoque()`
-- [ ] Retorna `{ id, nome, unidade }` ou `null`
-- [ ] Será chamada em loop sobre `dados.insumos[]`
+#### Passo 2 — Buscar insumo no banco ✅
+> **Decisão:** sem auto-criação no MVP. Se não achar, avisa o agricultor no WhatsApp para reformular. Mantém o banco limpo evitando duplicatas por typo ("Scoore" vs "Score") ou abreviação ("ureia" vs "Ureia 45N"). Fluxo fuzzy match + confirmação interativa fica para pós-MVP.
+
+- [x] Adicionar função `buscarInsumo(nome)` — busca por `ilike` (case-insensitive, tolerante a sufixos)
+- [x] Retorna `{ id, nome, unidade }` ou `null` quando não encontra
+- [ ] Será chamada em loop sobre `dados.insumos[]` no Passo 3
+- [ ] Insumos não encontrados → marcar como falha parcial (Passo 7 lista no WA)
+
+**Pós-MVP (Passo 8 ou depois):** fluxo de fuzzy match — se não achar exato, busca por similaridade, sugere candidatos via WhatsApp, agricultor confirma com número. Permite "criar como novo" como última opção, mas via confirmação explícita.
 
 #### Passo 3 — Calcular quantidade total (por insumo)
 - [ ] Para cada item de `dados.insumos[]`:
