@@ -182,6 +182,12 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
         insumo_id:      insumo.id,
       })
 
+      if (item.unitValue > 0) {
+        await supabase.from('estoque')
+          .update({ preco_unitario: item.unitValue })
+          .eq('insumo_id', insumo.id)
+      }
+
       await supabase.from('movimentacoes_estoque').insert({
         insumo_id:      insumo.id,
         tipo:           'entrada',

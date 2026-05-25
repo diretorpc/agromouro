@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -50,7 +50,7 @@ type ProdutoForm = {
   modo: 'estoque' | 'manual'
   insumo_id: string
   nome_manual: string
-  unidade_manual: string
+  unidade_dose: 'L' | 'KG' | 'ML'
   dose_por_ha: string
 }
 
@@ -77,6 +77,9 @@ export default function OperacoesPage() {
   const [salvando, setSalvando] = useState(false)
   const [erroSalvar, setErroSalvar] = useState<string | null>(null)
 
+  const [editingOp, setEditingOp] = useState<OperacaoCompleta | null>(null)
+  const [deletando, setDeletando] = useState<string | null>(null)
+
   const [filtroTalhao, setFiltroTalhao] = useState('todos')
   const [form, setForm] = useState({
     talhao_id: '',
@@ -100,8 +103,6 @@ export default function OperacoesPage() {
     if (resOps.error) console.error('[Operações] ops:', resOps.error)
     if (resTalhoes.error) console.error('[Operações] talhoes:', resTalhoes.error)
     if (resInsumos.error) console.error('[Operações] insumos:', resInsumos.error)
-    console.log('[debug] talhoes[0]:', resTalhoes.data?.[0])
-    console.log('[debug] insumos[0]:', resInsumos.data?.[0])
 
     setOperacoes((resOps.data ?? []) as unknown as OperacaoCompleta[])
     setTalhoes((resTalhoes.data ?? []) as Talhao[])
@@ -112,7 +113,7 @@ export default function OperacoesPage() {
   useEffect(() => { loadData() }, [])
 
   function addProduto() {
-    setProdutos(p => [...p, { modo: 'estoque', insumo_id: '', nome_manual: '', unidade_manual: '', dose_por_ha: '' }])
+    setProdutos(p => [...p, { modo: 'estoque', insumo_id: '', nome_manual: '', unidade_dose: 'L', dose_por_ha: '' }])
   }
 
   function removeProduto(idx: number) {
@@ -123,28 +124,110 @@ export default function OperacoesPage() {
     setProdutos(p => p.map((prod, i) => i === idx ? { ...prod, [field]: value } : prod))
   }
 
+  async function handleDelete(op: OperacaoCompleta) {
+    if (!confirm(`Excluir operação de ${tipoLabel(op.tipo)} em ${op.talhoes?.nome ?? 'talhão'}?\nOs produtos utilizados voltarão ao estoque.`)) return
+    setDeletando(op.id)
+
+    for (const item of op.itens_operacao ?? []) {
+      if (item.insumo_id && item.quantidade) {
+        const estoqueItem = insumos.find(i => i.insumo_id === item.insumo_id)
+        await supabase.from('movimentacoes_estoque').insert({
+          insumo_id: item.insumo_id,
+          tipo: 'entrada',
+          quantidade: item.quantidade,
+          data: new Date().toISOString().split('T')[0],
+          origem: 'manual',
+        })
+        if (estoqueItem) {
+          await supabase.from('estoque')
+            .update({ quantidade_atual: estoqueItem.quantidade_atual + item.quantidade })
+            .eq('insumo_id', item.insumo_id)
+        }
+      }
+    }
+
+    await supabase.from('operacoes').delete().eq('id', op.id)
+    setDeletando(null)
+    loadData()
+  }
+
+  function openEdit(op: OperacaoCompleta) {
+    setEditingOp(op)
+    setErroSalvar(null)
+    setForm({
+      talhao_id: op.talhao_id,
+      tipo: op.tipo,
+      data: op.data,
+      descricao: op.descricao ?? '',
+    })
+    setProdutos(
+      (op.itens_operacao ?? []).map(item => ({
+        modo: (item.insumo_id ? 'estoque' : 'manual') as 'estoque' | 'manual',
+        insumo_id: item.insumo_id ?? '',
+        nome_manual: item.descricao ?? '',
+        unidade_dose: (['L', 'KG', 'ML'].includes(item.unidade ?? '') ? item.unidade : 'L') as 'L' | 'KG' | 'ML',
+        dose_por_ha: item.dose_por_ha?.toString() ?? '',
+      }))
+    )
+    setModalOpen(true)
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!form.talhao_id || !form.tipo) return
     setSalvando(true)
     setErroSalvar(null)
 
-    const { data: op, error: opError } = await supabase
-      .from('operacoes')
-      .insert({
-        talhao_id: form.talhao_id,
-        tipo: form.tipo,
-        data: form.data,
-        descricao: form.descricao || '',
-        fonte: 'manual',
-      })
-      .select()
-      .single()
+    let opId: string
+    let estoqueAtual = insumos
 
-    if (opError || !op) {
-      setSalvando(false)
-      setErroSalvar(opError?.message ?? 'Erro ao criar operação')
-      return
+    if (editingOp) {
+      const { error: updateError } = await supabase
+        .from('operacoes')
+        .update({ talhao_id: form.talhao_id, tipo: form.tipo, data: form.data, descricao: form.descricao || '' })
+        .eq('id', editingOp.id)
+
+      if (updateError) {
+        setSalvando(false)
+        setErroSalvar(updateError.message)
+        return
+      }
+
+      // Devolver ao estoque os produtos da operação original
+      for (const item of editingOp.itens_operacao ?? []) {
+        if (item.insumo_id && item.quantidade) {
+          const est = insumos.find(i => i.insumo_id === item.insumo_id)
+          if (est) {
+            await supabase.from('estoque')
+              .update({ quantidade_atual: est.quantidade_atual + item.quantidade })
+              .eq('insumo_id', item.insumo_id)
+          }
+        }
+      }
+
+      await supabase.from('itens_operacao').delete().eq('operacao_id', editingOp.id)
+
+      // Buscar saldo atualizado antes de deduzir os novos produtos
+      const { data: freshEstoque } = await supabase
+        .from('estoque')
+        .select('insumo_id, quantidade_atual, insumos(id, nome, unidade)')
+      estoqueAtual = (freshEstoque ?? []) as unknown as InsumoEstoque[]
+
+      opId = editingOp.id
+    } else {
+      const { data: op, error: opError } = await supabase
+        .from('operacoes')
+        .insert({ talhao_id: form.talhao_id, tipo: form.tipo, data: form.data, descricao: form.descricao || '', fonte: 'manual' })
+        .select()
+        .single()
+
+      if (opError || !op) {
+        setSalvando(false)
+        setErroSalvar(opError?.message ?? 'Erro ao criar operação')
+        return
+      }
+
+      opId = op.id
     }
 
     const talhao = talhoes.find(t => t.id === form.talhao_id)
@@ -158,24 +241,15 @@ export default function OperacoesPage() {
       const quantidade = parseFloat((doseHa * areaHa).toFixed(4))
 
       if (prod.modo === 'estoque') {
-        const estoqueItem = insumos.find(i => i.insumo_id === prod.insumo_id)
-        const unidade = estoqueItem?.insumos.unidade ?? ''
+        const estoqueItem = estoqueAtual.find(i => i.insumo_id === prod.insumo_id)
 
         await supabase.from('itens_operacao').insert({
-          operacao_id: op.id,
-          insumo_id: prod.insumo_id,
-          descricao: null,
-          quantidade,
-          dose_por_ha: doseHa,
-          unidade,
+          operacao_id: opId, insumo_id: prod.insumo_id, descricao: null,
+          quantidade, dose_por_ha: doseHa, unidade: prod.unidade_dose,
         })
 
         await supabase.from('movimentacoes_estoque').insert({
-          insumo_id: prod.insumo_id,
-          tipo: 'saida',
-          quantidade,
-          data: form.data,
-          origem: 'manual',
+          insumo_id: prod.insumo_id, tipo: 'saida', quantidade, data: form.data, origem: 'manual',
         })
 
         if (estoqueItem) {
@@ -184,14 +258,9 @@ export default function OperacoesPage() {
             .eq('insumo_id', prod.insumo_id)
         }
       } else {
-        // produto manual — só registra, sem mexer no estoque
         await supabase.from('itens_operacao').insert({
-          operacao_id: op.id,
-          insumo_id: null,
-          descricao: prod.nome_manual.trim(),
-          quantidade,
-          dose_por_ha: doseHa,
-          unidade: prod.unidade_manual.trim() || null,
+          operacao_id: opId, insumo_id: null, descricao: prod.nome_manual.trim(),
+          quantidade, dose_por_ha: doseHa, unidade: prod.unidade_dose,
         })
       }
     }
@@ -199,6 +268,7 @@ export default function OperacoesPage() {
     setSalvando(false)
     setModalOpen(false)
     setErroSalvar(null)
+    setEditingOp(null)
     setForm({ talhao_id: '', tipo: '', data: new Date().toISOString().split('T')[0], descricao: '' })
     setProdutos([])
     loadData()
@@ -214,7 +284,7 @@ export default function OperacoesPage() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold">Operações</h1>
-        <Button size="sm" onClick={() => { setForm({ talhao_id: '', tipo: '', data: new Date().toISOString().split('T')[0], descricao: '' }); setProdutos([]); setModalOpen(true) }}>
+        <Button size="sm" onClick={() => { setEditingOp(null); setErroSalvar(null); setForm({ talhao_id: '', tipo: '', data: new Date().toISOString().split('T')[0], descricao: '' }); setProdutos([]); setModalOpen(true) }}>
           <Plus className="h-4 w-4 mr-1.5" />
           Nova Operação
         </Button>
@@ -246,12 +316,13 @@ export default function OperacoesPage() {
                 <TableHead>Produtos Utilizados</TableHead>
                 <TableHead>Descrição</TableHead>
                 <TableHead>Fonte</TableHead>
+                <TableHead className="w-20"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {operacoesFiltradas.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-10">
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-10">
                     Nenhuma operação encontrada.
                   </TableCell>
                 </TableRow>
@@ -264,18 +335,33 @@ export default function OperacoesPage() {
                   <TableCell>{op.talhoes?.nome ?? '—'}</TableCell>
                   <TableCell>
                     {op.itens_operacao && op.itens_operacao.length > 0 ? (
-                      <div className="space-y-0.5">
+                      <div className="space-y-1">
                         {op.itens_operacao.map(item => {
                           const nome = item.insumos?.nome ?? item.descricao ?? '—'
                           const unid = item.unidade ?? item.insumos?.unidade ?? ''
+                          const areaHa = talhoes.find(t => t.id === op.talhao_id)?.area_ha ?? 0
+                          const totalQtd = item.dose_por_ha != null && areaHa > 0
+                            ? (item.dose_por_ha * areaHa).toFixed(1)
+                            : null
                           return (
-                            <div key={item.id} className="text-xs">
-                              <span className="font-medium">{nome}</span>
-                              <span className="text-muted-foreground ml-1.5">
-                                {item.dose_por_ha != null
-                                  ? `${item.dose_por_ha} ${unid}/ha`
-                                  : `${item.quantidade} ${unid}`}
-                              </span>
+                            <div key={item.id} className="flex items-baseline gap-2 flex-wrap">
+                              <span className="text-xs font-medium">{nome}</span>
+                              {item.dose_por_ha != null ? (
+                                <>
+                                  <span className="text-sm text-foreground">
+                                    {item.dose_por_ha} {unid}/ha
+                                  </span>
+                                  {totalQtd && (
+                                    <span className="text-xs font-medium">
+                                      total {totalQtd} {unid}
+                                    </span>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="text-sm text-muted-foreground">
+                                  {item.quantidade} {unid}
+                                </span>
+                              )}
                             </div>
                           )
                         })}
@@ -290,6 +376,27 @@ export default function OperacoesPage() {
                   <TableCell>
                     <FonteLabel fonte={op.fonte} />
                   </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1 justify-end">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0"
+                        onClick={() => openEdit(op)}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0 text-red-400 hover:text-red-600"
+                        onClick={() => handleDelete(op)}
+                        disabled={deletando === op.id}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -297,10 +404,10 @@ export default function OperacoesPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={modalOpen} onOpenChange={open => { setModalOpen(open); if (!open) setErroSalvar(null) }}>
+      <Dialog open={modalOpen} onOpenChange={open => { setModalOpen(open); if (!open) { setErroSalvar(null); setEditingOp(null) } }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Nova Operação</DialogTitle>
+            <DialogTitle>{editingOp ? 'Editar Operação' : 'Nova Operação'}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
 
@@ -366,12 +473,8 @@ export default function OperacoesPage() {
               )}
 
               {produtos.map((prod, idx) => {
-                const estoqueItem = insumos.find(i => i.insumo_id === prod.insumo_id)
                 const talhao = talhoes.find(t => t.id === form.talhao_id)
                 const areaHa = talhao?.area_ha ?? 0
-                const unidade = prod.modo === 'estoque'
-                  ? (estoqueItem?.insumos.unidade ?? '—')
-                  : (prod.unidade_manual || '—')
                 const qtdTotal = prod.dose_por_ha && areaHa
                   ? (parseFloat(prod.dose_por_ha) * areaHa).toFixed(2)
                   : null
@@ -383,7 +486,7 @@ export default function OperacoesPage() {
                       <div className="flex rounded-md border overflow-hidden text-xs">
                         <button
                           type="button"
-                          onClick={() => setProdutos(p => p.map((x, i) => i === idx ? { ...x, modo: 'estoque', insumo_id: '', nome_manual: '', unidade_manual: '' } : x))}
+                          onClick={() => setProdutos(p => p.map((x, i) => i === idx ? { ...x, modo: 'estoque', insumo_id: '', nome_manual: '' } : x))}
                           className={`px-2.5 py-1 transition-colors ${prod.modo === 'estoque' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}`}
                         >
                           Do estoque
@@ -431,40 +534,44 @@ export default function OperacoesPage() {
                         </SelectContent>
                       </Select>
                     ) : (
-                      <div className="flex gap-2">
-                        <Input
-                          className="h-8 text-sm flex-1"
-                          placeholder="Nome do produto..."
-                          value={prod.nome_manual}
-                          onChange={e => setProdutos(p => p.map((x, i) => i === idx ? { ...x, nome_manual: e.target.value } : x))}
-                        />
-                        <Input
-                          className="h-8 text-sm w-20"
-                          placeholder="Unid."
-                          value={prod.unidade_manual}
-                          onChange={e => setProdutos(p => p.map((x, i) => i === idx ? { ...x, unidade_manual: e.target.value } : x))}
-                        />
-                      </div>
+                      <Input
+                        className="h-8 text-sm"
+                        placeholder="Nome do produto..."
+                        value={prod.nome_manual}
+                        onChange={e => setProdutos(p => p.map((x, i) => i === idx ? { ...x, nome_manual: e.target.value } : x))}
+                      />
                     )}
 
-                    {/* Dose por ha + total */}
-                    <div className="flex items-end gap-2">
-                      <div className="flex-1 space-y-1">
-                        <Label className="text-xs">Dose por ha ({unidade}/ha)</Label>
+                    {/* Dose por ha + seletor de unidade */}
+                    <div className="space-y-1">
+                      <Label className="text-xs">Dose por ha</Label>
+                      <div className="flex gap-1">
                         <Input
                           type="number"
                           step="any"
                           min="0"
-                          className="h-8 text-sm"
+                          className="h-8 text-sm flex-1"
                           placeholder="0"
                           value={prod.dose_por_ha}
                           onChange={e => updateProduto(idx, 'dose_por_ha', e.target.value)}
                         />
+                        <div className="flex rounded-md border overflow-hidden text-xs shrink-0">
+                          {(['L', 'KG', 'ML'] as const).map(u => (
+                            <button
+                              key={u}
+                              type="button"
+                              onClick={() => updateProduto(idx, 'unidade_dose', u)}
+                              className={`px-2 py-1 transition-colors ${prod.unidade_dose === u ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}`}
+                            >
+                              {u}/ha
+                            </button>
+                          ))}
+                        </div>
                       </div>
                       {qtdTotal && (
-                        <p className="text-xs text-muted-foreground pb-2">
+                        <p className="text-xs text-muted-foreground">
                           = <span className="font-semibold text-foreground">
-                            {qtdTotal} {unidade}
+                            {qtdTotal} {prod.unidade_dose}
                           </span> total
                         </p>
                       )}
@@ -492,11 +599,11 @@ export default function OperacoesPage() {
             )}
 
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setModalOpen(false)}>
+              <Button type="button" variant="outline" onClick={() => { setModalOpen(false); setEditingOp(null) }}>
                 Cancelar
               </Button>
               <Button type="submit" disabled={salvando || !form.talhao_id || !form.tipo}>
-                {salvando ? 'Salvando...' : 'Salvar'}
+                {salvando ? 'Salvando...' : editingOp ? 'Salvar alterações' : 'Salvar'}
               </Button>
             </DialogFooter>
           </form>
