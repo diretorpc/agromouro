@@ -10,22 +10,193 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 // ─── Schema de validação do payload Z-API ─────────────────────────────────────
 const zapiPayloadSchema = z.object({
-  phone:  z.string().min(8).max(20),
-  text:   z.object({ message: z.string().max(2000) }).optional(),
-  // outros campos do Z-API são ignorados
+  phone: z.string().min(8).max(20),
+  text:  z.object({ message: z.string().max(2000) }).optional(),
 }).passthrough()
 
-// ─── Normalizar número de telefone ───────────────────────────────────────────
 function normalizarPhone(phone: string): string {
-  return phone.replace(/\D/g, '') // remove tudo que não é dígito
+  return phone.replace(/\D/g, '')
+}
+
+// ─── Parsear resposta de confirmação posicional ou explícita ─────────────────
+// Suporta: "20\n20\nok" | "20 20 ok" | "1=20, 2=20, 3=ok"
+function parsearRespostaConfirmacao(texto: string, total: number): (number | 'ok')[] | null {
+  const textoLimpo = texto.trim()
+
+  // Formato explícito: "1=20, 2=ok" ou "1=20 2=ok"
+  if (/\d+=/.test(textoLimpo)) {
+    const mapa: Record<number, number | 'ok'> = {}
+    const matches = [...textoLimpo.matchAll(/(\d+)\s*=\s*([^\s,]+)/g)]
+
+    for (const match of matches) {
+      const idx   = parseInt(match[1], 10)
+      const valor = match[2].toLowerCase()
+      mapa[idx]   = valor === 'ok' ? 'ok' : parseFloat(valor)
+      if (typeof mapa[idx] === 'number' && isNaN(mapa[idx] as number)) return null
+    }
+
+    const resultado: (number | 'ok')[] = []
+    for (let i = 1; i <= total; i++) {
+      if (mapa[i] === undefined) return null
+      resultado.push(mapa[i])
+    }
+    return resultado
+  }
+
+  // Formato posicional: um valor por linha ou separado por espaço
+  const partes = textoLimpo.includes('\n')
+    ? textoLimpo.split('\n').map(s => s.trim()).filter(Boolean)
+    : textoLimpo.split(/\s+/)
+
+  if (partes.length !== total) return null
+
+  const resultado: (number | 'ok')[] = []
+  for (const parte of partes) {
+    if (parte.toLowerCase() === 'ok') {
+      resultado.push('ok')
+    } else {
+      const num = parseFloat(parte.replace(',', '.'))
+      if (isNaN(num) || num <= 0) return null
+      resultado.push(num)
+    }
+  }
+
+  return resultado
+}
+
+// ─── Processar resposta de confirmação de unidades comerciais ─────────────────
+async function processarConfirmacoes(telefone: string, texto: string): Promise<boolean> {
+  const agora = new Date().toISOString()
+
+  // Buscar confirmações enviadas mas ainda não respondidas para este telefone
+  const { data: pendentes } = await supabase
+    .from('confirmacoes_pendentes')
+    .select('*')
+    .eq('telefone', normalizarPhone(telefone))
+    .eq('enviado', true)
+    .eq('respondido', false)
+    .gt('expires_at', agora)
+    .order('ordem', { ascending: true })
+
+  if (!pendentes || pendentes.length === 0) return false
+
+  const fatores = parsearRespostaConfirmacao(texto, pendentes.length)
+
+  if (!fatores) {
+    // Formato não reconhecido — lembrar o usuário das pendências
+    const exemplo = pendentes.map((p, i) => {
+      const payload = p.payload as any
+      return p.fator_sugerido
+        ? `${i + 1}) ${payload.insumo_nome}: ok`
+        : `${i + 1}) ${payload.insumo_nome}: [número]`
+    }).join('\n')
+
+    await enviarMensagem(telefone,
+      `⚠️ Ainda aguardo confirmação de ${pendentes.length} item(s).\n\n` +
+      `Responda um valor por linha:\n${exemplo}`
+    )
+    return true
+  }
+
+  // Aplicar fatores e atualizar estoque
+  const nfeIds = new Set<string>()
+
+  for (let i = 0; i < pendentes.length; i++) {
+    const confirmacao = pendentes[i]
+    const payload     = confirmacao.payload as any
+    const resposta    = fatores[i]
+
+    let fator: number | null = null
+    if (resposta === 'ok') {
+      if (!confirmacao.fator_sugerido) {
+        await enviarMensagem(telefone,
+          `❌ Item ${i + 1} (${payload.insumo_nome}) não tem fator detectado automaticamente.\n` +
+          `Informe o número de ${payload.unidade_base} por ${payload.unidade_comercial}.`
+        )
+        return true
+      }
+      fator = Number(confirmacao.fator_sugerido)
+    } else {
+      fator = resposta as number
+    }
+
+    const quantidadeBase     = parseFloat((payload.quantidade_comercial * fator).toFixed(3))
+    const precoUnitarioBase  = parseFloat((payload.valor_unitario_comercial / fator).toFixed(4))
+
+    // Registrar movimentação com dados de conversão rastreados por transação
+    await supabase.from('movimentacoes_estoque').insert({
+      insumo_id:            payload.insumo_id,
+      tipo:                 'entrada',
+      quantidade:           quantidadeBase,
+      data:                 payload.data,
+      origem:               'nfe',
+      nota_fiscal_id:       payload.nfe_id,
+      unidade_comercial:    payload.unidade_comercial,
+      quantidade_comercial: payload.quantidade_comercial,
+      fator_conversao:      fator,
+    })
+
+    await supabase.rpc('incrementar_estoque', {
+      p_insumo_id:  payload.insumo_id,
+      p_quantidade: quantidadeBase,
+    })
+
+    if (precoUnitarioBase > 0) {
+      await supabase.from('estoque')
+        .update({ preco_medio_unitario: precoUnitarioBase })
+        .eq('insumo_id', payload.insumo_id)
+    }
+
+    await supabase.from('confirmacoes_pendentes')
+      .update({ respondido: true, fator_usado: fator })
+      .eq('id', confirmacao.id)
+
+    nfeIds.add(payload.nfe_id)
+
+    console.log(
+      `[WhatsApp] Conversão confirmada: ${payload.insumo_nome} — ` +
+      `${payload.quantidade_comercial} ${payload.unidade_comercial} × ${fator} = ${quantidadeBase} ${payload.unidade_base}`
+    )
+  }
+
+  // Verificar se todas as confirmações de cada NF-e foram respondidas
+  for (const nfeId of nfeIds) {
+    const { count } = await supabase
+      .from('confirmacoes_pendentes')
+      .select('*', { count: 'exact', head: true })
+      .eq('payload->>nfe_id', nfeId)
+      .eq('respondido', false)
+
+    if (count === 0) {
+      await supabase.from('notas_fiscais')
+        .update({ status: 'processada' })
+        .eq('id', nfeId)
+
+      const { data: nfe } = await supabase
+        .from('notas_fiscais')
+        .select('numero, emitente_nome, valor_total')
+        .eq('id', nfeId)
+        .single()
+
+      if (nfe) {
+        await enviarMensagem(telefone,
+          `✅ *NF-e processada*\n` +
+          `👤 ${nfe.emitente_nome}\n` +
+          `💰 R$ ${Number(nfe.valor_total).toFixed(2)}\n` +
+          `📦 Estoque atualizado com conversão confirmada.`
+        )
+      }
+    }
+  }
+
+  return true
 }
 
 // ─── Classificação da mensagem com Claude Haiku ───────────────────────────────
-// SEGURANÇA: a mensagem do usuário é passada como campo separado (role: user),
-// nunca interpolada dentro do system prompt — evita prompt injection.
+// SEGURANÇA: mensagem do usuário em role:user — nunca interpolada no system prompt.
 async function classificarMensagem(texto: string) {
   const response = await anthropic.messages.create({
-    model: 'claude-haiku-4-5',
+    model:      'claude-haiku-4-5',
     max_tokens: 512,
     system: `Você é um assistente de gestão agrícola brasileiro.
 Classifique a mensagem do agricultor em uma categoria e extraia dados relevantes.
@@ -49,16 +220,12 @@ Responda SOMENTE em JSON válido, sem texto extra:
     "cultura": "nome da cultura mencionada (ou null)"
   }
 }`,
-    messages: [
-      // Mensagem do usuário em campo separado — não concatenada ao prompt
-      { role: 'user', content: texto },
-    ],
+    messages: [{ role: 'user', content: texto }],
   })
 
   const content = response.content[0]
   if (content.type !== 'text') throw new Error('Resposta inesperada da IA')
 
-  // Parse seguro com tratamento de erro
   try {
     return JSON.parse(content.text)
   } catch {
@@ -70,8 +237,6 @@ Responda SOMENTE em JSON válido, sem texto extra:
 async function consultarEstoque(nomeInsumo: string): Promise<string> {
   const nomeSanitizado = nomeInsumo.trim().slice(0, 100)
 
-  // Supabase não suporta .ilike() em coluna de tabela relacionada.
-  // Solução: buscar o insumo primeiro, depois buscar o estoque pelo ID.
   const { data: insumos } = await supabase
     .from('insumos')
     .select('id, nome, unidade')
@@ -115,11 +280,15 @@ async function buscarTalhao(nomeTalhao: string) {
 
 // ─── Processar mensagem recebida ──────────────────────────────────────────────
 async function processarMensagem(telefone: string, texto: string) {
-  let resposta = ''
-
   try {
+    // Antes do Haiku: interceptar respostas de confirmação de unidades comerciais
+    const foiConfirmacao = await processarConfirmacoes(telefone, texto)
+    if (foiConfirmacao) return
+
+    // Fluxo normal via Haiku
     const classificacao = await classificarMensagem(texto)
     const { tipo, dados } = classificacao
+    let resposta = ''
 
     if (tipo === 'CONSULTA_ESTOQUE' && dados.insumo) {
       resposta = await consultarEstoque(dados.insumo)
@@ -128,11 +297,11 @@ async function processarMensagem(telefone: string, texto: string) {
       const talhao = dados.talhao ? await buscarTalhao(dados.talhao) : null
 
       const { error } = await supabase.from('operacoes').insert({
-        talhao_id:  talhao?.id || null,
-        tipo:       dados.operacao_tipo || 'outro',
-        data:       dados.data || new Date().toISOString().split('T')[0],
-        descricao:  texto.slice(0, 500), // limitar tamanho salvo
-        fonte:      'whatsapp',
+        talhao_id: talhao?.id || null,
+        tipo:      dados.operacao_tipo || 'outro',
+        data:      dados.data || new Date().toISOString().split('T')[0],
+        descricao: texto.slice(0, 500),
+        fonte:     'whatsapp',
       })
 
       if (error) throw error
@@ -154,39 +323,28 @@ async function processarMensagem(telefone: string, texto: string) {
         `• "Quanto tem de glifosato no estoque?"`
     }
 
+    await enviarMensagem(telefone, resposta)
+
   } catch (err) {
     console.error('[WhatsApp] Erro ao processar mensagem:', err instanceof Error ? err.message : err)
-    resposta = `Tive um problema ao processar sua mensagem. Tente novamente em instantes.`
+    await enviarMensagem(telefone, `Tive um problema ao processar sua mensagem. Tente novamente em instantes.`)
   }
-
-  await enviarMensagem(telefone, resposta)
 }
 
 // ─── Rota do webhook ──────────────────────────────────────────────────────────
 whatsappWebhook.post('/', async (req, res) => {
-  // Validar estrutura do payload com Zod antes de qualquer processamento
   const parsed = zapiPayloadSchema.safeParse(req.body)
-  if (!parsed.success) {
-    return res.status(200).json({ ok: true }) // Ignorar silenciosamente payloads malformados
-  }
+  if (!parsed.success) return res.status(200).json({ ok: true })
 
   const { phone, text } = parsed.data
 
-  // Ignorar mensagens sem texto
-  if (!text?.message?.trim()) {
-    return res.status(200).json({ ok: true })
-  }
+  if (!text?.message?.trim()) return res.status(200).json({ ok: true })
 
-  // Ignorar mensagens do próprio bot (normalizar ambos antes de comparar)
   const botPhone = normalizarPhone(process.env.ZAPI_PHONE || '')
-  if (normalizarPhone(phone) === botPhone) {
-    return res.status(200).json({ ok: true })
-  }
+  if (normalizarPhone(phone) === botPhone) return res.status(200).json({ ok: true })
 
-  // Limitar tamanho da mensagem processada
   const texto = text.message.trim().slice(0, 1000)
 
-  // Processar em background — responder 200 imediatamente
   processarMensagem(phone, texto).catch((err) =>
     console.error('[WhatsApp] Erro inesperado em background:', err instanceof Error ? err.message : err)
   )

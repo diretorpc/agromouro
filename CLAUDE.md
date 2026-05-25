@@ -1,5 +1,19 @@
 # AgroMouro — Plataforma de Gestão Agrícola
 
+## LEITURA OBRIGATÓRIA AO INICIAR QUALQUER SESSÃO
+
+Antes de qualquer resposta, leia sempre estes arquivos:
+1. Todos os arquivos em `C:/Users/Dib/.claude/projects/c--Agromouro-base/memory/` (começando pelo MEMORY.md)
+2. `PLAN.md` na raiz do projeto
+3. Este arquivo (CLAUDE.md)
+
+Isso garante contexto completo sobre decisões tomadas, estado atual e o que está pendente.
+
+## NF-e — informação crítica
+NF-e é processada **automaticamente** via Make (make.com), que monitora dois emails Outlook
+(matheusmouro@hotmail.com e ivanmouro@hotmail.com) a cada 15 min e envia o XML para
+`/webhook/nfe-email` no Railway. **NÃO é manual.** NFE.io foi descartado (exige CNPJ).
+
 ## O que é este projeto
 
 Sistema de gestão agrícola para fazenda de grãos (soja, milho, trigo).
@@ -15,7 +29,7 @@ e só incomoda o agricultor quando não tem outro jeito.
 - **web/** → Next.js 14 App Router + Tailwind CSS + shadcn/ui (deploy: Vercel)
 - **Banco** → Supabase (PostgreSQL + Auth + Realtime)
 - **WhatsApp** → Z-API + Claude Haiku (parsing de mensagens)
-- **NF-e** → NFE.io (webhook de notas fiscais de entrada)
+- **NF-e** → Make (make.com) monitora emails Outlook → POST `/webhook/nfe-email` no Railway
 - **IA** → Anthropic Claude (Haiku para parsing rápido, Sonnet para prescrições de solo)
 
 ## Convenções de código

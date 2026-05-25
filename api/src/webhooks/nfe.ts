@@ -31,11 +31,13 @@ nfeWebhook.post('/', async (req, res) => {
       emitenteCnpj,
       valorTotal,
       items: (items as any[]).slice(0, 200).map((item: any) => ({
-        description: item.description || '',
-        quantity:    item.quantity,
-        unit:        item.unit,
-        unitValue:   item.unitValue,
-        totalValue:  item.totalValue,
+        description:  item.description || '',
+        quantity:     item.quantity,
+        unit:         item.unit,
+        unitValue:    item.unitValue,
+        totalValue:   item.totalValue,
+        quantityTrib: item.quantityTrib ?? item.quantity,
+        unitTrib:     item.unitTrib     ?? item.unit,
       })),
     }
 
