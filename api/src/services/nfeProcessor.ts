@@ -153,7 +153,8 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
 
   const itensSeguros  = items.slice(0, 200)
   const dataFormatada = dataEmissao?.split('T')[0] || new Date().toISOString().split('T')[0]
-  const phone         = process.env.ZAPI_PHONE!
+  // Normalizar para garantir match com o telefone que chega no webhook (só dígitos)
+  const phone         = (process.env.ZAPI_PHONE || '').replace(/\D/g, '')
 
   let nfeId: string | null = null
 

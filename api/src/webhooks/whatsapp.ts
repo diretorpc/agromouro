@@ -66,17 +66,22 @@ function parsearRespostaConfirmacao(texto: string, total: number): (number | 'ok
 
 // ─── Processar resposta de confirmação de unidades comerciais ─────────────────
 async function processarConfirmacoes(telefone: string, texto: string): Promise<boolean> {
-  const agora = new Date().toISOString()
+  const agora           = new Date().toISOString()
+  const telefoneLimpo   = normalizarPhone(telefone)
+
+  console.log(`[WhatsApp] processarConfirmacoes — telefone="${telefoneLimpo}" texto="${texto.slice(0, 50)}"`)
 
   // Buscar confirmações enviadas mas ainda não respondidas para este telefone
   const { data: pendentes } = await supabase
     .from('confirmacoes_pendentes')
     .select('*')
-    .eq('telefone', normalizarPhone(telefone))
+    .eq('telefone', telefoneLimpo)
     .eq('enviado', true)
     .eq('respondido', false)
     .gt('expires_at', agora)
     .order('ordem', { ascending: true })
+
+  console.log(`[WhatsApp] Pendentes encontradas: ${pendentes?.length ?? 0}`)
 
   if (!pendentes || pendentes.length === 0) return false
 
