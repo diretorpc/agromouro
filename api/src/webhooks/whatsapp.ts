@@ -71,17 +71,17 @@ async function processarConfirmacoes(telefone: string, texto: string): Promise<b
 
   console.log(`[WhatsApp] processarConfirmacoes — telefone="${telefoneLimpo}" texto="${texto.slice(0, 50)}"`)
 
-  // Buscar confirmações enviadas mas ainda não respondidas para este telefone
+  // Sistema single-tenant: busca todas as pendências em aberto (não filtra por telefone
+  // porque ZAPI_PHONE pode diferir do número que chega no webhook dependendo da configuração Z-API)
   const { data: pendentes } = await supabase
     .from('confirmacoes_pendentes')
     .select('*')
-    .eq('telefone', telefoneLimpo)
     .eq('enviado', true)
     .eq('respondido', false)
     .gt('expires_at', agora)
     .order('ordem', { ascending: true })
 
-  console.log(`[WhatsApp] Pendentes encontradas: ${pendentes?.length ?? 0}`)
+  console.log(`[WhatsApp] Pendentes encontradas: ${pendentes?.length ?? 0}${pendentes?.[0] ? ` (telefone armazenado: ${pendentes[0].telefone})` : ''}`)
 
   if (!pendentes || pendentes.length === 0) return false
 
