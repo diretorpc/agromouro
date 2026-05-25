@@ -200,22 +200,95 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
   Responda SOMENTE em JSON:
   { "tipo": "...", "dados": { ... } }
   ```
-- [ ] Implementar parser para `OPERACAO`:
-  - Entrada: `"Pulverizei o talhão 3 hoje com 2L/ha de Score"`
-  - Saída: salva em `operacoes` + `movimentacoes_estoque` (saída)
-  - Confirmação: `"✅ Pulverização salva no Talhão 3 — 2L/ha de Score. Área: 35ha."`
-  - ⚠️ Salva em `operacoes` ✅ — falta registrar saída em `movimentacoes_estoque`
-- [ ] Implementar parser para `APLICACAO_INSUMO`:
-  - Entrada: `"Plantei a soja no talhão 5 ontem, variedade NS 7338"`
-  - Saída: salva operação de plantio + atualiza safra
-  - Confirmação: `"✅ Plantio registrado — Talhão 5, Soja NS 7338."`
-  - ⚠️ Salva em `operacoes` ✅ — falta criar/atualizar registro na tabela `safras`
 - [x] Implementar parser para `CONSULTA`:
   - Entrada: `"Quanto de glifosato tem em estoque?"`
   - Saída: consulta banco e responde com o número
 - [x] Resposta padrão para `DESCONHECIDO`:
   - `"Não entendi bem. Pode reformular? Exemplos: 'pulverizei o talhão 2', 'qual o estoque de ureia'"`
 - [x] Tratar erros com graciosidade (nunca deixar mensagem sem resposta)
+- [ ] Implementar parser para `APLICACAO_INSUMO`:
+  - Entrada: `"Plantei a soja no talhão 5 ontem, variedade NS 7338"`
+  - Saída: salva operação de plantio + atualiza safra
+  - Confirmação: `"✅ Plantio registrado — Talhão 5, Soja NS 7338."`
+  - ⚠️ Salva em `operacoes` ✅ — falta criar/atualizar registro na tabela `safras`
+
+### 2.5 WhatsApp seguro + saída de estoque automática
+> Pré-requisito: número pessoal conectado — qualquer conversa acionaria o bot sem proteção.
+
+#### Passo 0 — Dupla proteção (whitelist + prefixo de ativação) ✅
+- [x] Adicionar variáveis de ambiente no Railway:
+  - `WHATSAPP_AUTHORIZED_PHONES` — números autorizados separados por vírgula (ex: `5544999990000,5544988880000`)
+  - `WHATSAPP_TRIGGER_PREFIX` — prefixo que ativa o bot (ex: `!agro`)
+- [x] No webhook, antes de qualquer processamento:
+  1. Verificar se `phone` está na whitelist → se não, retornar 200 silenciosamente
+  2. Verificar se mensagem começa com o prefixo → se não, retornar 200 silenciosamente
+  3. Fazer strip do prefixo antes de passar ao Claude
+- [x] Resultado: conversas normais nunca são interceptadas; bot só age com `!agro <mensagem>`
+- [ ] **Pendente:** configurar `WHATSAPP_AUTHORIZED_PHONES` e `WHATSAPP_TRIGGER_PREFIX` no Railway com os valores reais
+
+#### Passo 1 — Melhorar extração do Claude Haiku
+- [ ] Atualizar prompt para retornar campos estruturados de quantidade:
+  ```json
+  {
+    "tipo": "OPERACAO",
+    "dados": {
+      "talhao": "Lagoa",
+      "operacao_tipo": "pulverizacao",
+      "insumo": "Score",
+      "dose_valor": 2,
+      "dose_unidade": "L",
+      "dose_tipo": "por_ha",
+      "data": "2026-05-25"
+    }
+  }
+  ```
+  - `dose_tipo`: `"por_ha"` (ex: 2L/ha) ou `"total"` (ex: 50L direto) ou `null`
+
+#### Passo 2 — Buscar insumo no banco
+- [ ] Adicionar função `buscarInsumo(nome)` — busca por `ilike` como já existe em `consultarEstoque()`
+- [ ] Retorna `{ id, nome, unidade }` ou `null`
+
+#### Passo 3 — Calcular quantidade total
+- [ ] Se `dose_tipo = "por_ha"` e talhão com `area_ha` → `quantidade = dose_valor × area_ha`
+- [ ] Se `dose_tipo = "total"` → `quantidade = dose_valor` direto
+- [ ] Se não for possível calcular → salva só a operação, avisa no WA, não cria movimentação
+
+#### Passo 4 — Inserir em `itens_operacao`
+- [ ] Necessário para aparecer na página de **Custos por Talhão** automaticamente
+  ```ts
+  supabase.from('itens_operacao').insert({
+    operacao_id, insumo_id, descricao: nomeInsumo, quantidade, unidade,
+  })
+  ```
+- [ ] Custo calculado automaticamente pela página: `quantidade × estoque.preco_medio_unitario`
+
+#### Passo 5 — Inserir em `movimentacoes_estoque`
+- [ ] Registra saída no histórico de estoque, vinculada à operação
+  ```ts
+  supabase.from('movimentacoes_estoque').insert({
+    insumo_id, tipo: 'saida', quantidade, data, origem: 'operacao', operacao_id,
+  })
+  ```
+
+#### Passo 6 — Decrementar `estoque.quantidade_atual`
+- [ ] Update direto na tabela `estoque` subtraindo a quantidade usada
+
+#### Passo 7 — Verificar mínimo e compor resposta final no WA
+- [ ] Se `quantidade_atual <= quantidade_minima_alerta` após o update → incluir aviso
+- [ ] Resposta final:
+  ```
+  ✅ Registrado!
+  📍 Talhão Lagoa (35ha)
+  🔧 Pulverização
+  📦 Score: saída 70L — estoque: 130L restantes
+  ⚠️ Score abaixo do mínimo! (mín: 200L)  ← só se aplicável
+  ```
+
+#### Edge cases a tratar
+- Insumo não encontrado → avisa no WA, não cria movimentação nem item
+- Dose L/ha sem talhão identificado → salva operação sem quantidade, avisa
+- Estoque insuficiente → registra normalmente (não bloqueia), mas avisa
+- Múltiplos insumos na mesma mensagem → escopo MVP: processa apenas o primeiro
 
 ### 2.5 Deploy no Railway
 - [x] **Antes:** garantir que o código está commitado e enviado para o GitHub (`git push`)

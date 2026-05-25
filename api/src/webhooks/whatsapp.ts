@@ -152,6 +152,14 @@ async function processarMensagem(telefone: string, texto: string) {
   }
 }
 
+// ─── Proteção: whitelist de números autorizados ───────────────────────────────
+function isAuthorized(phone: string): boolean {
+  const raw = process.env.WHATSAPP_AUTHORIZED_PHONES || ''
+  if (!raw.trim()) return true // sem whitelist configurada → permite tudo (retrocompat)
+  const authorized = raw.split(',').map(p => normalizarPhone(p.trim())).filter(Boolean)
+  return authorized.includes(normalizarPhone(phone))
+}
+
 // ─── Rota do webhook ──────────────────────────────────────────────────────────
 whatsappWebhook.post('/', async (req, res) => {
   const parsed = zapiPayloadSchema.safeParse(req.body)
@@ -161,10 +169,23 @@ whatsappWebhook.post('/', async (req, res) => {
 
   if (!text?.message?.trim()) return res.status(200).json({ ok: true })
 
+  // Ignorar mensagens do próprio bot (evitar loop)
   const botPhone = normalizarPhone(process.env.ZAPI_PHONE || '')
   if (normalizarPhone(phone) === botPhone) return res.status(200).json({ ok: true })
 
-  const texto = text.message.trim().slice(0, 1000)
+  // Passo 0 — Whitelist: só números autorizados acionam o bot
+  if (!isAuthorized(phone)) return res.status(200).json({ ok: true })
+
+  // Passo 0 — Prefixo: mensagem deve começar com o trigger (ex: "!agro")
+  const prefix = (process.env.WHATSAPP_TRIGGER_PREFIX || '').trim().toLowerCase()
+  const rawMessage = text.message.trim()
+  if (prefix && !rawMessage.toLowerCase().startsWith(prefix)) {
+    return res.status(200).json({ ok: true })
+  }
+
+  // Strip do prefixo antes de passar ao Claude
+  const texto = (prefix ? rawMessage.slice(prefix.length).trim() : rawMessage).slice(0, 1000)
+  if (!texto) return res.status(200).json({ ok: true })
 
   processarMensagem(phone, texto).catch((err) =>
     console.error('[WhatsApp] Erro inesperado em background:', err instanceof Error ? err.message : err)
