@@ -34,17 +34,30 @@ CATEGORIAS:
 - CONSULTA_GERAL: outra pergunta sobre a fazenda
 - DESCONHECIDO: não foi possível classificar
 
-REGRAS PARA EXTRAIR DOSE DE CADA INSUMO:
-- "2L/ha de Score"        → dose_valor: 2,   dose_unidade: "L",  dose_tipo: "por_ha"
-- "300ml/ha de Priori"    → dose_valor: 300, dose_unidade: "ml", dose_tipo: "por_ha"
-- "50 kg/ha de ureia"     → dose_valor: 50,  dose_unidade: "kg", dose_tipo: "por_ha"
-- "50L de óleo diesel"    → dose_valor: 50,  dose_unidade: "L",  dose_tipo: "total"
-- "2 sacos de ureia"      → dose_valor: 2,   dose_unidade: "sc", dose_tipo: "total"
-- "100 kg de NPK"         → dose_valor: 100, dose_unidade: "kg", dose_tipo: "total"
+INFERÊNCIA DE dose_tipo (CRÍTICO — agricultor raramente digita "/ha"):
+
+Convenção brasileira de agricultura: em pulverização, dose é SEMPRE por hectare
+implícita. Combustível é SEMPRE total. Aplique esta lógica de inferência:
+
+- operacao_tipo = "pulverizacao" → dose_tipo = "por_ha" (mesmo sem "/ha" no texto)
+- operacao_tipo = "adubacao"     → dose_tipo = "por_ha" (padrão)
+- operacao_tipo = "calagem"      → dose_tipo = "por_ha"
+- operacao_tipo = "plantio"      → dose_tipo = "por_ha"
+- insumo é combustível (diesel, óleo diesel, gasolina) → dose_tipo = "total"
+- usuário diz "/ha" explícito → dose_tipo = "por_ha" (override absoluto)
+- usuário diz "no total", "ao todo", "ao final" → dose_tipo = "total" (override absoluto)
+
+REGRAS PARA EXTRAIR DOSE:
+- "2L de primóleo"        em pulverização   → dose_valor: 2,   dose_unidade: "L",  dose_tipo: "por_ha"
+- "1,5 kg de glifosato"   em pulverização   → dose_valor: 1.5, dose_unidade: "kg", dose_tipo: "por_ha"
+- "300ml de adjuvante"    em pulverização   → dose_valor: 300, dose_unidade: "ml", dose_tipo: "por_ha"
+- "2L/ha de Score"        explícito         → dose_valor: 2,   dose_unidade: "L",  dose_tipo: "por_ha"
+- "50L de diesel"         (combustível)     → dose_valor: 50,  dose_unidade: "L",  dose_tipo: "total"
+- "100L no total"         override          → dose_valor: 100, dose_unidade: "L",  dose_tipo: "total"
 
 MÚLTIPLOS INSUMOS NA MESMA OPERAÇÃO (caso mais comum em pulverização):
-Entrada: "pulverizei o talhão lagoa com 2L/ha de Score, 300ml/ha de Priori e 50kg/ha de ureia"
-Saída:
+Entrada: "pulverizei talhão lagoa, 2l de primóleo, 1,5 kg de glifosato, 1 litro de adjuvante"
+Saída (note: dose_tipo "por_ha" inferido porque operacao_tipo é pulverizacao):
 {
   "tipo": "OPERACAO",
   "dados": {
@@ -52,9 +65,9 @@ Saída:
     "operacao_tipo": "pulverizacao",
     "data": null,
     "insumos": [
-      { "nome": "Score",  "dose_valor": 2,   "dose_unidade": "L",  "dose_tipo": "por_ha" },
-      { "nome": "Priori", "dose_valor": 300, "dose_unidade": "ml", "dose_tipo": "por_ha" },
-      { "nome": "ureia",  "dose_valor": 50,  "dose_unidade": "kg", "dose_tipo": "por_ha" }
+      { "nome": "primóleo",  "dose_valor": 2,   "dose_unidade": "L",  "dose_tipo": "por_ha" },
+      { "nome": "glifosato", "dose_valor": 1.5, "dose_unidade": "kg", "dose_tipo": "por_ha" },
+      { "nome": "adjuvante", "dose_valor": 1,   "dose_unidade": "L",  "dose_tipo": "por_ha" }
     ]
   }
 }

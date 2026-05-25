@@ -260,10 +260,19 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 **Pós-MVP (Passo 8 ou depois):** fluxo de fuzzy match — se não achar exato, busca por similaridade, sugere candidatos via WhatsApp, agricultor confirma com número. Permite "criar como novo" como última opção, mas via confirmação explícita.
 
 #### Passo 3 — Calcular quantidade total (por insumo)
+> **Inferência de dose_tipo (atualização):** o agricultor raramente digita "/ha". Por convenção brasileira, em pulverização/adubação/calagem/plantio dose é sempre por hectare implícita. Em combustível é sempre total. O Haiku infere isso automaticamente pelo `operacao_tipo` e nome do insumo. Override explícito (`"/ha"`, `"no total"`) sempre vence.
+
+- [ ] Função `resolverInsumos(insumos, talhao)` em `whatsapp.ts` — função **pura** (não escreve no banco)
 - [ ] Para cada item de `dados.insumos[]`:
+  - Resolve o nome via `buscarInsumo()` → se não acha, marca como falha
+  - Valida `dose_valor` e `dose_tipo` → se faltar, marca como falha
   - Se `dose_tipo = "por_ha"` e talhão com `area_ha` → `quantidade = dose_valor × area_ha`
   - Se `dose_tipo = "total"` → `quantidade = dose_valor` direto
-  - Se não for possível calcular → marca o item como falha (parcial), processa os outros
+  - Se `dose_tipo = "por_ha"` sem talhão ou `area_ha = 0` → falha
+- [ ] Retorna array de `{ ok: true, insumo_id, nome, quantidade, unidade } | { ok: false, nome, erro }`
+- [ ] Roda em paralelo com `Promise.all` (N round-trips ao banco viram 1)
+
+> **Pós-MVP — Adubação com taxa variável:** agricultura de precisão usa mapas de prescrição (shapefile/ISO-XML), não dose homogênea. O fluxo WhatsApp atual não cobre isso — virá da integração John Deere ou import de prescrição em fase posterior.
 
 #### Passo 4 — Inserir em `itens_operacao` (loop)
 - [ ] **N inserts**, um por insumo, todos com o mesmo `operacao_id` (guarda-chuva)
