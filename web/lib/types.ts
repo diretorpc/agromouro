@@ -28,9 +28,11 @@ export interface MovimentacaoEstoque {
   tipo: 'entrada' | 'saida'
   quantidade: number
   data: string
-  origem: 'nfe' | 'whatsapp' | 'manual'
+  origem: 'nfe' | 'whatsapp' | 'manual' | 'operacao' | 'correcao_unidade'
   nota_fiscal_id: string | null
+  operacao_id: string | null
   insumos: Insumo
+  operacoes?: { talhoes?: { nome: string } | null } | null
 }
 
 export interface Operacao {

@@ -18,7 +18,7 @@ import { supabase } from '@/lib/supabase'
 import { api } from '@/lib/api'
 import type { Estoque, MovimentacaoEstoque } from '@/lib/types'
 
-type MovimentacaoComFornecedor = MovimentacaoEstoque & { fornecedor_nome?: string }
+type MovimentacaoComFornecedor = MovimentacaoEstoque & { fornecedor_nome?: string; talhao_nome?: string }
 
 const TIPOS: [string, string][] = [
   ['herbicida', 'Herbicida'],
@@ -76,7 +76,7 @@ export default function EstoquePage() {
       api.get<Estoque[]>('/estoque').catch(() => [] as Estoque[]),
       supabase
         .from('movimentacoes_estoque')
-        .select('*, insumos(nome, unidade)')
+        .select('*, insumos(nome, unidade), operacoes(talhoes(nome))')
         .order('created_at', { ascending: false })
         .limit(100)
         .then(({ data }) => (data ?? []) as MovimentacaoEstoque[]),
@@ -95,6 +95,7 @@ export default function EstoquePage() {
     setMovimentacoes(movs.map(m => ({
       ...m,
       fornecedor_nome: m.nota_fiscal_id ? fornecedorMap[m.nota_fiscal_id] : undefined,
+      talhao_nome: m.operacoes?.talhoes?.nome ?? undefined,
     })))
     setLoading(false)
   }
@@ -405,7 +406,7 @@ export default function EstoquePage() {
                     {m.quantidade} {m.insumos.unidade}
                   </TableCell>
                   <TableCell>
-                    <OrigemLabel origem={m.origem} fornecedor={m.fornecedor_nome} />
+                    <OrigemLabel origem={m.origem} fornecedor={m.fornecedor_nome} talhao={m.talhao_nome} />
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-0.5">
@@ -717,7 +718,7 @@ export default function EstoquePage() {
   )
 }
 
-function OrigemLabel({ origem, fornecedor }: { origem: string; fornecedor?: string }) {
+function OrigemLabel({ origem, fornecedor, talhao }: { origem: string; fornecedor?: string; talhao?: string }) {
   if (origem === 'nfe') {
     return (
       <div>
@@ -735,10 +736,19 @@ function OrigemLabel({ origem, fornecedor }: { origem: string; fornecedor?: stri
       </div>
     )
   }
+  if (origem === 'operacao') {
+    return (
+      <div>
+        <p className="text-xs text-muted-foreground">🌾 Operação</p>
+        {talhao && (
+          <p className="text-xs font-medium text-foreground">{talhao}</p>
+        )}
+      </div>
+    )
+  }
   const map: Record<string, string> = {
     whatsapp:         '💬 WhatsApp',
     manual:           '✏️ Manual',
-    operacao:         '🌾 Operação',
     correcao_unidade: '🔄 Correção',
   }
   return <span className="text-sm text-muted-foreground">{map[origem] ?? origem}</span>
