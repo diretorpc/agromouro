@@ -34,15 +34,26 @@ CATEGORIAS:
 - CONSULTA_GERAL: outra pergunta sobre a fazenda
 - DESCONHECIDO: não foi possível classificar
 
+REGRAS PARA EXTRAIR DOSE:
+- "2L/ha de Score"        → dose_valor: 2,   dose_unidade: "L",  dose_tipo: "por_ha"
+- "300ml/ha de Priori"    → dose_valor: 300, dose_unidade: "ml", dose_tipo: "por_ha"
+- "50 kg/ha de ureia"     → dose_valor: 50,  dose_unidade: "kg", dose_tipo: "por_ha"
+- "50L de óleo diesel"    → dose_valor: 50,  dose_unidade: "L",  dose_tipo: "total"
+- "2 sacos de ureia"      → dose_valor: 2,   dose_unidade: "sc", dose_tipo: "total"
+- "100 kg de NPK"         → dose_valor: 100, dose_unidade: "kg", dose_tipo: "total"
+- sem quantidade clara    → dose_valor: null, dose_unidade: null, dose_tipo: null
+
 Responda SOMENTE em JSON válido, sem texto extra:
 {
   "tipo": "OPERACAO" | "APLICACAO_INSUMO" | "CONSULTA_ESTOQUE" | "CONSULTA_GERAL" | "DESCONHECIDO",
   "dados": {
     "talhao": "nome ou número do talhão mencionado (ou null)",
-    "operacao_tipo": "plantio|pulverizacao|adubacao|colheita|outro (ou null)",
+    "operacao_tipo": "plantio|pulverizacao|adubacao|colheita|calagem|outro (ou null)",
     "insumo": "nome do produto mencionado (ou null)",
-    "quantidade": "quantidade com unidade (ou null)",
-    "data": "use a data de hoje se disser hoje, ontem se disser ontem (ou null)",
+    "dose_valor": número da dose (ou null),
+    "dose_unidade": "L|ml|kg|g|sc|cx|un (ou null)",
+    "dose_tipo": "por_ha|total (ou null)",
+    "data": "use a data de hoje se disser hoje, ontem se disser ontem, formato YYYY-MM-DD (ou null)",
     "cultura": "nome da cultura mencionada (ou null)"
   }
 }`,

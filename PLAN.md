@@ -226,8 +226,8 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 - [x] Resultado: conversas normais nunca são interceptadas; bot só age com `!agro <mensagem>`
 - [ ] **Pendente:** configurar `WHATSAPP_AUTHORIZED_PHONES` e `WHATSAPP_TRIGGER_PREFIX` no Railway com os valores reais
 
-#### Passo 1 — Melhorar extração do Claude Haiku
-- [ ] Atualizar prompt para retornar campos estruturados de quantidade:
+#### Passo 1 — Melhorar extração do Claude Haiku ✅
+- [x] Atualizar prompt para retornar campos estruturados de quantidade:
   ```json
   {
     "tipo": "OPERACAO",
