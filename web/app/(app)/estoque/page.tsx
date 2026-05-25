@@ -77,8 +77,8 @@ export default function EstoquePage() {
       supabase
         .from('movimentacoes_estoque')
         .select('*, insumos(nome, unidade)')
-        .order('data', { ascending: false })
-        .limit(50)
+        .order('created_at', { ascending: false })
+        .limit(100)
         .then(({ data }) => (data ?? []) as MovimentacaoEstoque[]),
     ])
 
@@ -738,6 +738,7 @@ function OrigemLabel({ origem, fornecedor }: { origem: string; fornecedor?: stri
   const map: Record<string, string> = {
     whatsapp:         '💬 WhatsApp',
     manual:           '✏️ Manual',
+    operacao:         '🌾 Operação',
     correcao_unidade: '🔄 Correção',
   }
   return <span className="text-sm text-muted-foreground">{map[origem] ?? origem}</span>
