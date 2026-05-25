@@ -14,7 +14,7 @@ const TIPOS_VALIDOS = [
 
 type TipoInsumo = typeof TIPOS_VALIDOS[number]
 
-// Unidades que requerem confirmação de fator — o mesmo produto pode ter embalagens diferentes
+// Unidades comerciais de embalagem — quando uCom ≠ uTrib, usa qTrib e uTrib como quantidade base
 const UNIDADES_COMERCIAIS = new Set([
   'BD', 'PAC', 'CX', 'FR', 'BAG', 'BALDE', 'CAIXA', 'PACOTE', 'DOSE',
   'bag', 'cx', 'fr', 'bd', 'pac',
@@ -176,17 +176,21 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
     if (nfeError) throw nfeError
     nfeId = notaFiscal.id
 
-    // 2. Processar itens — separar unidades base de comerciais
+    // 2. Processar todos os itens imediatamente (sem fluxo de confirmação)
     const itensAtualizados: string[] = []
     const itensAutoCriados: string[] = []
-    let   temPendentes = false
 
     for (const item of itensSeguros) {
-      const tipo   = await categorizarItem(item.description)
-      // Para unidades comerciais, usamos a unidade tributável como unidade base do insumo
-      const unidadeBase = UNIDADES_COMERCIAIS.has(item.unit)
-        ? (item.unitTrib || 'L')
-        : item.unit
+      const tipo = await categorizarItem(item.description)
+
+      // Se for unidade comercial com qTrib disponível, usa qTrib/uTrib como quantidade base
+      const isComercial  = UNIDADES_COMERCIAIS.has(item.unit) && item.unitTrib && item.unitTrib !== item.unit
+      const quantidade   = isComercial ? item.quantityTrib : item.quantity
+      const unidadeBase  = isComercial ? item.unitTrib     : item.unit
+      // Preço unitário na unidade base (vUnCom é por embalagem; divide pelo fator se comercial)
+      const fator        = isComercial && item.quantity > 0 ? item.quantityTrib / item.quantity : 1
+      const precoUnitario = fator > 0 ? item.unitValue / fator : item.unitValue
+
       const insumo = await vincularOuCriarInsumo(item.description, tipo, unidadeBase)
 
       await supabase.from('itens_nfe').insert({
@@ -199,67 +203,35 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
         insumo_id:      insumo.id,
       })
 
-      if (UNIDADES_COMERCIAIS.has(item.unit)) {
-        // Unidade comercial — não atualiza estoque ainda, cria pendência de confirmação
-        temPendentes = true
-
-        // Auto-detectar fator se XML traz qTrib em unidade diferente
-        let fatorSugerido: number | null = null
-        if (
-          item.unitTrib && item.unitTrib !== item.unit &&
-          item.quantityTrib > 0 && item.quantity > 0
-        ) {
-          fatorSugerido = parseFloat((item.quantityTrib / item.quantity).toFixed(4))
-        }
-
-        await supabase.from('confirmacoes_pendentes').insert({
-          telefone:       phone,
-          payload: {
-            nfe_id:                   nfeId,
-            insumo_id:                insumo.id,
-            insumo_nome:              insumo.nome,
-            unidade_base:             unidadeBase,
-            unidade_comercial:        item.unit,
-            quantidade_comercial:     item.quantity,
-            valor_unitario_comercial: item.unitValue,
-            data:                     dataFormatada,
-            emitente_nome:            emitenteNome,
-          },
-          fator_sugerido: fatorSugerido,
-          // 60s de janela para consolidar múltiplos itens da mesma NF-e
-          enviar_apos: new Date(Date.now() + 60_000).toISOString(),
-        })
-
-        console.log(`[NFeProcessor] Item ${insumo.nome} com unidade comercial "${item.unit}" — aguardando confirmação`)
-      } else {
-        // Unidade base — processa imediatamente
-        if (item.unitValue > 0) {
-          await supabase.from('estoque')
-            .update({ preco_medio_unitario: item.unitValue })
-            .eq('insumo_id', insumo.id)
-        }
-
-        await supabase.from('movimentacoes_estoque').insert({
-          insumo_id:      insumo.id,
-          tipo:           'entrada',
-          quantidade:     item.quantity,
-          data:           dataFormatada,
-          origem:         'nfe',
-          nota_fiscal_id: nfeId,
-        })
-
-        await supabase.rpc('incrementar_estoque', {
-          p_insumo_id:  insumo.id,
-          p_quantidade: item.quantity,
-        })
-
-        const linha = `• ${item.quantity}${item.unit} ${insumo.nome}`
-        if (insumo.autoCreated) itensAutoCriados.push(linha)
-        else                    itensAtualizados.push(linha)
+      if (precoUnitario > 0) {
+        await supabase.from('estoque')
+          .update({ preco_medio_unitario: parseFloat(precoUnitario.toFixed(4)) })
+          .eq('insumo_id', insumo.id)
       }
+
+      await supabase.from('movimentacoes_estoque').insert({
+        insumo_id:            insumo.id,
+        tipo:                 'entrada',
+        quantidade:           quantidade,
+        data:                 dataFormatada,
+        origem:               'nfe',
+        nota_fiscal_id:       nfeId,
+        unidade_comercial:    isComercial ? item.unit            : null,
+        quantidade_comercial: isComercial ? item.quantity        : null,
+        fator_conversao:      isComercial ? parseFloat(fator.toFixed(4)) : null,
+      })
+
+      await supabase.rpc('incrementar_estoque', {
+        p_insumo_id:  insumo.id,
+        p_quantidade: quantidade,
+      })
+
+      const linha = `• ${quantidade}${unidadeBase} ${insumo.nome}`
+      if (insumo.autoCreated) itensAutoCriados.push(linha)
+      else                    itensAtualizados.push(linha)
     }
 
-    // 3. Lançamento financeiro (sempre — independente de pendências)
+    // 3. Lançamento financeiro
     await supabase.from('lancamentos_financeiros').insert({
       data:           dataFormatada,
       descricao:      `NF-e ${numero} — ${emitenteNome}`,
@@ -269,29 +241,19 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
       nota_fiscal_id: nfeId,
     })
 
-    if (temPendentes) {
-      // 4a. NF-e ficará aguardando confirmação — job enviará mensagem consolidada
-      await supabase.from('notas_fiscais')
-        .update({ status: 'aguardando_confirmacao' })
-        .eq('id', nfeId)
+    await supabase.from('notas_fiscais').update({ status: 'processada' }).eq('id', nfeId)
 
-      console.log(`[NFeProcessor] NF-e ${numero} aguardando confirmação de unidades`)
-    } else {
-      // 4b. Todos os itens processados imediatamente
-      await supabase.from('notas_fiscais').update({ status: 'processada' }).eq('id', nfeId)
+    const icone = origem === 'email' ? '📧' : '📄'
+    let mensagem = `${icone} *NF-e processada*\n👤 ${emitenteNome}\n💰 R$ ${valorTotal.toFixed(2)}\n\n`
 
-      const icone = origem === 'email' ? '📧' : '📄'
-      let mensagem = `${icone} *NF-e processada*\n👤 ${emitenteNome}\n💰 R$ ${valorTotal.toFixed(2)}\n\n`
-
-      if (itensAtualizados.length > 0)
-        mensagem += `✅ *Estoque atualizado:*\n${itensAtualizados.join('\n')}`
-      if (itensAutoCriados.length > 0) {
-        if (itensAtualizados.length > 0) mensagem += '\n\n'
-        mensagem += `🆕 *Novos insumos:*\n${itensAutoCriados.join('\n')}`
-      }
-
-      await enviarMensagem(phone, mensagem)
+    if (itensAtualizados.length > 0)
+      mensagem += `✅ *Estoque atualizado:*\n${itensAtualizados.join('\n')}`
+    if (itensAutoCriados.length > 0) {
+      if (itensAtualizados.length > 0) mensagem += '\n\n'
+      mensagem += `🆕 *Novos insumos:*\n${itensAutoCriados.join('\n')}`
     }
+
+    await enviarMensagem(phone, mensagem)
 
   } catch (err) {
     console.error(`[NFeProcessor] Erro ao processar NF-e ${numero}:`, err instanceof Error ? err.message : err)
