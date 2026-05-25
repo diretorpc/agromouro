@@ -32,7 +32,8 @@ const TIPOS: [string, string][] = [
   ['outro', 'Outro'],
 ]
 
-const UNIDADES = ['L', 'kg', 't', 'sc', 'un', 'cx', 'bag']
+const UNIDADES      = ['L', 'KG', 'ml', 't', 'sc', 'un']
+const UNIDADES_BASE = new Set(['L', 'KG', 'kg', 'ml', 'ML', 'g', 't', 'sc', 'un', 'UN', 'ha'])
 
 const SELECT_CLASS = 'flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring'
 
@@ -57,6 +58,11 @@ export default function EstoquePage() {
   const [deleteMovErro, setDeleteMovErro] = useState<string | null>(null)
   const [deletandoMov, setDeletandoMov] = useState(false)
 
+  // converter unidade
+  const [corrigirItem, setCorrigirItem] = useState<Estoque | null>(null)
+  const [corrigirForm, setCorrigirForm] = useState({ novaUnidade: 'L', fator: '' })
+  const [salvandoCorrecao, setSalvandoCorrecao] = useState(false)
+
   // novo insumo
   const [novoDialog, setNovoDialog] = useState(false)
   const [novoForm, setNovoForm] = useState({
@@ -71,8 +77,8 @@ export default function EstoquePage() {
       supabase
         .from('movimentacoes_estoque')
         .select('*, insumos(nome, unidade)')
-        .order('data', { ascending: false })
-        .limit(50)
+        .order('created_at', { ascending: false })
+        .limit(100)
         .then(({ data }) => (data ?? []) as MovimentacaoEstoque[]),
     ])
 
@@ -220,6 +226,37 @@ export default function EstoquePage() {
     loadData()
   }
 
+  async function handleCorrecaoUnidade(e: React.FormEvent) {
+    e.preventDefault()
+    if (!corrigirItem) return
+    const fator = parseFloat(corrigirForm.fator.replace(',', '.'))
+    if (isNaN(fator) || fator <= 0) return
+    setSalvandoCorrecao(true)
+
+    const novaQtd   = parseFloat((corrigirItem.quantidade_atual * fator).toFixed(3))
+    const novoPreco = corrigirItem.preco_medio_unitario > 0
+      ? parseFloat((corrigirItem.preco_medio_unitario / fator).toFixed(4))
+      : 0
+
+    await supabase.from('insumos').update({ unidade: corrigirForm.novaUnidade }).eq('id', corrigirItem.insumo_id)
+    await supabase.from('estoque').update({
+      quantidade_atual: novaQtd,
+      ...(novoPreco > 0 ? { preco_medio_unitario: novoPreco } : {}),
+    }).eq('id', corrigirItem.id)
+    await supabase.from('movimentacoes_estoque').insert({
+      insumo_id: corrigirItem.insumo_id,
+      tipo:      'entrada',
+      quantidade: novaQtd,
+      data:      new Date().toISOString().split('T')[0],
+      origem:    'correcao_unidade',
+    })
+
+    setSalvandoCorrecao(false)
+    setCorrigirItem(null)
+    setCorrigirForm({ novaUnidade: 'L', fator: '' })
+    loadData()
+  }
+
   const criticos = estoque.filter(e => e.quantidade_atual <= e.quantidade_minima_alerta)
 
   if (loading) return <PageSkeleton />
@@ -256,7 +293,6 @@ export default function EstoquePage() {
                 <TableHead>Produto</TableHead>
                 <TableHead>Tipo</TableHead>
                 <TableHead className="text-right">Qtd. Atual</TableHead>
-                <TableHead className="text-right">Mínimo</TableHead>
                 <TableHead className="text-right">Preço Médio</TableHead>
                 <TableHead className="text-right">Situação</TableHead>
                 <TableHead />
@@ -265,7 +301,7 @@ export default function EstoquePage() {
             <TableBody>
               {estoque.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                     Nenhum insumo cadastrado.
                   </TableCell>
                 </TableRow>
@@ -280,9 +316,6 @@ export default function EstoquePage() {
                     <TableCell className={`text-right font-semibold ${critico ? 'text-red-600' : ''}`}>
                       {item.quantidade_atual} {item.insumos.unidade}
                     </TableCell>
-                    <TableCell className="text-right text-muted-foreground text-sm">
-                      {item.quantidade_minima_alerta} {item.insumos.unidade}
-                    </TableCell>
                     <TableCell className="text-right text-sm">
                       {item.preco_medio_unitario > 0
                         ? `R$ ${item.preco_medio_unitario.toFixed(2)}`
@@ -296,17 +329,32 @@ export default function EstoquePage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setSelectedItem(item)
-                          setAjuste(String(item.quantidade_atual))
-                          setAjustePreco(item.preco_medio_unitario > 0 ? String(item.preco_medio_unitario) : '')
-                        }}
-                      >
-                        Ajustar
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        {!UNIDADES_BASE.has(item.insumos.unidade) && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-amber-600 border-amber-300 hover:bg-amber-50 text-xs"
+                            onClick={() => {
+                              setCorrigirItem(item)
+                              setCorrigirForm({ novaUnidade: 'L', fator: '' })
+                            }}
+                          >
+                            Converter
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setSelectedItem(item)
+                            setAjuste(String(item.quantidade_atual))
+                            setAjustePreco(item.preco_medio_unitario > 0 ? String(item.preco_medio_unitario) : '')
+                          }}
+                        >
+                          Ajustar
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 )
@@ -375,6 +423,75 @@ export default function EstoquePage() {
           </Table>
         </CardContent>
       </Card>
+
+      {/* Dialog: Converter Unidade */}
+      <Dialog open={!!corrigirItem} onOpenChange={open => { if (!open) setCorrigirItem(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Converter Unidade</DialogTitle>
+          </DialogHeader>
+          {corrigirItem && (
+            <form onSubmit={handleCorrecaoUnidade} className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Produto: <span className="font-medium text-foreground">{corrigirItem.insumos.nome}</span>
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Situação atual:{' '}
+                <span className="font-semibold text-amber-600">
+                  {corrigirItem.quantidade_atual} {corrigirItem.insumos.unidade}
+                </span>
+              </p>
+              <div className="space-y-1.5">
+                <Label>Nova unidade</Label>
+                <select
+                  className={SELECT_CLASS}
+                  value={corrigirForm.novaUnidade}
+                  onChange={e => setCorrigirForm(f => ({ ...f, novaUnidade: e.target.value }))}
+                >
+                  {UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="fator">
+                  Quantos <span className="font-semibold">{corrigirForm.novaUnidade}</span> tem em 1{' '}
+                  <span className="font-semibold">{corrigirItem.insumos.unidade}</span>?
+                </Label>
+                <Input
+                  id="fator"
+                  type="number"
+                  step="0.001"
+                  min="0.001"
+                  placeholder="Ex: 20"
+                  value={corrigirForm.fator}
+                  onChange={e => setCorrigirForm(f => ({ ...f, fator: e.target.value }))}
+                  required
+                />
+              </div>
+              {corrigirForm.fator && !isNaN(parseFloat(corrigirForm.fator)) && (
+                <p className="text-sm bg-muted rounded px-3 py-2">
+                  Resultado:{' '}
+                  <span className="font-semibold">
+                    {(corrigirItem.quantidade_atual * parseFloat(corrigirForm.fator)).toFixed(2)} {corrigirForm.novaUnidade}
+                  </span>
+                  {corrigirItem.preco_medio_unitario > 0 && (
+                    <> · preço{' '}
+                      <span className="font-semibold">
+                        R$ {(corrigirItem.preco_medio_unitario / parseFloat(corrigirForm.fator)).toFixed(2)}/{corrigirForm.novaUnidade}
+                      </span>
+                    </>
+                  )}
+                </p>
+              )}
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setCorrigirItem(null)}>Cancelar</Button>
+                <Button type="submit" disabled={salvandoCorrecao || !corrigirForm.fator}>
+                  {salvandoCorrecao ? 'Salvando...' : 'Converter'}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog: Ajustar Estoque */}
       <Dialog open={!!selectedItem} onOpenChange={open => { if (!open) { setSelectedItem(null); setAjustePreco('') } }}>
@@ -618,7 +735,12 @@ function OrigemLabel({ origem, fornecedor }: { origem: string; fornecedor?: stri
       </div>
     )
   }
-  const map: Record<string, string> = { whatsapp: '💬 WhatsApp', manual: '✏️ Manual' }
+  const map: Record<string, string> = {
+    whatsapp:         '💬 WhatsApp',
+    manual:           '✏️ Manual',
+    operacao:         '🌾 Operação',
+    correcao_unidade: '🔄 Correção',
+  }
   return <span className="text-sm text-muted-foreground">{map[origem] ?? origem}</span>
 }
 

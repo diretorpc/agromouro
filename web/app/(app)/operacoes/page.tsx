@@ -258,7 +258,7 @@ export default function OperacoesPage() {
         })
 
         await supabase.from('movimentacoes_estoque').insert({
-          insumo_id: prod.insumo_id, tipo: 'saida', quantidade, data: form.data, origem: 'manual',
+          insumo_id: prod.insumo_id, tipo: 'saida', quantidade, data: form.data, origem: 'operacao',
         })
 
         if (estoqueItem) {
