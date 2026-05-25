@@ -290,8 +290,12 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 - [x] Espelha exatamente o que o formulário web em `/operacoes` faz desde o PR #7
 - [x] Falha no insert é logada mas não aborta — itens_operacao continuam válidos
 
-#### Passo 6 — Decrementar `estoque.quantidade_atual` (loop)
-- [ ] **N updates**, um por insumo, subtraindo a quantidade usada de cada um
+#### Passo 6 — Decrementar `estoque.quantidade_atual` ✅
+- [x] **Estratégia**: 1 SELECT batch (`.in('insumo_id', [...])`) busca atuais + mínimos; N UPDATEs em paralelo via `Promise.all`
+- [x] Sem RPC atômica — single-tenant + webhook serializado torna race condition irrelevante
+- [x] Linha inexistente em `estoque` → loga warning, segue com os outros (não bloqueia)
+- [x] Produz array `SaidaProcessada[]` com `novaQuantidade` e `minimo` por item — pronto para Passo 7 usar
+- [x] Resposta WhatsApp já mostra `(estoque: 130L)` após cada saída — visibilidade imediata
 
 #### Passo 7 — Resposta final no WA — lista por insumo
 - [ ] Resposta consolidada com saída + estoque restante de cada item:

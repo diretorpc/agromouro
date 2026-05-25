@@ -259,6 +259,15 @@ async function processarMensagem(telefone: string, texto: string) {
       const okItems   = resolvidos.filter((i): i is Extract<InsumoResolvido, { ok: true }>  => i.ok === true)
       const failItems = resolvidos.filter((i): i is Extract<InsumoResolvido, { ok: false }> => i.ok === false)
 
+      type SaidaProcessada = {
+        nome: string
+        quantidade: number
+        unidade: string
+        novaQuantidade: number | null   // null = sem linha em estoque
+        minimo: number | null
+      }
+      let saidasProcessadas: SaidaProcessada[] = []
+
       if (okItems.length > 0) {
         // Batch insert em itens_operacao (alimenta a página /custos)
         const { error: itensErr } = await supabase.from('itens_operacao').insert(
@@ -288,11 +297,46 @@ async function processarMensagem(telefone: string, texto: string) {
         if (movErr) {
           console.error('[WhatsApp] Erro ao inserir movimentacoes_estoque:', movErr.message)
         }
+
+        // Decrementar quantidade_atual em estoque (Passo 6)
+        // 1 SELECT batch pega todos os atuais + mínimos; N UPDATEs em paralelo
+        const insumoIds = okItems.map(i => i.insumo_id)
+        const { data: estoqueAtual } = await supabase
+          .from('estoque')
+          .select('insumo_id, quantidade_atual, quantidade_minima_alerta')
+          .in('insumo_id', insumoIds)
+
+        const estoqueMap = new Map(
+          (estoqueAtual ?? []).map(e => [
+            e.insumo_id,
+            { atual: Number(e.quantidade_atual ?? 0), minimo: Number(e.quantidade_minima_alerta ?? 0) },
+          ]),
+        )
+
+        saidasProcessadas = await Promise.all(okItems.map(async (item): Promise<SaidaProcessada> => {
+          const linha = estoqueMap.get(item.insumo_id)
+          if (!linha) {
+            console.warn(`[WhatsApp] Sem linha em estoque para ${item.nome} (insumo_id ${item.insumo_id})`)
+            return { nome: item.nome, quantidade: item.quantidade, unidade: item.unidade, novaQuantidade: null, minimo: null }
+          }
+          const nova = linha.atual - item.quantidade
+          const { error: updErr } = await supabase
+            .from('estoque')
+            .update({ quantidade_atual: nova })
+            .eq('insumo_id', item.insumo_id)
+          if (updErr) {
+            console.error(`[WhatsApp] Falha ao decrementar estoque de ${item.nome}:`, updErr.message)
+          }
+          return { nome: item.nome, quantidade: item.quantidade, unidade: item.unidade, novaQuantidade: nova, minimo: linha.minimo }
+        }))
       }
 
       // Compor resposta no WhatsApp
       const nomeLocal  = talhao ? `Talhão ${talhao.nome} (${talhao.area_ha}ha)` : 'talhão não identificado'
-      const linhasOk   = okItems.map(i => `📦 ${i.nome}: ${i.quantidade}${i.unidade}`).join('\n')
+      const linhasOk   = saidasProcessadas.map(s => {
+        const restante = s.novaQuantidade != null ? ` (estoque: ${s.novaQuantidade}${s.unidade})` : ''
+        return `📦 ${s.nome}: ${s.quantidade}${s.unidade}${restante}`
+      }).join('\n')
       const linhasFail = failItems.map(f => `❌ ${f.nome}: ${f.erro}`).join('\n')
 
       resposta = `✅ Registrado!\n📍 ${nomeLocal}\n🔧 ${dados.operacao_tipo || 'Operação'}\n📅 ${dados.data || 'hoje'}`
