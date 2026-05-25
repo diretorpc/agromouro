@@ -226,69 +226,83 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 - [x] Resultado: conversas normais nunca são interceptadas; bot só age com `!agro <mensagem>`
 - [ ] **Pendente:** configurar `WHATSAPP_AUTHORIZED_PHONES` e `WHATSAPP_TRIGGER_PREFIX` no Railway com os valores reais
 
-#### Passo 1 — Melhorar extração do Claude Haiku ✅
-- [x] Atualizar prompt para retornar campos estruturados de quantidade:
+#### Passo 1 — Melhorar extração do Claude Haiku (suporte a múltiplos insumos) ✅
+> **Realidade do campo:** 99% das aplicações usam 3–4 insumos numa mesma calda (defensivo + adjuvante + fertilizante foliar). Tratar como insumo único seria irreal.
+
+- [x] Atualizar prompt para retornar **array de insumos** com dose estruturada por item:
   ```json
   {
     "tipo": "OPERACAO",
     "dados": {
       "talhao": "Lagoa",
       "operacao_tipo": "pulverizacao",
-      "insumo": "Score",
-      "dose_valor": 2,
-      "dose_unidade": "L",
-      "dose_tipo": "por_ha",
-      "data": "2026-05-25"
+      "data": "2026-05-25",
+      "insumos": [
+        { "nome": "Score",  "dose_valor": 2,   "dose_unidade": "L",  "dose_tipo": "por_ha" },
+        { "nome": "Priori", "dose_valor": 300, "dose_unidade": "ml", "dose_tipo": "por_ha" },
+        { "nome": "ureia",  "dose_valor": 50,  "dose_unidade": "kg", "dose_tipo": "por_ha" }
+      ]
     }
   }
   ```
   - `dose_tipo`: `"por_ha"` (ex: 2L/ha) ou `"total"` (ex: 50L direto) ou `null`
+  - Para `CONSULTA_ESTOQUE`: `insumos[]` com 1+ produtos (permite "quanto tem de glifosato e ureia?")
+  - Adicionar exemplo de múltiplos insumos no prompt para ensinar o padrão ao Haiku
 
 #### Passo 2 — Buscar insumo no banco
 - [ ] Adicionar função `buscarInsumo(nome)` — busca por `ilike` como já existe em `consultarEstoque()`
 - [ ] Retorna `{ id, nome, unidade }` ou `null`
+- [ ] Será chamada em loop sobre `dados.insumos[]`
 
-#### Passo 3 — Calcular quantidade total
-- [ ] Se `dose_tipo = "por_ha"` e talhão com `area_ha` → `quantidade = dose_valor × area_ha`
-- [ ] Se `dose_tipo = "total"` → `quantidade = dose_valor` direto
-- [ ] Se não for possível calcular → salva só a operação, avisa no WA, não cria movimentação
+#### Passo 3 — Calcular quantidade total (por insumo)
+- [ ] Para cada item de `dados.insumos[]`:
+  - Se `dose_tipo = "por_ha"` e talhão com `area_ha` → `quantidade = dose_valor × area_ha`
+  - Se `dose_tipo = "total"` → `quantidade = dose_valor` direto
+  - Se não for possível calcular → marca o item como falha (parcial), processa os outros
 
-#### Passo 4 — Inserir em `itens_operacao`
-- [ ] Necessário para aparecer na página de **Custos por Talhão** automaticamente
+#### Passo 4 — Inserir em `itens_operacao` (loop)
+- [ ] **N inserts**, um por insumo, todos com o mesmo `operacao_id` (guarda-chuva)
   ```ts
-  supabase.from('itens_operacao').insert({
-    operacao_id, insumo_id, descricao: nomeInsumo, quantidade, unidade,
-  })
+  for (const item of insumosResolvidos) {
+    supabase.from('itens_operacao').insert({
+      operacao_id, insumo_id: item.insumo_id, descricao: item.nome,
+      quantidade: item.quantidade, unidade: item.unidade,
+    })
+  }
   ```
-- [ ] Custo calculado automaticamente pela página: `quantidade × estoque.preco_medio_unitario`
+- [ ] Custo total da operação na página /custos = soma de todos os itens
 
-#### Passo 5 — Inserir em `movimentacoes_estoque`
-- [ ] Registra saída no histórico de estoque, vinculada à operação
-  ```ts
-  supabase.from('movimentacoes_estoque').insert({
-    insumo_id, tipo: 'saida', quantidade, data, origem: 'operacao', operacao_id,
-  })
+#### Passo 5 — Inserir em `movimentacoes_estoque` (loop)
+- [ ] **N inserts**, um por insumo, todos com o mesmo `operacao_id`
+- [ ] Cada linha aparece separada no histórico de estoque
+
+#### Passo 6 — Decrementar `estoque.quantidade_atual` (loop)
+- [ ] **N updates**, um por insumo, subtraindo a quantidade usada de cada um
+
+#### Passo 7 — Resposta final no WA — lista por insumo
+- [ ] Resposta consolidada com saída + estoque restante de cada item:
   ```
+  ✅ Pulverização registrada!
+  📍 Talhão Lagoa (35ha) — 25/05
 
-#### Passo 6 — Decrementar `estoque.quantidade_atual`
-- [ ] Update direto na tabela `estoque` subtraindo a quantidade usada
-
-#### Passo 7 — Verificar mínimo e compor resposta final no WA
-- [ ] Se `quantidade_atual <= quantidade_minima_alerta` após o update → incluir aviso
-- [ ] Resposta final:
+  📦 Score:  70L     (estoque: 130L)
+  📦 Priori: 10500ml (estoque: 9500ml)
+  📦 ureia:  1750kg  (estoque: 8250kg)
+  ⚠️ Priori abaixo do mínimo! (mín: 15000ml)
   ```
-  ✅ Registrado!
-  📍 Talhão Lagoa (35ha)
-  🔧 Pulverização
-  📦 Score: saída 70L — estoque: 130L restantes
-  ⚠️ Score abaixo do mínimo! (mín: 200L)  ← só se aplicável
+- [ ] Sucesso parcial: se 2 de 3 insumos foram OK, listar quais falharam:
+  ```
+  ✅ Operação registrada (2 de 3 insumos)
+  📦 Score:  70L OK
+  📦 ureia:  1750kg OK
+  ❌ "Priorii" não encontrado no estoque — verifique o nome
   ```
 
 #### Edge cases a tratar
-- Insumo não encontrado → avisa no WA, não cria movimentação nem item
-- Dose L/ha sem talhão identificado → salva operação sem quantidade, avisa
-- Estoque insuficiente → registra normalmente (não bloqueia), mas avisa
-- Múltiplos insumos na mesma mensagem → escopo MVP: processa apenas o primeiro
+- Insumo não encontrado no banco → marca esse item como falha, processa os outros, lista no WA
+- Dose L/ha sem talhão identificado → salva operação sem itens, avisa
+- Estoque insuficiente em algum item → registra normalmente (não bloqueia), avisa no resumo
+- Array vazio de insumos numa OPERACAO → salva só a operação (ex: "colhi o talhão 5" — sem produto)
 
 ### 2.5 Deploy no Railway
 - [x] **Antes:** garantir que o código está commitado e enviado para o GitHub (`git push`)

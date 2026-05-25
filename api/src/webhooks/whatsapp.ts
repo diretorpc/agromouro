@@ -34,14 +34,37 @@ CATEGORIAS:
 - CONSULTA_GERAL: outra pergunta sobre a fazenda
 - DESCONHECIDO: não foi possível classificar
 
-REGRAS PARA EXTRAIR DOSE:
+REGRAS PARA EXTRAIR DOSE DE CADA INSUMO:
 - "2L/ha de Score"        → dose_valor: 2,   dose_unidade: "L",  dose_tipo: "por_ha"
 - "300ml/ha de Priori"    → dose_valor: 300, dose_unidade: "ml", dose_tipo: "por_ha"
 - "50 kg/ha de ureia"     → dose_valor: 50,  dose_unidade: "kg", dose_tipo: "por_ha"
 - "50L de óleo diesel"    → dose_valor: 50,  dose_unidade: "L",  dose_tipo: "total"
 - "2 sacos de ureia"      → dose_valor: 2,   dose_unidade: "sc", dose_tipo: "total"
 - "100 kg de NPK"         → dose_valor: 100, dose_unidade: "kg", dose_tipo: "total"
-- sem quantidade clara    → dose_valor: null, dose_unidade: null, dose_tipo: null
+
+MÚLTIPLOS INSUMOS NA MESMA OPERAÇÃO (caso mais comum em pulverização):
+Entrada: "pulverizei o talhão lagoa com 2L/ha de Score, 300ml/ha de Priori e 50kg/ha de ureia"
+Saída:
+{
+  "tipo": "OPERACAO",
+  "dados": {
+    "talhao": "lagoa",
+    "operacao_tipo": "pulverizacao",
+    "data": null,
+    "insumos": [
+      { "nome": "Score",  "dose_valor": 2,   "dose_unidade": "L",  "dose_tipo": "por_ha" },
+      { "nome": "Priori", "dose_valor": 300, "dose_unidade": "ml", "dose_tipo": "por_ha" },
+      { "nome": "ureia",  "dose_valor": 50,  "dose_unidade": "kg", "dose_tipo": "por_ha" }
+    ]
+  }
+}
+
+OPERAÇÃO SEM INSUMOS (ex: colheita, plantio sem semente especificada):
+- insumos: []  (array vazio)
+
+CONSULTA DE ESTOQUE:
+- "quanto tem de glifosato?"              → insumos: [{ "nome": "glifosato", "dose_valor": null, "dose_unidade": null, "dose_tipo": null }]
+- "quanto tem de glifosato e ureia?"      → insumos: [{ "nome": "glifosato", ... }, { "nome": "ureia", ... }]
 
 Responda SOMENTE em JSON válido, sem texto extra:
 {
@@ -49,10 +72,14 @@ Responda SOMENTE em JSON válido, sem texto extra:
   "dados": {
     "talhao": "nome ou número do talhão mencionado (ou null)",
     "operacao_tipo": "plantio|pulverizacao|adubacao|colheita|calagem|outro (ou null)",
-    "insumo": "nome do produto mencionado (ou null)",
-    "dose_valor": número da dose (ou null),
-    "dose_unidade": "L|ml|kg|g|sc|cx|un (ou null)",
-    "dose_tipo": "por_ha|total (ou null)",
+    "insumos": [
+      {
+        "nome": "nome do produto",
+        "dose_valor": número da dose (ou null),
+        "dose_unidade": "L|ml|kg|g|sc|cx|un (ou null)",
+        "dose_tipo": "por_ha|total (ou null)"
+      }
+    ],
     "data": "use a data de hoje se disser hoje, ontem se disser ontem, formato YYYY-MM-DD (ou null)",
     "cultura": "nome da cultura mencionada (ou null)"
   }
@@ -122,8 +149,12 @@ async function processarMensagem(telefone: string, texto: string) {
     const { tipo, dados } = classificacao
     let resposta = ''
 
-    if (tipo === 'CONSULTA_ESTOQUE' && dados.insumo) {
-      resposta = await consultarEstoque(dados.insumo)
+    const insumos: Array<{ nome: string; dose_valor: number | null; dose_unidade: string | null; dose_tipo: string | null }> =
+      Array.isArray(dados.insumos) ? dados.insumos : []
+
+    if (tipo === 'CONSULTA_ESTOQUE' && insumos.length > 0) {
+      const respostas = await Promise.all(insumos.map(i => consultarEstoque(i.nome)))
+      resposta = respostas.join('\n')
 
     } else if (tipo === 'OPERACAO' || tipo === 'APLICACAO_INSUMO') {
       const talhao = dados.talhao ? await buscarTalhao(dados.talhao) : null
@@ -138,10 +169,17 @@ async function processarMensagem(telefone: string, texto: string) {
 
       if (error) throw error
 
-      const nomeLocal  = talhao ? `Talhão ${talhao.nome} (${talhao.area_ha}ha)` : 'talhão não identificado'
-      const insumoInfo = dados.insumo ? ` — ${dados.quantidade || ''} ${dados.insumo}` : ''
+      const nomeLocal = talhao ? `Talhão ${talhao.nome} (${talhao.area_ha}ha)` : 'talhão não identificado'
+      const insumosInfo = insumos.length > 0
+        ? '\n' + insumos.map(i => {
+            const dose = i.dose_valor != null
+              ? `${i.dose_valor}${i.dose_unidade ?? ''}${i.dose_tipo === 'por_ha' ? '/ha' : ''}`
+              : ''
+            return `📦 ${i.nome}${dose ? ` — ${dose}` : ''}`
+          }).join('\n')
+        : ''
 
-      resposta = `✅ Registrado!\n📍 ${nomeLocal}\n🔧 ${dados.operacao_tipo || 'Operação'}${insumoInfo}\n📅 ${dados.data || 'hoje'}`
+      resposta = `✅ Registrado!\n📍 ${nomeLocal}\n🔧 ${dados.operacao_tipo || 'Operação'}${insumosInfo}\n📅 ${dados.data || 'hoje'}`
 
       if (!talhao && dados.talhao) {
         resposta += `\n\n⚠️ Não encontrei o talhão "${dados.talhao}". Verifique o nome.`
