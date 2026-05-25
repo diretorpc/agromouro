@@ -3,7 +3,7 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Package, Tractor, FileText, Bell, LogOut, CircleDollarSign } from 'lucide-react'
+import { LayoutDashboard, Package, Tractor, FileText, Bell, LogOut, CircleDollarSign, BarChart2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
 
@@ -12,8 +12,9 @@ const navItems = [
   { href: '/estoque', label: 'Estoque', icon: Package },
   { href: '/operacoes', label: 'Operações', icon: Tractor },
   { href: '/nfe', label: 'NF-e', icon: FileText },
-  { href: '/financeiro', label: 'Financeiro', icon: CircleDollarSign },
-  { href: '/alertas', label: 'Alertas', icon: Bell },
+  { href: '/financeiro', label: 'Financeiro',        icon: CircleDollarSign },
+  { href: '/custos',     label: 'Custo por Talhão', icon: BarChart2 },
+  { href: '/alertas',    label: 'Alertas',           icon: Bell },
 ]
 
 export function Sidebar() {
