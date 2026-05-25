@@ -58,6 +58,10 @@ export default function EstoquePage() {
   const [deleteMovErro, setDeleteMovErro] = useState<string | null>(null)
   const [deletandoMov, setDeletandoMov] = useState(false)
 
+  // excluir insumo
+  const [deleteInsumo, setDeleteInsumo] = useState<Estoque | null>(null)
+  const [deletandoInsumo, setDeletandoInsumo] = useState(false)
+
   // converter unidade
   const [corrigirItem, setCorrigirItem] = useState<Estoque | null>(null)
   const [corrigirForm, setCorrigirForm] = useState({ novaUnidade: 'L', fator: '' })
@@ -227,6 +231,15 @@ export default function EstoquePage() {
     loadData()
   }
 
+  async function handleDeleteInsumo() {
+    if (!deleteInsumo) return
+    setDeletandoInsumo(true)
+    await supabase.from('insumos').delete().eq('id', deleteInsumo.insumo_id)
+    setDeletandoInsumo(false)
+    setDeleteInsumo(null)
+    loadData()
+  }
+
   async function handleCorrecaoUnidade(e: React.FormEvent) {
     e.preventDefault()
     if (!corrigirItem) return
@@ -354,6 +367,14 @@ export default function EstoquePage() {
                           }}
                         >
                           Ajustar
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          title="Excluir insumo"
+                          onClick={() => setDeleteInsumo(item)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-red-400" />
                         </Button>
                       </div>
                     </TableCell>
@@ -619,6 +640,24 @@ export default function EstoquePage() {
             <Button variant="outline" onClick={() => { setDeleteMov(null); setDeleteMovErro(null) }}>Cancelar</Button>
             <Button variant="destructive" onClick={handleDeleteMov} disabled={deletandoMov}>
               {deletandoMov ? 'Excluindo...' : 'Excluir'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Excluir Insumo */}
+      <Dialog open={!!deleteInsumo} onOpenChange={open => { if (!open) setDeleteInsumo(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Excluir insumo?</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Isso vai remover permanentemente{' '}
+            <span className="font-medium text-foreground">{deleteInsumo?.insumos.nome}</span>{' '}
+            e todo o seu histórico de movimentações. Esta ação não pode ser desfeita.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteInsumo(null)}>Cancelar</Button>
+            <Button variant="destructive" onClick={handleDeleteInsumo} disabled={deletandoInsumo}>
+              {deletandoInsumo ? 'Excluindo...' : 'Excluir'}
             </Button>
           </DialogFooter>
         </DialogContent>
