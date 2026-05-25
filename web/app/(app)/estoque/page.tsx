@@ -44,6 +44,7 @@ export default function EstoquePage() {
   // ajuste
   const [selectedItem, setSelectedItem] = useState<Estoque | null>(null)
   const [ajuste, setAjuste] = useState('')
+  const [ajustePreco, setAjustePreco] = useState('')
   const [salvando, setSalvando] = useState(false)
 
   // editar movimentação
@@ -109,10 +110,14 @@ export default function EstoquePage() {
       data: new Date().toISOString(),
       origem: 'manual',
     })
-    await supabase.from('estoque').update({ quantidade_atual: novaQtd }).eq('id', selectedItem.id)
+    const updatePayload: Record<string, unknown> = { quantidade_atual: novaQtd }
+    const novoPreco = parseFloat(ajustePreco)
+    if (!isNaN(novoPreco) && novoPreco >= 0) updatePayload.preco_medio_unitario = novoPreco
+    await supabase.from('estoque').update(updatePayload).eq('id', selectedItem.id)
     setSalvando(false)
     setSelectedItem(null)
     setAjuste('')
+    setAjustePreco('')
     loadData()
   }
 
@@ -294,7 +299,11 @@ export default function EstoquePage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => { setSelectedItem(item); setAjuste(String(item.quantidade_atual)) }}
+                        onClick={() => {
+                          setSelectedItem(item)
+                          setAjuste(String(item.quantidade_atual))
+                          setAjustePreco(item.preco_medio_unitario > 0 ? String(item.preco_medio_unitario) : '')
+                        }}
                       >
                         Ajustar
                       </Button>
@@ -368,7 +377,7 @@ export default function EstoquePage() {
       </Card>
 
       {/* Dialog: Ajustar Estoque */}
-      <Dialog open={!!selectedItem} onOpenChange={open => { if (!open) setSelectedItem(null) }}>
+      <Dialog open={!!selectedItem} onOpenChange={open => { if (!open) { setSelectedItem(null); setAjustePreco('') } }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Ajustar Estoque</DialogTitle>
@@ -396,8 +405,23 @@ export default function EstoquePage() {
                   required
                 />
               </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ajuste-preco">
+                  Preço unitário (R$){' '}
+                  <span className="text-muted-foreground text-xs">opcional</span>
+                </Label>
+                <Input
+                  id="ajuste-preco"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0,00"
+                  value={ajustePreco}
+                  onChange={e => setAjustePreco(e.target.value)}
+                />
+              </div>
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setSelectedItem(null)}>
+                <Button type="button" variant="outline" onClick={() => { setSelectedItem(null); setAjustePreco('') }}>
                   Cancelar
                 </Button>
                 <Button type="submit" disabled={salvando}>

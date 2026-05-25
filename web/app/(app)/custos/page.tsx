@@ -102,16 +102,16 @@ export default function CustosPage() {
         .order('data', { ascending: false }),
       supabase
         .from('estoque')
-        .select('insumo_id, preco_unitario'),
+        .select('insumo_id, preco_medio_unitario'),
     ])
 
     if (resOps.error)     console.error('[Custos] operacoes:', resOps.error)
     if (resEstoque.error) console.error('[Custos] estoque:',   resEstoque.error)
 
     const precoMap = new Map<string, number>()
-    ;((resEstoque.data ?? []) as unknown as { insumo_id: string; preco_unitario: number | null }[])
+    ;((resEstoque.data ?? []) as unknown as { insumo_id: string; preco_medio_unitario: number | null }[])
       .forEach(e => {
-        if (e.preco_unitario) precoMap.set(e.insumo_id, e.preco_unitario)
+        if (e.preco_medio_unitario) precoMap.set(e.insumo_id, e.preco_medio_unitario)
       })
 
     let usosSemPreco = 0

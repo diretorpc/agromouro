@@ -93,7 +93,7 @@ export default function OperacoesPage() {
     const [resOps, resTalhoes, resInsumos] = await Promise.all([
       supabase
         .from('operacoes')
-        .select('*, talhoes(nome), itens_operacao(id, quantidade, dose_por_ha, unidade, insumos(nome, unidade))')
+        .select('*, talhoes(nome), itens_operacao(id, insumo_id, descricao, quantidade, dose_por_ha, unidade, insumos(nome, unidade))')
         .order('data', { ascending: false })
         .limit(50),
       supabase.from('talhoes').select('*').order('nome'),
@@ -130,7 +130,6 @@ export default function OperacoesPage() {
 
     for (const item of op.itens_operacao ?? []) {
       if (item.insumo_id && item.quantidade) {
-        const estoqueItem = insumos.find(i => i.insumo_id === item.insumo_id)
         await supabase.from('movimentacoes_estoque').insert({
           insumo_id: item.insumo_id,
           tipo: 'entrada',
@@ -138,9 +137,15 @@ export default function OperacoesPage() {
           data: new Date().toISOString().split('T')[0],
           origem: 'manual',
         })
-        if (estoqueItem) {
+        // busca saldo fresco do banco para evitar usar state desatualizado
+        const { data: estRow } = await supabase
+          .from('estoque')
+          .select('quantidade_atual')
+          .eq('insumo_id', item.insumo_id)
+          .single()
+        if (estRow) {
           await supabase.from('estoque')
-            .update({ quantidade_atual: estoqueItem.quantidade_atual + item.quantidade })
+            .update({ quantidade_atual: estRow.quantidade_atual + item.quantidade })
             .eq('insumo_id', item.insumo_id)
         }
       }
@@ -193,13 +198,17 @@ export default function OperacoesPage() {
         return
       }
 
-      // Devolver ao estoque os produtos da operação original
+      // Devolver ao estoque os produtos da operação original (lê saldo fresco do banco)
       for (const item of editingOp.itens_operacao ?? []) {
         if (item.insumo_id && item.quantidade) {
-          const est = insumos.find(i => i.insumo_id === item.insumo_id)
-          if (est) {
+          const { data: estRow } = await supabase
+            .from('estoque')
+            .select('quantidade_atual')
+            .eq('insumo_id', item.insumo_id)
+            .single()
+          if (estRow) {
             await supabase.from('estoque')
-              .update({ quantidade_atual: est.quantidade_atual + item.quantidade })
+              .update({ quantidade_atual: estRow.quantidade_atual + item.quantidade })
               .eq('insumo_id', item.insumo_id)
           }
         }
