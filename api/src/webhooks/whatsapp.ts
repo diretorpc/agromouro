@@ -332,10 +332,12 @@ async function processarMensagem(telefone: string, texto: string) {
       }
 
       // Compor resposta no WhatsApp
-      const nomeLocal  = talhao ? `Talhão ${talhao.nome} (${talhao.area_ha}ha)` : 'talhão não identificado'
-      const linhasOk   = saidasProcessadas.map(s => {
-        const restante = s.novaQuantidade != null ? ` (estoque: ${s.novaQuantidade}${s.unidade})` : ''
-        return `📦 ${s.nome}: ${s.quantidade}${s.unidade}${restante}`
+      const nomeLocal = talhao ? `Talhão ${talhao.nome} (${talhao.area_ha}ha)` : 'talhão não identificado'
+      const linhasOk = saidasProcessadas.map(s => {
+        const restante  = s.novaQuantidade != null ? ` (estoque: ${s.novaQuantidade}${s.unidade})` : ''
+        const abaixoMin = s.novaQuantidade != null && s.minimo != null && s.minimo > 0 && s.novaQuantidade <= s.minimo
+        const aviso     = abaixoMin ? ` ⚠️ abaixo do mín. (${s.minimo}${s.unidade})` : ''
+        return `📦 ${s.nome}: ${s.quantidade}${s.unidade}${restante}${aviso}`
       }).join('\n')
       const linhasFail = failItems.map(f => `❌ ${f.nome}: ${f.erro}`).join('\n')
 

@@ -297,24 +297,12 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 - [x] Produz array `SaidaProcessada[]` com `novaQuantidade` e `minimo` por item — pronto para Passo 7 usar
 - [x] Resposta WhatsApp já mostra `(estoque: 130L)` após cada saída — visibilidade imediata
 
-#### Passo 7 — Resposta final no WA — lista por insumo
-- [ ] Resposta consolidada com saída + estoque restante de cada item:
-  ```
-  ✅ Pulverização registrada!
-  📍 Talhão Lagoa (35ha) — 25/05
-
-  📦 Score:  70L     (estoque: 130L)
-  📦 Priori: 10500ml (estoque: 9500ml)
-  📦 ureia:  1750kg  (estoque: 8250kg)
-  ⚠️ Priori abaixo do mínimo! (mín: 15000ml)
-  ```
-- [ ] Sucesso parcial: se 2 de 3 insumos foram OK, listar quais falharam:
-  ```
-  ✅ Operação registrada (2 de 3 insumos)
-  📦 Score:  70L OK
-  📦 ureia:  1750kg OK
-  ❌ "Priorii" não encontrado no estoque — verifique o nome
-  ```
+#### Passo 7 — Aviso de estoque mínimo na resposta WA ✅
+- [x] Aviso **inline** por item: `📦 Priori: 10500ml (estoque: 9500ml) ⚠️ abaixo do mín. (15000ml)`
+- [x] Critério `novaQuantidade <= minimo` (mesma regra do `consultarEstoque()`, mantém consistência)
+- [x] Ignora produtos sem mínimo configurado (`null` ou `0`)
+- [x] Saldo negativo visível pelo próprio número entre parênteses (ex: `estoque: -50L`)
+- [x] Sucesso parcial (failItems) já listado desde Passo 4 (`❌ nome: motivo`)
 
 #### Edge cases a tratar
 - Insumo não encontrado no banco → marca esse item como falha, processa os outros, lista no WA
