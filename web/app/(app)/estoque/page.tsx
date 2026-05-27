@@ -111,7 +111,7 @@ export default function EstoquePage() {
     e.preventDefault()
     if (!selectedItem) return
     const novaQtd = parseFloat(ajuste)
-    if (isNaN(novaQtd) || novaQtd < 0) return
+    if (isNaN(novaQtd)) return
     setSalvando(true)
     const diff = novaQtd - selectedItem.quantidade_atual
     const tipo = diff >= 0 ? 'entrada' : 'saida'
@@ -323,14 +323,23 @@ export default function EstoquePage() {
                   </TableCell>
                 </TableRow>
               ) : estoque.map(item => {
-                const critico = item.quantidade_atual <= item.quantidade_minima_alerta
+                const negativo = item.quantidade_atual < 0
+                const critico  = !negativo && item.quantidade_atual <= item.quantidade_minima_alerta
+                const linhaBg  = negativo ? 'bg-red-100' : critico ? 'bg-red-50/50' : ''
+                const qtdClass = negativo
+                  ? 'text-right font-bold text-red-700'
+                  : critico
+                    ? 'text-right font-semibold text-red-600'
+                    : 'text-right font-semibold'
                 return (
-                  <TableRow key={item.id} className={critico ? 'bg-red-50/50' : ''}>
-                    <TableCell className="font-medium">{item.insumos.nome}</TableCell>
+                  <TableRow key={item.id} className={linhaBg}>
+                    <TableCell className={`font-medium ${negativo ? 'font-bold' : ''}`}>
+                      {item.insumos.nome}
+                    </TableCell>
                     <TableCell>
                       <span className="text-xs text-muted-foreground capitalize">{item.insumos.tipo}</span>
                     </TableCell>
-                    <TableCell className={`text-right font-semibold ${critico ? 'text-red-600' : ''}`}>
+                    <TableCell className={qtdClass}>
                       {item.quantidade_atual} {item.insumos.unidade}
                     </TableCell>
                     <TableCell className="text-right text-sm">
@@ -339,7 +348,9 @@ export default function EstoquePage() {
                         : '—'}
                     </TableCell>
                     <TableCell className="text-right">
-                      {critico ? (
+                      {negativo ? (
+                        <Badge variant="destructive" className="font-bold">Negativo</Badge>
+                      ) : critico ? (
                         <Badge variant="destructive">Crítico</Badge>
                       ) : (
                         <Badge variant="outline" className="text-green-700 border-green-200">OK</Badge>
@@ -541,11 +552,13 @@ export default function EstoquePage() {
                   id="ajuste"
                   type="number"
                   step="0.01"
-                  min="0"
                   value={ajuste}
                   onChange={e => setAjuste(e.target.value)}
                   required
                 />
+                <p className="text-xs text-muted-foreground">
+                  Valores negativos são permitidos (estoque vai aparecer em vermelho).
+                </p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="ajuste-preco">
