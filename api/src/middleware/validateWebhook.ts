@@ -2,16 +2,18 @@ import { Request, Response, NextFunction } from 'express'
 import crypto from 'crypto'
 
 /**
- * Valida que o webhook veio de uma origem legítima (NFE.io ou Z-API),
- * comparando a assinatura HMAC enviada no header com o WEBHOOK_SECRET local.
+ * Valida que o webhook veio de uma origem legítima (NFE.io, n8n/Make ou Z-API),
+ * comparando a assinatura/token enviado no header com o segredo correspondente.
  *
- * NFE.io envia: header x-nfeio-signature = HMAC-SHA256(body, secret)
- * Z-API envia:  header x-z-api-token = WEBHOOK_SECRET configurado no painel
+ * NFE.io envia: header x-nfeio-signature = HMAC-SHA256(body, WEBHOOK_SECRET)
+ * n8n/Make:     header x-webhook-secret  = WEBHOOK_SECRET
+ * Z-API envia:  header Client-Token      = ZAPI_CLIENT_TOKEN configurado na conta Z-API
  *
  * Qualquer request sem assinatura válida é rejeitado com 401.
  */
 
-const SECRET = process.env.WEBHOOK_SECRET!
+const SECRET            = process.env.WEBHOOK_SECRET!
+const ZAPI_CLIENT_TOKEN = process.env.ZAPI_CLIENT_TOKEN ?? ''
 
 // ─── Validação para NFE.io (HMAC-SHA256) ─────────────────────────────────────
 export function validateNfeWebhook(req: Request, res: Response, next: NextFunction) {
@@ -64,9 +66,15 @@ export function validateN8nWebhook(req: Request, res: Response, next: NextFuncti
   next()
 }
 
-// ─── Validação para Z-API (token fixo no header) ──────────────────────────────
+// ─── Validação para Z-API (header padrão Client-Token) ────────────────────────
 export function validateZapiWebhook(req: Request, res: Response, next: NextFunction) {
-  const token = req.headers['x-z-api-token'] as string | undefined
+  if (!ZAPI_CLIENT_TOKEN) {
+    console.error('[WhatsApp] ZAPI_CLIENT_TOKEN não configurada no servidor — bloqueado')
+    return res.status(500).json({ error: 'Configuração do servidor incompleta' })
+  }
+
+  // Z-API envia o token em "Client-Token" (Express normaliza para lowercase)
+  const token = req.headers['client-token'] as string | undefined
 
   if (!token) {
     console.warn('[WhatsApp] Webhook recebido sem token — bloqueado')
@@ -75,7 +83,7 @@ export function validateZapiWebhook(req: Request, res: Response, next: NextFunct
 
   // Comparação em tempo constante
   const tokenBuffer  = Buffer.from(token)
-  const secretBuffer = Buffer.from(SECRET)
+  const secretBuffer = Buffer.from(ZAPI_CLIENT_TOKEN)
 
   if (tokenBuffer.length !== secretBuffer.length || !crypto.timingSafeEqual(tokenBuffer, secretBuffer)) {
     console.warn('[WhatsApp] Token inválido — bloqueado')

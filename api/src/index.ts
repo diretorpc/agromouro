@@ -31,7 +31,7 @@ const REQUIRED_ENV = [
 ]
 // Fase 2: Z-API (WhatsApp) — opcional até o chip dedicado estar disponível
 const OPTIONAL_WARN_ENV = [
-  'ANTHROPIC_API_KEY', 'ZAPI_INSTANCE_ID', 'ZAPI_TOKEN', 'ZAPI_PHONE',
+  'ANTHROPIC_API_KEY', 'ZAPI_INSTANCE_ID', 'ZAPI_TOKEN', 'ZAPI_PHONE', 'ZAPI_CLIENT_TOKEN',
 ]
 for (const key of REQUIRED_ENV) {
   if (!process.env[key]) throw new Error(`Variável de ambiente obrigatória não definida: ${key}`)
