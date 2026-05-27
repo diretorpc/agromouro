@@ -77,7 +77,8 @@ export function validateZapiWebhook(req: Request, res: Response, next: NextFunct
   const token = req.headers['client-token'] as string | undefined
 
   if (!token) {
-    console.warn('[WhatsApp] Webhook recebido sem token — bloqueado')
+    // DEBUG TEMPORÁRIO: lista todos os headers recebidos para identificar o header correto
+    console.warn('[WhatsApp] Webhook recebido sem token — bloqueado. Headers presentes:', Object.keys(req.headers).join(', '))
     return res.status(401).json({ error: 'Token ausente' })
   }
 
