@@ -53,7 +53,7 @@ const allowedOrigins = [
   ...(process.env.FRONTEND_URL ?? '').split(',').map(s => s.trim()).filter(Boolean),
 ].filter(Boolean) as string[]
 
-app.use(cors({
+const corsHandler = cors({
   origin: (origin, callback) => {
     // Permitir requests sem origin (ex: Postman em dev, Railway health checks)
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true)
@@ -62,7 +62,16 @@ app.use(cors({
   methods: ['GET', 'POST', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
-}))
+})
+
+// Webhooks externos (Z-API, NFE.io, Make/n8n) são server-to-server e já têm
+// autenticação própria via header (Client-Token, x-nfeio-signature, etc.).
+// CORS é uma proteção de navegador — aplicar em webhook bloqueia origens
+// legítimas como api.z-api.io. Só aplicar nas rotas consumidas pelo frontend.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/webhook')) return next()
+  corsHandler(req, res, next)
+})
 
 // ─── Rate limiting global ─────────────────────────────────────────────────────
 const globalLimiter = rateLimit({
