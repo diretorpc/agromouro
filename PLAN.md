@@ -200,22 +200,115 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
   Responda SOMENTE em JSON:
   { "tipo": "...", "dados": { ... } }
   ```
-- [ ] Implementar parser para `OPERACAO`:
-  - Entrada: `"Pulverizei o talhão 3 hoje com 2L/ha de Score"`
-  - Saída: salva em `operacoes` + `movimentacoes_estoque` (saída)
-  - Confirmação: `"✅ Pulverização salva no Talhão 3 — 2L/ha de Score. Área: 35ha."`
-  - ⚠️ Salva em `operacoes` ✅ — falta registrar saída em `movimentacoes_estoque`
-- [ ] Implementar parser para `APLICACAO_INSUMO`:
-  - Entrada: `"Plantei a soja no talhão 5 ontem, variedade NS 7338"`
-  - Saída: salva operação de plantio + atualiza safra
-  - Confirmação: `"✅ Plantio registrado — Talhão 5, Soja NS 7338."`
-  - ⚠️ Salva em `operacoes` ✅ — falta criar/atualizar registro na tabela `safras`
 - [x] Implementar parser para `CONSULTA`:
   - Entrada: `"Quanto de glifosato tem em estoque?"`
   - Saída: consulta banco e responde com o número
 - [x] Resposta padrão para `DESCONHECIDO`:
   - `"Não entendi bem. Pode reformular? Exemplos: 'pulverizei o talhão 2', 'qual o estoque de ureia'"`
 - [x] Tratar erros com graciosidade (nunca deixar mensagem sem resposta)
+- [ ] Implementar parser para `APLICACAO_INSUMO`:
+  - Entrada: `"Plantei a soja no talhão 5 ontem, variedade NS 7338"`
+  - Saída: salva operação de plantio + atualiza safra
+  - Confirmação: `"✅ Plantio registrado — Talhão 5, Soja NS 7338."`
+  - ⚠️ Salva em `operacoes` ✅ — falta criar/atualizar registro na tabela `safras`
+
+### 2.5 WhatsApp seguro + saída de estoque automática
+> Pré-requisito: número pessoal conectado — qualquer conversa acionaria o bot sem proteção.
+
+#### Passo 0 — Dupla proteção (whitelist + prefixo de ativação) ✅
+- [x] Adicionar variáveis de ambiente no Railway:
+  - `WHATSAPP_AUTHORIZED_PHONES` — números autorizados separados por vírgula (ex: `5544999990000,5544988880000`)
+  - `WHATSAPP_TRIGGER_PREFIX` — prefixo que ativa o bot (ex: `!agro`)
+- [x] No webhook, antes de qualquer processamento:
+  1. Verificar se `phone` está na whitelist → se não, retornar 200 silenciosamente
+  2. Verificar se mensagem começa com o prefixo → se não, retornar 200 silenciosamente
+  3. Fazer strip do prefixo antes de passar ao Claude
+- [x] Resultado: conversas normais nunca são interceptadas; bot só age com `!agro <mensagem>`
+- [ ] **Pendente:** configurar `WHATSAPP_AUTHORIZED_PHONES` e `WHATSAPP_TRIGGER_PREFIX` no Railway com os valores reais
+
+#### Passo 1 — Melhorar extração do Claude Haiku (suporte a múltiplos insumos) ✅
+> **Realidade do campo:** 99% das aplicações usam 3–4 insumos numa mesma calda (defensivo + adjuvante + fertilizante foliar). Tratar como insumo único seria irreal.
+
+- [x] Atualizar prompt para retornar **array de insumos** com dose estruturada por item:
+  ```json
+  {
+    "tipo": "OPERACAO",
+    "dados": {
+      "talhao": "Lagoa",
+      "operacao_tipo": "pulverizacao",
+      "data": "2026-05-25",
+      "insumos": [
+        { "nome": "Score",  "dose_valor": 2,   "dose_unidade": "L",  "dose_tipo": "por_ha" },
+        { "nome": "Priori", "dose_valor": 300, "dose_unidade": "ml", "dose_tipo": "por_ha" },
+        { "nome": "ureia",  "dose_valor": 50,  "dose_unidade": "kg", "dose_tipo": "por_ha" }
+      ]
+    }
+  }
+  ```
+  - `dose_tipo`: `"por_ha"` (ex: 2L/ha) ou `"total"` (ex: 50L direto) ou `null`
+  - Para `CONSULTA_ESTOQUE`: `insumos[]` com 1+ produtos (permite "quanto tem de glifosato e ureia?")
+  - Adicionar exemplo de múltiplos insumos no prompt para ensinar o padrão ao Haiku
+
+#### Passo 2 — Buscar insumo no banco ✅
+> **Decisão:** sem auto-criação no MVP. Se não achar, avisa o agricultor no WhatsApp para reformular. Mantém o banco limpo evitando duplicatas por typo ("Scoore" vs "Score") ou abreviação ("ureia" vs "Ureia 45N"). Fluxo fuzzy match + confirmação interativa fica para pós-MVP.
+
+- [x] Adicionar função `buscarInsumo(nome)` — busca por `ilike` (case-insensitive, tolerante a sufixos)
+- [x] Retorna `{ id, nome, unidade }` ou `null` quando não encontra
+- [ ] Será chamada em loop sobre `dados.insumos[]` no Passo 3
+- [ ] Insumos não encontrados → marcar como falha parcial (Passo 7 lista no WA)
+
+**Pós-MVP (Passo 8 ou depois):** fluxo de fuzzy match — se não achar exato, busca por similaridade, sugere candidatos via WhatsApp, agricultor confirma com número. Permite "criar como novo" como última opção, mas via confirmação explícita.
+
+#### Passo 3 — Calcular quantidade total (por insumo) ✅
+> **Inferência de dose_tipo:** o agricultor raramente digita "/ha". Por convenção brasileira, em pulverização/adubação/calagem/plantio dose é sempre por hectare implícita. Em combustível é sempre total. O Haiku infere isso automaticamente pelo `operacao_tipo` e nome do insumo. Override explícito (`"/ha"`, `"no total"`) sempre vence.
+
+- [x] Função `resolverInsumos(insumos, talhao)` em `whatsapp.ts` — função **pura** (não escreve no banco)
+- [x] Para cada item de `dados.insumos[]`:
+  - Resolve o nome via `buscarInsumo()` → se não acha, marca como falha
+  - Valida `dose_valor` e `dose_tipo` → se faltar, marca como falha
+  - Se `dose_tipo = "por_ha"` e talhão com `area_ha` → `quantidade = dose_valor × area_ha`
+  - Se `dose_tipo = "total"` → `quantidade = dose_valor` direto
+  - Se `dose_tipo = "por_ha"` sem talhão ou `area_ha = 0` → falha
+- [x] Retorna array tipado `{ ok: true, insumo_id, nome, quantidade, unidade } | { ok: false, nome, erro }` (discriminated union)
+- [x] Roda em paralelo com `Promise.all` (N round-trips ao banco viram 1)
+- [ ] **Integração:** será chamada por `processarMensagem` no Passo 4 (junto com o insert da operação)
+
+> **Pós-MVP — Adubação com taxa variável:** agricultura de precisão usa mapas de prescrição (shapefile/ISO-XML), não dose homogênea. O fluxo WhatsApp atual não cobre isso — virá da integração John Deere ou import de prescrição em fase posterior.
+
+#### Passo 4 — Inserir em `itens_operacao` (batch) ✅
+- [x] INSERT em `operacoes` agora captura o id gerado (`.select('id').single()`)
+- [x] Chama `resolverInsumos()` (Passo 3) após criar a operação
+- [x] **1 round-trip único** (batch insert com array), não loop — N insumos viram 1 INSERT
+- [x] Filtra apenas itens `ok: true` com type guard TypeScript (`Extract<..., { ok: true }>`)
+- [x] Itens com falha (`ok: false`) viram avisos no WhatsApp, não bloqueiam o sucesso parcial
+- [x] Custo total da operação na página /custos = soma de todos os itens (calcula automaticamente)
+
+#### Passo 5 — Inserir em `movimentacoes_estoque` (batch) ✅
+- [x] Batch insert (1 round-trip) reaproveitando os mesmos `okItems` e `operacaoId` do Passo 4
+- [x] `origem: 'operacao'` semanticamente correto — `operacoes.fonte = 'whatsapp'` já registra que veio do WA
+- [x] Página `/estoque` mostra cada saída automaticamente com etiqueta "🌾 Operação / Lagoa" (via join `operacoes(talhoes(nome))` que já existia desde PR #8)
+- [x] Espelha exatamente o que o formulário web em `/operacoes` faz desde o PR #7
+- [x] Falha no insert é logada mas não aborta — itens_operacao continuam válidos
+
+#### Passo 6 — Decrementar `estoque.quantidade_atual` ✅
+- [x] **Estratégia**: 1 SELECT batch (`.in('insumo_id', [...])`) busca atuais + mínimos; N UPDATEs em paralelo via `Promise.all`
+- [x] Sem RPC atômica — single-tenant + webhook serializado torna race condition irrelevante
+- [x] Linha inexistente em `estoque` → loga warning, segue com os outros (não bloqueia)
+- [x] Produz array `SaidaProcessada[]` com `novaQuantidade` e `minimo` por item — pronto para Passo 7 usar
+- [x] Resposta WhatsApp já mostra `(estoque: 130L)` após cada saída — visibilidade imediata
+
+#### Passo 7 — Aviso de estoque mínimo na resposta WA ✅
+- [x] Aviso **inline** por item: `📦 Priori: 10500ml (estoque: 9500ml) ⚠️ abaixo do mín. (15000ml)`
+- [x] Critério `novaQuantidade <= minimo` (mesma regra do `consultarEstoque()`, mantém consistência)
+- [x] Ignora produtos sem mínimo configurado (`null` ou `0`)
+- [x] Saldo negativo visível pelo próprio número entre parênteses (ex: `estoque: -50L`)
+- [x] Sucesso parcial (failItems) já listado desde Passo 4 (`❌ nome: motivo`)
+
+#### Edge cases a tratar
+- Insumo não encontrado no banco → marca esse item como falha, processa os outros, lista no WA
+- Dose L/ha sem talhão identificado → salva operação sem itens, avisa
+- Estoque insuficiente em algum item → registra normalmente (não bloqueia), avisa no resumo
+- Array vazio de insumos numa OPERACAO → salva só a operação (ex: "colhi o talhão 5" — sem produto)
 
 ### 2.5 Deploy no Railway
 - [x] **Antes:** garantir que o código está commitado e enviado para o GitHub (`git push`)
