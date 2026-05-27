@@ -230,6 +230,9 @@ async function processarMensagem(telefone: string, texto: string) {
     const { tipo, dados } = classificacao
     let resposta = ''
 
+    // DEBUG TEMPORÁRIO: revelar o que o Haiku classificou
+    console.log('[WhatsApp DEBUG] Haiku tipo:', tipo, '| dados:', JSON.stringify(dados))
+
     const insumos: Array<{ nome: string; dose_valor: number | null; dose_unidade: string | null; dose_tipo: string | null }> =
       Array.isArray(dados.insumos) ? dados.insumos : []
 
