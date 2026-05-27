@@ -380,12 +380,25 @@ function isAuthorized(phone: string): boolean {
 
 // ─── Rota do webhook ──────────────────────────────────────────────────────────
 whatsappWebhook.post('/', async (req, res) => {
+  // DEBUG TEMPORÁRIO: snapshot do payload bruto (recortado para evitar spam de log)
+  const bodyKeys = req.body && typeof req.body === 'object' ? Object.keys(req.body) : []
+  console.log('[WhatsApp DEBUG] body keys:', bodyKeys.join(', '),
+    '| phone:', JSON.stringify(req.body?.phone),
+    '| text:', JSON.stringify(req.body?.text)?.slice(0, 200),
+    '| message:', JSON.stringify(req.body?.message)?.slice(0, 200))
+
   const parsed = zapiPayloadSchema.safeParse(req.body)
-  if (!parsed.success) return res.status(200).json({ ok: true })
+  if (!parsed.success) {
+    console.warn('[WhatsApp DEBUG] schema falhou:', parsed.error.issues.slice(0, 3))
+    return res.status(200).json({ ok: true })
+  }
 
   const { phone, text } = parsed.data
 
-  if (!text?.message?.trim()) return res.status(200).json({ ok: true })
+  if (!text?.message?.trim()) {
+    console.warn('[WhatsApp DEBUG] sem text.message — phone:', phone)
+    return res.status(200).json({ ok: true })
+  }
 
   // Prefixo de ativação — calculado antes da proteção anti-loop porque mensagens
   // do próprio número COM o prefixo são propositais (uso single-tenant), não loop
@@ -393,22 +406,37 @@ whatsappWebhook.post('/', async (req, res) => {
   const rawMessage = text.message.trim()
   const hasExplicitTrigger = prefix.length > 0 && rawMessage.toLowerCase().startsWith(prefix)
 
+  console.log('[WhatsApp DEBUG] phone:', phone, '| msg:', rawMessage.slice(0, 80),
+    '| hasExplicitTrigger:', hasExplicitTrigger, '| prefix:', prefix)
+
   // Anti-loop: ignorar mensagens do próprio bot SALVO quando começam com o prefixo
   // (no setup single-tenant o agricultor manda pra própria conta com "!agro …")
   const botPhone = normalizarPhone(process.env.ZAPI_PHONE || '')
   if (normalizarPhone(phone) === botPhone && !hasExplicitTrigger) {
+    console.warn('[WhatsApp DEBUG] rejeitado por anti-loop (phone===botPhone, sem prefixo)')
     return res.status(200).json({ ok: true })
   }
 
   // Passo 0 — Whitelist: só números autorizados acionam o bot
-  if (!isAuthorized(phone)) return res.status(200).json({ ok: true })
+  if (!isAuthorized(phone)) {
+    console.warn('[WhatsApp DEBUG] rejeitado por whitelist — phone normalizado:', normalizarPhone(phone))
+    return res.status(200).json({ ok: true })
+  }
 
   // Passo 0 — Prefixo obrigatório (quando configurado)
-  if (prefix && !hasExplicitTrigger) return res.status(200).json({ ok: true })
+  if (prefix && !hasExplicitTrigger) {
+    console.warn('[WhatsApp DEBUG] rejeitado por falta de prefixo')
+    return res.status(200).json({ ok: true })
+  }
 
   // Strip do prefixo antes de passar ao Claude
   const texto = (prefix ? rawMessage.slice(prefix.length).trim() : rawMessage).slice(0, 1000)
-  if (!texto) return res.status(200).json({ ok: true })
+  if (!texto) {
+    console.warn('[WhatsApp DEBUG] texto vazio após strip do prefixo')
+    return res.status(200).json({ ok: true })
+  }
+
+  console.log('[WhatsApp DEBUG] vai processar — texto:', texto)
 
   processarMensagem(phone, texto).catch((err) =>
     console.error('[WhatsApp] Erro inesperado em background:', err instanceof Error ? err.message : err)
