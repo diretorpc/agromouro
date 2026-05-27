@@ -387,19 +387,24 @@ whatsappWebhook.post('/', async (req, res) => {
 
   if (!text?.message?.trim()) return res.status(200).json({ ok: true })
 
-  // Ignorar mensagens do próprio bot (evitar loop)
+  // Prefixo de ativação — calculado antes da proteção anti-loop porque mensagens
+  // do próprio número COM o prefixo são propositais (uso single-tenant), não loop
+  const prefix     = (process.env.WHATSAPP_TRIGGER_PREFIX || '').trim().toLowerCase()
+  const rawMessage = text.message.trim()
+  const hasExplicitTrigger = prefix.length > 0 && rawMessage.toLowerCase().startsWith(prefix)
+
+  // Anti-loop: ignorar mensagens do próprio bot SALVO quando começam com o prefixo
+  // (no setup single-tenant o agricultor manda pra própria conta com "!agro …")
   const botPhone = normalizarPhone(process.env.ZAPI_PHONE || '')
-  if (normalizarPhone(phone) === botPhone) return res.status(200).json({ ok: true })
+  if (normalizarPhone(phone) === botPhone && !hasExplicitTrigger) {
+    return res.status(200).json({ ok: true })
+  }
 
   // Passo 0 — Whitelist: só números autorizados acionam o bot
   if (!isAuthorized(phone)) return res.status(200).json({ ok: true })
 
-  // Passo 0 — Prefixo: mensagem deve começar com o trigger (ex: "!agro")
-  const prefix = (process.env.WHATSAPP_TRIGGER_PREFIX || '').trim().toLowerCase()
-  const rawMessage = text.message.trim()
-  if (prefix && !rawMessage.toLowerCase().startsWith(prefix)) {
-    return res.status(200).json({ ok: true })
-  }
+  // Passo 0 — Prefixo obrigatório (quando configurado)
+  if (prefix && !hasExplicitTrigger) return res.status(200).json({ ok: true })
 
   // Strip do prefixo antes de passar ao Claude
   const texto = (prefix ? rawMessage.slice(prefix.length).trim() : rawMessage).slice(0, 1000)
