@@ -103,11 +103,35 @@ Responda SOMENTE em JSON válido, sem texto extra:
   const content = response.content[0]
   if (content.type !== 'text') throw new Error('Resposta inesperada da IA')
 
+  // Haiku às vezes envolve o JSON em ```json ... ``` mesmo instruído a não.
+  // Estratégia robusta: tentar parse direto; se falhar, remover wrapper de markdown
+  // e/ou extrair entre o primeiro { e o último } do texto.
+  const raw = content.text.trim()
   try {
-    return JSON.parse(content.text)
+    return JSON.parse(raw)
   } catch {
-    return { tipo: 'DESCONHECIDO', dados: {} }
+    console.warn('[WhatsApp DEBUG] Haiku JSON parse falhou — raw:', raw.slice(0, 400))
   }
+
+  // Tentativa 2: remover ```json ... ``` ou ``` ... ```
+  const semWrapper = raw
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim()
+  try {
+    return JSON.parse(semWrapper)
+  } catch {/* segue para tentativa 3 */}
+
+  // Tentativa 3: extrair entre primeiro { e último }
+  const inicio = raw.indexOf('{')
+  const fim    = raw.lastIndexOf('}')
+  if (inicio >= 0 && fim > inicio) {
+    try {
+      return JSON.parse(raw.slice(inicio, fim + 1))
+    } catch {/* desiste */}
+  }
+
+  return { tipo: 'DESCONHECIDO', dados: {} }
 }
 
 // ─── Consultar estoque de um insumo ──────────────────────────────────────────
