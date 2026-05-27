@@ -182,18 +182,30 @@ async function buscarTalhao(nomeTalhao: string) {
 // ─── Buscar insumo por nome ──────────────────────────────────────────────────
 // Decisão MVP: sem auto-criação. Se não achar, retorna null e o chamador avisa
 // o agricultor no WA. Fuzzy match + confirmação ficam para pós-MVP.
+//
+// IMPORTANTE: preferimos insumos que tenham linha em estoque. Caso existam
+// duplicatas no banco (mesmo nome, IDs diferentes — origem comum: importação
+// repetida de NF-e), o `.limit(1)` puro escolheria um aleatório, podendo
+// pegar um órfão sem estoque e falhar silenciosamente no UPDATE.
 async function buscarInsumo(nome: string) {
   const nomeSanitizado = nome.trim().slice(0, 100)
   if (!nomeSanitizado) return null
 
   const { data } = await supabase
     .from('insumos')
-    .select('id, nome, unidade')
+    .select('id, nome, unidade, estoque(id)')
     .ilike('nome', `%${nomeSanitizado}%`)
-    .limit(1)
-    .maybeSingle()
+    .limit(5)
 
-  return data
+  if (!data || data.length === 0) return null
+
+  // Prefere o primeiro insumo que tenha pelo menos uma linha em estoque
+  type Row = { id: string; nome: string; unidade: string; estoque: { id: string }[] | null }
+  const rows      = data as unknown as Row[]
+  const comEstoque = rows.find(r => Array.isArray(r.estoque) && r.estoque.length > 0)
+  const escolhido  = comEstoque ?? rows[0]
+
+  return { id: escolhido.id, nome: escolhido.nome, unidade: escolhido.unidade }
 }
 
 // ─── Resolver insumos: nome textual → dados prontos para o banco ─────────────
