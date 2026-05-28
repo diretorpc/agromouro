@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { FileText, RefreshCw, Plus, Download, Upload, CircleDollarSign, Trash2 } from 'lucide-react'
+import { FileText, RefreshCw, Plus, Download, Upload, CircleDollarSign, Trash2, Search } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -23,6 +23,8 @@ const STATUS_STYLE: Record<string, string> = {
   processada: 'bg-green-100 text-green-700 border-green-200',
   erro: 'bg-red-100 text-red-700 border-red-200',
 }
+
+const SELECT_CLASS = 'flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring'
 
 type ParsedNFe = {
   numero: string
@@ -128,6 +130,10 @@ export default function NfePage() {
     numero: '', emitente_nome: '', emitente_cnpj: '',
     data_emissao: '', valor_total: '',
   })
+
+  // filtros
+  const [busca, setBusca] = useState('')
+  const [filtroStatus, setFiltroStatus] = useState<string>('todos')
 
   async function loadNotas() {
     const { data } = await supabase
@@ -253,6 +259,22 @@ export default function NfePage() {
 
   const canSave = addMode === 'xml' ? !!xmlPreview : !!(manualForm.numero && manualForm.emitente_nome && manualForm.data_emissao)
 
+  const notasFiltradas = useMemo(() => {
+    const buscaLower = busca.trim().toLowerCase()
+    return notas.filter(nota => {
+      if (buscaLower) {
+        const hitNumero    = nota.numero?.toLowerCase().includes(buscaLower)
+        const hitEmitente  = nota.emitente_nome?.toLowerCase().includes(buscaLower)
+        const hitCnpj      = nota.emitente_cnpj?.toLowerCase().includes(buscaLower)
+        if (!hitNumero && !hitEmitente && !hitCnpj) return false
+      }
+      if (filtroStatus !== 'todos' && nota.status !== filtroStatus) return false
+      return true
+    })
+  }, [notas, busca, filtroStatus])
+
+  const filtroAtivo = busca.trim() !== '' || filtroStatus !== 'todos'
+
   if (loading) return <PageSkeleton />
 
   return (
@@ -266,11 +288,50 @@ export default function NfePage() {
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <FileText className="h-4 w-4" />
-            NF-e Recebidas
-          </CardTitle>
+        <CardHeader className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              NF-e Recebidas
+              {filtroAtivo && (
+                <span className="text-xs font-normal text-muted-foreground ml-1">
+                  {notasFiltradas.length} de {notas.length}
+                </span>
+              )}
+            </CardTitle>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[200px] max-w-sm">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Buscar por número, emitente ou CNPJ..."
+                value={busca}
+                onChange={e => setBusca(e.target.value)}
+                className="pl-8 h-9"
+              />
+            </div>
+            <select
+              className={SELECT_CLASS + ' w-auto min-w-[140px]'}
+              value={filtroStatus}
+              onChange={e => setFiltroStatus(e.target.value)}
+            >
+              <option value="todos">Todos os status</option>
+              <option value="recebida">Recebida</option>
+              <option value="processando">Processando</option>
+              <option value="processada">Processada</option>
+              <option value="erro">Erro</option>
+            </select>
+            {filtroAtivo && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 text-muted-foreground"
+                onClick={() => { setBusca(''); setFiltroStatus('todos') }}
+              >
+                Limpar
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
@@ -291,7 +352,13 @@ export default function NfePage() {
                     Nenhuma nota fiscal recebida ainda.
                   </TableCell>
                 </TableRow>
-              ) : notas.map(nota => (
+              ) : notasFiltradas.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-10">
+                    Nenhuma nota fiscal corresponde aos filtros aplicados.
+                  </TableCell>
+                </TableRow>
+              ) : notasFiltradas.map(nota => (
                 <TableRow key={nota.id}>
                   <TableCell className="font-medium">{nota.numero}</TableCell>
                   <TableCell>
