@@ -8,7 +8,7 @@ import {
 } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -580,17 +580,42 @@ export default function FinanceiroPage() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-0.5">
-                      <Button size="sm" variant="ghost" title="Editar" onClick={() => abrirEdicao(item)}>
-                        <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Editar"
+                        className="hover:bg-blue-50 hover:text-blue-600"
+                        onClick={() => abrirEdicao(item)}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
                       </Button>
-                      <Button size="sm" variant="ghost" title="Excluir" onClick={() => setDeleteItem(item)}>
-                        <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Excluir"
+                        className="hover:bg-red-50 hover:text-red-600 text-red-400"
+                        onClick={() => setDeleteItem(item)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
+            {itensFiltrados.length > 0 && (
+              <TableFooter>
+                <TableRow>
+                  <TableCell colSpan={3} className="text-right text-sm font-semibold text-muted-foreground py-3">
+                    Total ({itensFiltrados.length} {itensFiltrados.length === 1 ? 'item' : 'itens'})
+                  </TableCell>
+                  <TableCell className="text-right text-sm font-bold py-3">
+                    {fmtBRL(totalGeral)}
+                  </TableCell>
+                  <TableCell colSpan={4} />
+                </TableRow>
+              </TableFooter>
+            )}
           </Table>
         </CardContent>
       </Card>
