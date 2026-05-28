@@ -311,7 +311,7 @@ export default function NfePage() {
               />
             </div>
             <select
-              className={SELECT_CLASS + ' w-auto min-w-[140px]'}
+              className={SELECT_CLASS.replace('w-full', 'w-auto') + ' min-w-[140px]'}
               value={filtroStatus}
               onChange={e => setFiltroStatus(e.target.value)}
             >

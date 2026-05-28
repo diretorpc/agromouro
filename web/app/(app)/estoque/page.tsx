@@ -347,7 +347,7 @@ export default function EstoquePage() {
               />
             </div>
             <select
-              className={SELECT_CLASS + ' w-auto min-w-[140px]'}
+              className={SELECT_CLASS.replace('w-full', 'w-auto') + ' min-w-[140px]'}
               value={filtroTipo}
               onChange={e => setFiltroTipo(e.target.value)}
             >
@@ -357,7 +357,7 @@ export default function EstoquePage() {
               ))}
             </select>
             <select
-              className={SELECT_CLASS + ' w-auto min-w-[140px]'}
+              className={SELECT_CLASS.replace('w-full', 'w-auto') + ' min-w-[140px]'}
               value={filtroStatus}
               onChange={e => setFiltroStatus(e.target.value as typeof filtroStatus)}
             >
