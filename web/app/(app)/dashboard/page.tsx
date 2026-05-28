@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { TrendingDown, PackageX, Sprout, Tractor } from 'lucide-react'
+import { TrendingDown, Package, Sprout, Tractor } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -10,7 +10,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { api } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
-import type { Talhao, Operacao, Estoque, Alerta, LancamentoFinanceiro, Safra } from '@/lib/types'
+import type { Talhao, Operacao, Estoque, Alerta, LancamentoFinanceiro, Safra, Insumo } from '@/lib/types'
 
 // ─── helpers ───────────────────────────────────────────────
 function formatBRL(v: number) {
@@ -62,6 +62,7 @@ export default function DashboardPage() {
   const [alertas, setAlertas] = useState<Alerta[]>([])
   const [lancamentos, setLancamentos] = useState<LancamentoFinanceiro[]>([])
   const [safras, setSafras] = useState<Safra[]>([])
+  const [insumos, setInsumos] = useState<Insumo[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -72,9 +73,10 @@ export default function DashboardPage() {
       api.get<Alerta[]>('/alertas').catch(() => [] as Alerta[]),
       supabase.from('lancamentos_financeiros').select('*').then(r => (r.data ?? []) as LancamentoFinanceiro[]),
       supabase.from('safras').select('*, talhoes(area_ha)').then(r => (r.data ?? []) as Safra[]),
-    ]).then(([t, o, e, a, l, s]) => {
+      supabase.from('insumos').select('id, nome, tipo, unidade').then(r => (r.data ?? []) as Insumo[]),
+    ]).then(([t, o, e, a, l, s, ins]) => {
       setTalhoes(t); setOperacoes(o); setEstoque(e)
-      setAlertas(a); setLancamentos(l); setSafras(s)
+      setAlertas(a); setLancamentos(l); setSafras(s); setInsumos(ins)
       setLoading(false)
     })
   }, [])
@@ -88,10 +90,13 @@ export default function DashboardPage() {
   const totalGastoMes  = lancamentosMes.reduce((s, l) => s + l.valor, 0)
   const nomeMesAtual   = inicioMes.toLocaleDateString('pt-BR', { month: 'long' })
 
-  // 2. Estoque crítico + negativo (separados)
+  // 2. Insumos cadastrados
+  const tiposDistintos = [...new Set(insumos.map(i => i.tipo))].length
+  const subInsumos = insumos.length === 0 ? 'nenhum cadastrado' : `${tiposDistintos} tipo${tiposDistintos !== 1 ? 's' : ''}`
+
+  // Estoque crítico + negativo (usados no card inferior)
   const estoqueNegativo = estoque.filter(e => e.quantidade_atual < 0)
   const estoqueCritico  = estoque.filter(e => e.quantidade_atual >= 0 && e.quantidade_atual <= e.quantidade_minima_alerta)
-  const totalProblemas  = estoqueNegativo.length + estoqueCritico.length
 
   // 3. Talhões
   const talhoesAtivos = talhoes.filter(t => t.status === 'ativo')
@@ -117,16 +122,8 @@ export default function DashboardPage() {
     }, {})
   ).map(([name, value]) => ({ name, value: Math.round(value * 10) / 10 }))
 
-  // Para o "Estoque" no sub: marcar se há negativo
-  const subEstoque = totalProblemas === 0
-    ? 'tudo OK'
-    : estoqueNegativo.length > 0
-      ? `${estoqueCritico.length} crítico${estoqueCritico.length !== 1 ? 's' : ''}, ${estoqueNegativo.length} negativo${estoqueNegativo.length !== 1 ? 's' : ''}`
-      : `${estoqueCritico.length} abaixo do mínimo`
-
   if (loading) return <DashboardSkeleton />
 
-  // Suprimir warnings de variáveis ainda não consumidas no front (mantidas em estado pra uso futuro)
   void alertas; void safras
 
   return (
@@ -149,19 +146,14 @@ export default function DashboardPage() {
         />
         <KpiCard
           href="/estoque"
-          label="Estoque"
-          value={totalProblemas}
-          sub={subEstoque}
-          icon={<PackageX className="h-5 w-5" />}
-          iconBg={totalProblemas > 0 ? '#FEF2F2' : '#EDFAF1'}
-          iconColor={totalProblemas > 0 ? '#DC2626' : '#16A34A'}
-          valueColor={
-            estoqueNegativo.length > 0 ? 'text-red-600'
-              : estoqueCritico.length > 0 ? 'text-amber-600'
-                : undefined
-          }
+          label="Insumos"
+          value={insumos.length}
+          sub={subInsumos}
+          icon={<Package className="h-5 w-5" />}
+          iconBg="#EEF5E5" iconColor="#5B8C2A"
         />
         <KpiCard
+          href="/talhoes"
           label="Talhões Ativos"
           value={talhoesAtivos.length}
           sub={`${haTotal.toFixed(0)} ha em ${talhoes.length} talhões`}
