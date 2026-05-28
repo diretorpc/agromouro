@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { MapPin, Plus, Trash2, Layers, Sprout } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
+import { MapPin, Plus, Trash2, Layers, Sprout, Upload, CheckCircle2, AlertCircle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -16,19 +17,63 @@ import { KpiCard } from '@/components/ui/kpi-card'
 import { supabase } from '@/lib/supabase'
 import type { Talhao } from '@/lib/types'
 
+// Leaflet não funciona com SSR — importação dinâmica obrigatória
+const MapaTalhoes = dynamic(() => import('@/components/mapa-talhoes'), { ssr: false })
+
 const STATUS_OPTIONS: Talhao['status'][] = ['ativo', 'pousio', 'colhido']
 
 const STATUS_STYLE: Record<Talhao['status'], { bg: string; color: string }> = {
-  ativo:    { bg: '#EDFAF1', color: '#16A34A' },
-  pousio:   { bg: '#FFFBEB', color: '#D97706' },
-  colhido:  { bg: '#F3F4F6', color: '#6B7280' },
+  ativo:   { bg: '#EDFAF1', color: '#16A34A' },
+  pousio:  { bg: '#FFFBEB', color: '#D97706' },
+  colhido: { bg: '#F3F4F6', color: '#6B7280' },
 }
 
 const SELECT_CLASS = 'flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring'
 
+// ─── Parser KMZ ────────────────────────────────────────────
+async function parseKMZ(file: File): Promise<Record<string, [number, number][]>> {
+  const JSZip = (await import('jszip')).default
+  const zip = await JSZip.loadAsync(file)
+
+  const kmlEntry = Object.values(zip.files).find(f => f.name.endsWith('.kml'))
+  if (!kmlEntry) throw new Error('Arquivo KML não encontrado dentro do KMZ.')
+
+  const kmlText = await kmlEntry.async('string')
+  const doc = new DOMParser().parseFromString(kmlText, 'text/xml')
+
+  const result: Record<string, [number, number][]> = {}
+
+  doc.querySelectorAll('Placemark').forEach(pm => {
+    const nome = pm.querySelector('name')?.textContent?.trim()
+    const coordsEl = pm.querySelector('Polygon coordinates') ?? pm.querySelector('coordinates')
+    if (!nome || !coordsEl) return
+
+    const coords: [number, number][] = coordsEl.textContent!
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .reduce<[number, number][]>((acc, c) => {
+        const parts = c.split(',').map(Number)
+        const lat = parts[1], lng = parts[0]
+        if (!isNaN(lat) && !isNaN(lng)) acc.push([lat, lng])
+        return acc
+      }, [])
+
+    if (coords.length > 2) result[nome] = coords
+  })
+
+  return result
+}
+
+// ─── Página ────────────────────────────────────────────────
 export default function TalhoesPage() {
   const [talhoes, setTalhoes] = useState<Talhao[]>([])
   const [loading, setLoading] = useState(true)
+  const kmzInputRef = useRef<HTMLInputElement>(null)
+
+  // importar KMZ
+  const [importando, setImportando] = useState(false)
+  const [importResult, setImportResult] = useState<{ ok: number; total: number; semMatch: string[] } | null>(null)
 
   // novo talhão
   const [novoDialog, setNovoDialog] = useState(false)
@@ -38,7 +83,7 @@ export default function TalhoesPage() {
   const [salvando, setSalvando] = useState(false)
   const [novoErro, setNovoErro] = useState<string | null>(null)
 
-  // deletar talhão
+  // deletar
   const [deleteDialog, setDeleteDialog] = useState<Talhao | null>(null)
   const [deleteErro, setDeleteErro] = useState<string | null>(null)
   const [deletando, setDeletando] = useState(false)
@@ -46,7 +91,7 @@ export default function TalhoesPage() {
   async function loadData() {
     const { data } = await supabase
       .from('talhoes')
-      .select('id, nome, area_ha, cultura_atual, status')
+      .select('id, nome, area_ha, cultura_atual, status, coordenadas')
       .order('nome')
     setTalhoes((data ?? []) as Talhao[])
     setLoading(false)
@@ -54,6 +99,45 @@ export default function TalhoesPage() {
 
   useEffect(() => { loadData() }, [])
 
+  // ── Importar KMZ ──
+  async function handleKMZ(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+
+    setImportando(true)
+    setImportResult(null)
+
+    try {
+      const poligonos = await parseKMZ(file)
+      const nomes = Object.keys(poligonos)
+
+      let ok = 0
+      const semMatch: string[] = []
+
+      for (const nome of nomes) {
+        const norm = (s: string) => s.toLowerCase().trim().replace(/\s+/g, ' ')
+        const talhao = talhoes.find(t => norm(t.nome) === norm(nome))
+        if (!talhao) { semMatch.push(nome); continue }
+
+        const { error } = await supabase
+          .from('talhoes')
+          .update({ coordenadas: poligonos[nome] })
+          .eq('id', talhao.id)
+
+        if (!error) ok++
+      }
+
+      setImportResult({ ok, total: nomes.length, semMatch })
+      await loadData()
+    } catch (err) {
+      setImportResult({ ok: 0, total: 0, semMatch: [], })
+    } finally {
+      setImportando(false)
+    }
+  }
+
+  // ── Novo talhão ──
   async function salvarNovo() {
     setNovoErro(null)
     const nome = novoForm.nome.trim()
@@ -71,16 +155,14 @@ export default function TalhoesPage() {
     })
     setSalvando(false)
 
-    if (error) {
-      setNovoErro('Erro ao salvar. Tente novamente.')
-      return
-    }
+    if (error) { setNovoErro('Erro ao salvar. Tente novamente.'); return }
 
     setNovoDialog(false)
     setNovoForm({ nome: '', area_ha: '', cultura_atual: '', status: 'ativo' })
     loadData()
   }
 
+  // ── Deletar ──
   async function confirmarDelete() {
     if (!deleteDialog) return
     setDeleteErro(null)
@@ -90,11 +172,9 @@ export default function TalhoesPage() {
     setDeletando(false)
 
     if (error) {
-      if (error.code === '23503') {
-        setDeleteErro('Este talhão possui operações vinculadas e não pode ser excluído.')
-      } else {
-        setDeleteErro('Erro ao excluir. Tente novamente.')
-      }
+      setDeleteErro(error.code === '23503'
+        ? 'Este talhão possui operações vinculadas e não pode ser excluído.'
+        : 'Erro ao excluir. Tente novamente.')
       return
     }
 
@@ -103,9 +183,10 @@ export default function TalhoesPage() {
   }
 
   // ── Métricas ──
-  const talhoesAtivos = talhoes.filter(t => t.status === 'ativo')
-  const areaTotal = talhoes.reduce((s, t) => s + (t.area_ha ?? 0), 0)
-  const culturas = [...new Set(talhoes.map(t => t.cultura_atual).filter(Boolean))]
+  const talhoesAtivos  = talhoes.filter(t => t.status === 'ativo')
+  const areaTotal      = talhoes.reduce((s, t) => s + (t.area_ha ?? 0), 0)
+  const culturas       = [...new Set(talhoes.map(t => t.cultura_atual).filter(Boolean))]
+  const comMapa        = talhoes.filter(t => t.coordenadas && t.coordenadas.length > 2)
 
   if (loading) return <TalhoesSkeleton />
 
@@ -143,17 +224,70 @@ export default function TalhoesPage() {
         />
       </div>
 
+      {/* Mapa */}
+      {comMapa.length > 0 && (
+        <Card className="border-0 shadow-sm overflow-hidden">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
+              Mapa — {comMapa.length} de {talhoes.length} talhão{talhoes.length !== 1 ? 'ões' : ''} mapeado{comMapa.length !== 1 ? 's' : ''}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <MapaTalhoes talhoes={talhoes} />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Feedback importação */}
+      {importResult && (
+        <div className={`flex items-start gap-3 rounded-lg px-4 py-3 text-sm ${importResult.ok > 0 ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+          {importResult.ok > 0
+            ? <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
+            : <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />}
+          <div>
+            <p className="font-semibold">
+              {importResult.ok > 0
+                ? `${importResult.ok} de ${importResult.total} talhão${importResult.total !== 1 ? 'ões' : ''} mapeado${importResult.ok !== 1 ? 's' : ''} com sucesso.`
+                : 'Nenhum talhão foi mapeado.'}
+            </p>
+            {importResult.semMatch.length > 0 && (
+              <p className="mt-0.5 text-xs opacity-80">
+                Sem correspondência: {importResult.semMatch.join(', ')}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Tabela */}
       <Card className="border-0 shadow-sm">
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
             <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
               Talhões
             </CardTitle>
-            <Button size="sm" onClick={() => { setNovoErro(null); setNovoDialog(true) }}>
-              <Plus className="h-4 w-4 mr-1.5" />
-              Novo Talhão
-            </Button>
+            <div className="flex gap-2">
+              <input
+                ref={kmzInputRef}
+                type="file"
+                accept=".kmz,.kml"
+                className="hidden"
+                onChange={handleKMZ}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => kmzInputRef.current?.click()}
+                disabled={importando}
+              >
+                <Upload className="h-4 w-4 mr-1.5" />
+                {importando ? 'Importando…' : 'Importar KMZ'}
+              </Button>
+              <Button size="sm" onClick={() => { setNovoErro(null); setNovoDialog(true) }}>
+                <Plus className="h-4 w-4 mr-1.5" />
+                Novo Talhão
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="pt-0">
@@ -174,6 +308,7 @@ export default function TalhoesPage() {
                   <TableHead>Área (ha)</TableHead>
                   <TableHead>Cultura Atual</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Mapa</TableHead>
                   <TableHead className="w-14" />
                 </TableRow>
               </TableHeader>
@@ -186,12 +321,14 @@ export default function TalhoesPage() {
                       {t.cultura_atual ?? <span className="text-muted-foreground/50 italic">—</span>}
                     </TableCell>
                     <TableCell>
-                      <span
-                        className="text-xs px-2 py-0.5 rounded-full font-semibold"
-                        style={STATUS_STYLE[t.status]}
-                      >
+                      <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={STATUS_STYLE[t.status]}>
                         {t.status}
                       </span>
+                    </TableCell>
+                    <TableCell>
+                      {t.coordenadas && t.coordenadas.length > 2
+                        ? <span className="text-xs text-green-600 font-semibold">✓ mapeado</span>
+                        : <span className="text-xs text-muted-foreground/50">—</span>}
                     </TableCell>
                     <TableCell>
                       <button
@@ -213,36 +350,22 @@ export default function TalhoesPage() {
       {/* Dialog — novo talhão */}
       <Dialog open={novoDialog} onOpenChange={setNovoDialog}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Novo Talhão</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Novo Talhão</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
               <Label>Nome *</Label>
-              <Input
-                placeholder="ex: Talhão 01"
-                value={novoForm.nome}
-                onChange={e => setNovoForm(f => ({ ...f, nome: e.target.value }))}
-              />
+              <Input placeholder="ex: Talhão 01" value={novoForm.nome}
+                onChange={e => setNovoForm(f => ({ ...f, nome: e.target.value }))} />
             </div>
             <div className="space-y-1.5">
               <Label>Área (ha) *</Label>
-              <Input
-                type="number"
-                min="0"
-                step="0.1"
-                placeholder="ex: 120.5"
-                value={novoForm.area_ha}
-                onChange={e => setNovoForm(f => ({ ...f, area_ha: e.target.value }))}
-              />
+              <Input type="number" min="0" step="0.1" placeholder="ex: 120.5" value={novoForm.area_ha}
+                onChange={e => setNovoForm(f => ({ ...f, area_ha: e.target.value }))} />
             </div>
             <div className="space-y-1.5">
               <Label>Status</Label>
-              <select
-                className={SELECT_CLASS}
-                value={novoForm.status}
-                onChange={e => setNovoForm(f => ({ ...f, status: e.target.value as Talhao['status'] }))}
-              >
+              <select className={SELECT_CLASS} value={novoForm.status}
+                onChange={e => setNovoForm(f => ({ ...f, status: e.target.value as Talhao['status'] }))}>
                 {STATUS_OPTIONS.map(s => (
                   <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
                 ))}
@@ -250,19 +373,14 @@ export default function TalhoesPage() {
             </div>
             <div className="space-y-1.5">
               <Label>Cultura Atual <span className="text-muted-foreground font-normal">(opcional)</span></Label>
-              <Input
-                placeholder="ex: soja"
-                value={novoForm.cultura_atual}
-                onChange={e => setNovoForm(f => ({ ...f, cultura_atual: e.target.value }))}
-              />
+              <Input placeholder="ex: soja" value={novoForm.cultura_atual}
+                onChange={e => setNovoForm(f => ({ ...f, cultura_atual: e.target.value }))} />
             </div>
             {novoErro && <p className="text-sm text-red-600">{novoErro}</p>}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setNovoDialog(false)}>Cancelar</Button>
-            <Button onClick={salvarNovo} disabled={salvando}>
-              {salvando ? 'Salvando…' : 'Salvar'}
-            </Button>
+            <Button onClick={salvarNovo} disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -270,9 +388,7 @@ export default function TalhoesPage() {
       {/* Dialog — confirmar delete */}
       <Dialog open={!!deleteDialog} onOpenChange={v => { if (!v) setDeleteDialog(null) }}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Excluir talhão</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Excluir talhão</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground py-2">
             Tem certeza que deseja excluir <span className="font-semibold text-foreground">{deleteDialog?.nome}</span>?
             Esta ação não pode ser desfeita.
@@ -297,6 +413,7 @@ function TalhoesSkeleton() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-28 bg-muted rounded-xl" />)}
       </div>
+      <div className="h-[480px] bg-muted rounded-xl" />
       <div className="h-64 bg-muted rounded-xl" />
     </div>
   )

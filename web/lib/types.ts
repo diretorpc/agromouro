@@ -4,6 +4,7 @@ export interface Talhao {
   area_ha: number
   cultura_atual: string | null
   status: 'ativo' | 'pousio' | 'colhido'
+  coordenadas?: [number, number][] | null
 }
 
 export interface Insumo {
