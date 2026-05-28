@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Package, AlertTriangle, Plus, Pencil, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Package, AlertTriangle, Plus, Pencil, Trash2, Search } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -75,6 +75,11 @@ export default function EstoquePage() {
     quantidade: '0', minimo: '0', preco: '',
   })
   const [salvandoNovo, setSalvandoNovo] = useState(false)
+
+  // filtros da tabela de insumos
+  const [busca, setBusca]           = useState('')
+  const [filtroTipo, setFiltroTipo] = useState<string>('todos')
+  const [filtroStatus, setFiltroStatus] = useState<'todos' | 'ok' | 'critico' | 'negativo'>('todos')
 
   async function loadData() {
     const [e, movs] = await Promise.all([
@@ -276,6 +281,28 @@ export default function EstoquePage() {
 
   const criticos = estoque.filter(e => e.quantidade_atual <= e.quantidade_minima_alerta)
 
+  const estoqueFiltrado = useMemo(() => {
+    const buscaLower = busca.trim().toLowerCase()
+    return estoque.filter(item => {
+      // busca por nome
+      if (buscaLower && !item.insumos.nome.toLowerCase().includes(buscaLower)) return false
+      // filtro por tipo
+      if (filtroTipo !== 'todos' && item.insumos.tipo !== filtroTipo) return false
+      // filtro por situação
+      if (filtroStatus !== 'todos') {
+        const negativo = item.quantidade_atual < 0
+        const critico  = !negativo && item.quantidade_atual <= item.quantidade_minima_alerta
+        const ok       = !negativo && !critico
+        if (filtroStatus === 'negativo' && !negativo) return false
+        if (filtroStatus === 'critico'  && !critico)  return false
+        if (filtroStatus === 'ok'       && !ok)       return false
+      }
+      return true
+    })
+  }, [estoque, busca, filtroTipo, filtroStatus])
+
+  const filtroAtivo = busca.trim() !== '' || filtroTipo !== 'todos' || filtroStatus !== 'todos'
+
   if (loading) return <PageSkeleton />
 
   return (
@@ -297,11 +324,59 @@ export default function EstoquePage() {
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <Package className="h-4 w-4" />
-            Insumos
-          </CardTitle>
+        <CardHeader className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Package className="h-4 w-4" />
+              Insumos
+              {filtroAtivo && (
+                <span className="text-xs font-normal text-muted-foreground ml-1">
+                  {estoqueFiltrado.length} de {estoque.length}
+                </span>
+              )}
+            </CardTitle>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[180px] max-w-xs">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Buscar por nome..."
+                value={busca}
+                onChange={e => setBusca(e.target.value)}
+                className="pl-8 h-9"
+              />
+            </div>
+            <select
+              className={SELECT_CLASS.replace('w-full', 'w-auto') + ' min-w-[140px]'}
+              value={filtroTipo}
+              onChange={e => setFiltroTipo(e.target.value)}
+            >
+              <option value="todos">Todos os tipos</option>
+              {TIPOS.map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+            <select
+              className={SELECT_CLASS.replace('w-full', 'w-auto') + ' min-w-[140px]'}
+              value={filtroStatus}
+              onChange={e => setFiltroStatus(e.target.value as typeof filtroStatus)}
+            >
+              <option value="todos">Todas situações</option>
+              <option value="ok">OK</option>
+              <option value="critico">Crítico</option>
+              <option value="negativo">Negativo</option>
+            </select>
+            {filtroAtivo && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 text-muted-foreground"
+                onClick={() => { setBusca(''); setFiltroTipo('todos'); setFiltroStatus('todos') }}
+              >
+                Limpar
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
@@ -322,7 +397,13 @@ export default function EstoquePage() {
                     Nenhum insumo cadastrado.
                   </TableCell>
                 </TableRow>
-              ) : estoque.map(item => {
+              ) : estoqueFiltrado.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                    Nenhum insumo corresponde aos filtros aplicados.
+                  </TableCell>
+                </TableRow>
+              ) : estoqueFiltrado.map(item => {
                 const negativo = item.quantidade_atual < 0
                 const critico  = !negativo && item.quantidade_atual <= item.quantidade_minima_alerta
                 const linhaBg  = negativo ? 'bg-red-100' : critico ? 'bg-red-50/50' : ''
