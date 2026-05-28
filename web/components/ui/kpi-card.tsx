@@ -19,7 +19,7 @@ export function KpiCard({ href, label, value, sub, icon, iconBg, iconColor, valu
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">{label}</p>
-            <p className={`text-2xl font-extrabold mt-2 leading-none tracking-tight ${valueColor ?? 'text-foreground'}`}>
+            <p className={`text-2xl font-extrabold mt-2 leading-none tracking-tight tabular-nums ${valueColor ?? 'text-foreground'}`}>
               {value}
             </p>
             {sub && <p className="text-xs text-muted-foreground mt-1.5 font-medium">{sub}</p>}

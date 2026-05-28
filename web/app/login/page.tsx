@@ -84,6 +84,7 @@ export default function LoginPage() {
                 id="email"
                 type="email"
                 autoComplete="email"
+                spellCheck={false}
                 placeholder="seu@email.com"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
@@ -113,7 +114,7 @@ export default function LoginPage() {
             )}
 
             <Button type="submit" className="w-full h-11 font-semibold" disabled={loading}>
-              {loading ? 'Entrando...' : 'Entrar'}
+              {loading ? 'Entrando…' : 'Entrar'}
             </Button>
           </form>
         </div>

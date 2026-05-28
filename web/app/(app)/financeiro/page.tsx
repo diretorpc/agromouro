@@ -1,6 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+
+function setUrlParam(key: string, value: string, dflt = 'todos') {
+  const p = new URLSearchParams(window.location.search)
+  if (!value || value === dflt) p.delete(key)
+  else p.set(key, value)
+  window.history.replaceState(null, '', p.toString() ? `?${p}` : window.location.pathname)
+}
 import { DollarSign, TrendingDown, Package, Filter, Plus, Pencil, Trash2 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip,
@@ -128,6 +135,74 @@ function tipoLabel(value: string) {
   return TIPOS.find(t => t.value === value)?.label ?? value
 }
 
+function FormFields({ form, setForm }: { form: FormData; setForm: React.Dispatch<React.SetStateAction<FormData>> }) {
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1.5">
+        <Label>Descrição</Label>
+        <Input
+          placeholder="Ex: Roundup 20L, Frete colheita, Peça bomba…"
+          value={form.descricao}
+          onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))}
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label>Quantidade</Label>
+          <Input
+            type="number" min="0" step="any"
+            value={form.quantidade}
+            onChange={e => setForm(f => ({ ...f, quantidade: e.target.value }))}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Unidade</Label>
+          <Input
+            placeholder="L, KG, UN, SC…"
+            value={form.unidade}
+            onChange={e => setForm(f => ({ ...f, unidade: e.target.value }))}
+          />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label>Valor Unitário (R$)</Label>
+          <Input
+            type="number" min="0" step="0.01"
+            placeholder="0,00"
+            value={form.valor_unitario}
+            onChange={e => setForm(f => ({ ...f, valor_unitario: e.target.value }))}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Data</Label>
+          <Input
+            type="date"
+            value={form.data}
+            onChange={e => setForm(f => ({ ...f, data: e.target.value }))}
+          />
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <Label>Centro de Custo</Label>
+        <Select value={form.centro_custo} onValueChange={v => setForm(f => ({ ...f, centro_custo: v ?? 'outro' }))}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {TIPOS.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      {form.quantidade && form.valor_unitario && (
+        <p className="text-sm text-muted-foreground text-right">
+          Total: <span className="font-semibold text-foreground">
+            {fmtBRL((parseFloat(form.quantidade) || 0) * (parseFloat(form.valor_unitario) || 0))}
+          </span>
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function FinanceiroPage() {
   const [itens, setItens] = useState<ItemFinanceiro[]>([])
   const [loading, setLoading] = useState(true)
@@ -177,6 +252,14 @@ export default function FinanceiroPage() {
   }
 
   useEffect(() => { load() }, [])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const mes = params.get('mes')
+    const centro = params.get('centro')
+    if (mes !== null) setFiltroMes(mes)
+    if (centro !== null) setFiltroCentro(centro)
+  }, [])
 
   async function handleAdd() {
     setSalvando(true)
@@ -306,74 +389,6 @@ export default function FinanceiroPage() {
 
   if (loading) return <PageSkeleton />
 
-  function FormFields() {
-    return (
-      <div className="space-y-3">
-        <div className="space-y-1.5">
-          <Label>Descrição</Label>
-          <Input
-            placeholder="Ex: Roundup 20L, Frete colheita, Peça bomba..."
-            value={form.descricao}
-            onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <Label>Quantidade</Label>
-            <Input
-              type="number" min="0" step="any"
-              value={form.quantidade}
-              onChange={e => setForm(f => ({ ...f, quantidade: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Unidade</Label>
-            <Input
-              placeholder="L, KG, UN, SC..."
-              value={form.unidade}
-              onChange={e => setForm(f => ({ ...f, unidade: e.target.value }))}
-            />
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <Label>Valor Unitário (R$)</Label>
-            <Input
-              type="number" min="0" step="0.01"
-              placeholder="0,00"
-              value={form.valor_unitario}
-              onChange={e => setForm(f => ({ ...f, valor_unitario: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Data</Label>
-            <Input
-              type="date"
-              value={form.data}
-              onChange={e => setForm(f => ({ ...f, data: e.target.value }))}
-            />
-          </div>
-        </div>
-        <div className="space-y-1.5">
-          <Label>Centro de Custo</Label>
-          <Select value={form.centro_custo} onValueChange={v => setForm(f => ({ ...f, centro_custo: v ?? 'outro' }))}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {TIPOS.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        {form.quantidade && form.valor_unitario && (
-          <p className="text-sm text-muted-foreground text-right">
-            Total: <span className="font-semibold text-foreground">
-              {fmtBRL((parseFloat(form.quantidade) || 0) * (parseFloat(form.valor_unitario) || 0))}
-            </span>
-          </p>
-        )}
-      </div>
-    )
-  }
-
   const filtroAtivo = filtroMes !== 'todos' || filtroCentro !== 'todos'
 
   return (
@@ -384,7 +399,7 @@ export default function FinanceiroPage() {
           <p className="text-sm text-muted-foreground mt-1 font-medium">Despesas e lançamentos da fazenda</p>
         </div>
         <Button size="sm" className="shrink-0" onClick={() => { setForm(FORM_VAZIO); setAddDialog(true) }}>
-          <Plus className="h-4 w-4 mr-1.5" />
+          <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
           Adicionar
         </Button>
       </div>
@@ -489,7 +504,7 @@ export default function FinanceiroPage() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Filter className="h-4 w-4 text-muted-foreground" />
-            <Select value={filtroMes} onValueChange={v => setFiltroMes(v ?? 'todos')}>
+            <Select value={filtroMes} onValueChange={v => { const val = v ?? 'todos'; setFiltroMes(val); setUrlParam('mes', val) }}>
               <SelectTrigger className="w-44 h-9 text-sm"><SelectValue placeholder="Mês" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos os meses</SelectItem>
@@ -500,7 +515,7 @@ export default function FinanceiroPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={filtroCentro} onValueChange={v => setFiltroCentro(v ?? 'todos')}>
+            <Select value={filtroCentro} onValueChange={v => { const val = v ?? 'todos'; setFiltroCentro(val); setUrlParam('centro', val) }}>
               <SelectTrigger className="w-44 h-9 text-sm"><SelectValue placeholder="Centro de custo" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos os tipos</SelectItem>
@@ -512,7 +527,7 @@ export default function FinanceiroPage() {
                 variant="ghost"
                 size="sm"
                 className="h-9 text-muted-foreground"
-                onClick={() => { setFiltroMes('todos'); setFiltroCentro('todos') }}
+                onClick={() => { setFiltroMes('todos'); setFiltroCentro('todos'); window.history.replaceState(null, '', window.location.pathname) }}
               >
                 Limpar
               </Button>
@@ -548,8 +563,8 @@ export default function FinanceiroPage() {
                   <TableCell className="text-right text-sm text-muted-foreground">
                     {item.quantidade} {item.unidade}
                   </TableCell>
-                  <TableCell className="text-right text-sm">{fmtBRL(item.valor_unitario)}</TableCell>
-                  <TableCell className="text-right text-sm font-semibold">{fmtBRL(item.valor_total)}</TableCell>
+                  <TableCell className="text-right text-sm tabular-nums">{fmtBRL(item.valor_unitario)}</TableCell>
+                  <TableCell className="text-right text-sm font-semibold tabular-nums">{fmtBRL(item.valor_total)}</TableCell>
                   <TableCell>
                     <Badge
                       variant="outline"
@@ -583,20 +598,20 @@ export default function FinanceiroPage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        title="Editar"
+                        aria-label="Editar lançamento"
                         className="hover:bg-blue-50 hover:text-blue-600"
                         onClick={() => abrirEdicao(item)}
                       >
-                        <Pencil className="h-3.5 w-3.5" />
+                        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                       </Button>
                       <Button
                         size="sm"
                         variant="ghost"
-                        title="Excluir"
+                        aria-label="Excluir lançamento"
                         className="hover:bg-red-50 hover:text-red-600 text-red-400"
                         onClick={() => setDeleteItem(item)}
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                       </Button>
                     </div>
                   </TableCell>
@@ -609,7 +624,7 @@ export default function FinanceiroPage() {
                   <TableCell colSpan={3} className="text-right text-sm font-semibold text-muted-foreground py-3">
                     Total ({itensFiltrados.length} {itensFiltrados.length === 1 ? 'item' : 'itens'})
                   </TableCell>
-                  <TableCell className="text-right text-sm font-bold py-3">
+                  <TableCell className="text-right text-sm font-bold py-3 tabular-nums">
                     {fmtBRL(totalGeral)}
                   </TableCell>
                   <TableCell colSpan={4} />
@@ -623,11 +638,11 @@ export default function FinanceiroPage() {
       <Dialog open={addDialog} onOpenChange={open => { if (!open) setAddDialog(false) }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Adicionar Lançamento</DialogTitle></DialogHeader>
-          <FormFields />
+          <FormFields form={form} setForm={setForm} />
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddDialog(false)}>Cancelar</Button>
             <Button onClick={handleAdd} disabled={salvando || !form.descricao || !form.valor_unitario}>
-              {salvando ? 'Salvando...' : 'Salvar'}
+              {salvando ? 'Salvando…' : 'Salvar'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -636,11 +651,11 @@ export default function FinanceiroPage() {
       <Dialog open={!!editItem} onOpenChange={open => { if (!open) setEditItem(null) }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Editar Lançamento</DialogTitle></DialogHeader>
-          <FormFields />
+          <FormFields form={form} setForm={setForm} />
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditItem(null)}>Cancelar</Button>
             <Button onClick={handleEdit} disabled={salvando || !form.descricao || !form.valor_unitario}>
-              {salvando ? 'Salvando...' : 'Salvar'}
+              {salvando ? 'Salvando…' : 'Salvar'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -665,7 +680,7 @@ export default function FinanceiroPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => { setDeleteItem(null); setDeleteErro(null) }}>Cancelar</Button>
             <Button variant="destructive" onClick={handleDelete} disabled={salvando}>
-              {salvando ? 'Excluindo...' : 'Excluir'}
+              {salvando ? 'Excluindo…' : 'Excluir'}
             </Button>
           </DialogFooter>
         </DialogContent>

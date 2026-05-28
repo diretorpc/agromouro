@@ -80,6 +80,7 @@ export function Sidebar() {
               )}
               <Icon
                 className={cn('h-[17px] w-[17px] shrink-0', active ? 'text-[#8FB840]' : 'text-white/40')}
+                aria-hidden="true"
               />
               <span>{label}</span>
             </Link>
@@ -96,7 +97,7 @@ export function Sidebar() {
           onClick={signOut}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-semibold text-white/40 hover:text-white/70 hover:bg-white/6 transition-all duration-150"
         >
-          <LogOut className="h-4 w-4 shrink-0" />
+          <LogOut className="h-4 w-4 shrink-0" aria-hidden="true" />
           Sair
         </button>
       </div>

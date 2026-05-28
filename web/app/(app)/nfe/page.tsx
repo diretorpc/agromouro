@@ -2,6 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+
+function setUrlParam(key: string, value: string, dflt = 'todos') {
+  const p = new URLSearchParams(window.location.search)
+  if (!value || value === dflt) p.delete(key)
+  else p.set(key, value)
+  window.history.replaceState(null, '', p.toString() ? `?${p}` : window.location.pathname)
+}
 import { FileText, RefreshCw, Plus, Download, Upload, CircleDollarSign, Trash2, Search, Wallet, Hourglass, AlertCircle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -147,6 +154,14 @@ export default function NfePage() {
   }
 
   useEffect(() => { loadNotas() }, [])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const q = params.get('q')
+    const status = params.get('status')
+    if (q !== null) setBusca(q)
+    if (status !== null) setFiltroStatus(status)
+  }, [])
 
   async function openNota(nota: NotaFiscal) {
     setSelected(nota)
@@ -295,7 +310,7 @@ export default function NfePage() {
           onClick={() => { setAddDialog(true); setAddMode('xml'); setXmlPreview(null); setXmlError('') }}
           className="shrink-0"
         >
-          <Plus className="h-4 w-4 mr-1.5" />
+          <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
           Adicionar NF
         </Button>
       </div>
@@ -352,16 +367,17 @@ export default function NfePage() {
             <div className="relative flex-1 min-w-[200px] max-w-sm">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
-                placeholder="Buscar por número, emitente ou CNPJ..."
+                placeholder="Buscar por número, emitente ou CNPJ…"
                 value={busca}
-                onChange={e => setBusca(e.target.value)}
+                onChange={e => { setBusca(e.target.value); setUrlParam('q', e.target.value, '') }}
                 className="pl-8 h-9"
               />
             </div>
             <select
+              aria-label="Filtrar por status"
               className={SELECT_CLASS.replace('w-full', 'w-auto') + ' min-w-[140px]'}
               value={filtroStatus}
-              onChange={e => setFiltroStatus(e.target.value)}
+              onChange={e => { setFiltroStatus(e.target.value); setUrlParam('status', e.target.value) }}
             >
               <option value="todos">Todos os status</option>
               <option value="recebida">Recebida</option>
@@ -374,7 +390,7 @@ export default function NfePage() {
                 variant="ghost"
                 size="sm"
                 className="h-9 text-muted-foreground"
-                onClick={() => { setBusca(''); setFiltroStatus('todos') }}
+                onClick={() => { setBusca(''); setFiltroStatus('todos'); window.history.replaceState(null, '', window.location.pathname) }}
               >
                 Limpar
               </Button>
@@ -411,7 +427,7 @@ export default function NfePage() {
                         size="sm"
                         onClick={() => { setAddDialog(true); setAddMode('xml'); setXmlPreview(null); setXmlError('') }}
                       >
-                        <Plus className="h-4 w-4 mr-1.5" />
+                        <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
                         Adicionar NF
                       </Button>
                     </div>
@@ -464,7 +480,7 @@ export default function NfePage() {
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                       {nota.data_emissao.slice(0, 10).split('-').reverse().join('/')}
                     </TableCell>
-                    <TableCell className="text-right font-semibold">
+                    <TableCell className="text-right font-semibold tabular-nums">
                       {nota.valor_total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                     </TableCell>
                     <TableCell>
@@ -525,10 +541,10 @@ export default function NfePage() {
                     <TableRow key={item.id} className={!item.insumo_id ? 'bg-yellow-50/50' : ''}>
                       <TableCell className="text-sm font-medium">{item.descricao}</TableCell>
                       <TableCell className="text-right text-sm">{item.quantidade} {item.unidade}</TableCell>
-                      <TableCell className="text-right text-sm">
+                      <TableCell className="text-right text-sm tabular-nums">
                         {item.valor_unitario.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                       </TableCell>
-                      <TableCell className="text-right text-sm font-semibold">
+                      <TableCell className="text-right text-sm font-semibold tabular-nums">
                         {item.valor_total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                       </TableCell>
                       <TableCell className="text-sm">
@@ -563,14 +579,14 @@ export default function NfePage() {
             incluindo todos os seus itens.
           </p>
           {deleteNotaErro && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+            <p aria-live="polite" className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
               {deleteNotaErro}
             </p>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => { setDeleteNota(null); setDeleteNotaErro(null) }}>Cancelar</Button>
             <Button variant="destructive" onClick={handleDeleteNota} disabled={deletandoNota}>
-              {deletandoNota ? 'Excluindo...' : 'Excluir'}
+              {deletandoNota ? 'Excluindo…' : 'Excluir'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -606,8 +622,9 @@ export default function NfePage() {
           {addMode === 'xml' ? (
             <div className="space-y-3">
               {/* File drop area */}
-              <div
-                className="border-2 border-dashed border-input rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-colors"
+              <button
+                type="button"
+                className="w-full border-2 border-dashed border-input rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => fileRef.current?.click()}
                 onDragOver={e => e.preventDefault()}
                 onDrop={e => {
@@ -616,7 +633,7 @@ export default function NfePage() {
                   if (file) handleXmlFile(file)
                 }}
               >
-                <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground" aria-hidden="true" />
                 <p className="text-sm text-muted-foreground">
                   Arraste o arquivo XML aqui ou <span className="text-primary font-medium">clique para selecionar</span>
                 </p>
@@ -631,7 +648,7 @@ export default function NfePage() {
                     if (file) handleXmlFile(file)
                   }}
                 />
-              </div>
+              </button>
 
               {xmlError && (
                 <p className="text-sm text-red-600 bg-red-50 rounded-md px-3 py-2">{xmlError}</p>
@@ -719,7 +736,7 @@ export default function NfePage() {
               Cancelar
             </Button>
             <Button onClick={handleSaveNF} disabled={salvandoNF || !canSave}>
-              {salvandoNF ? 'Salvando...' : 'Importar'}
+              {salvandoNF ? 'Salvando…' : 'Importar'}
             </Button>
           </DialogFooter>
         </DialogContent>

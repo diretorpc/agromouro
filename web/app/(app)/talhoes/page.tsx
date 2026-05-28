@@ -280,11 +280,11 @@ export default function TalhoesPage() {
                 onClick={() => kmzInputRef.current?.click()}
                 disabled={importando}
               >
-                <Upload className="h-4 w-4 mr-1.5" />
+                <Upload className="h-4 w-4 mr-1.5" aria-hidden="true" />
                 {importando ? 'Importando…' : 'Importar KMZ'}
               </Button>
               <Button size="sm" onClick={() => { setNovoErro(null); setNovoDialog(true) }}>
-                <Plus className="h-4 w-4 mr-1.5" />
+                <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
                 Novo Talhão
               </Button>
             </div>
@@ -296,7 +296,7 @@ export default function TalhoesPage() {
               <MapPin className="h-10 w-10 text-muted-foreground/30" />
               <p className="text-sm text-muted-foreground font-medium">Nenhum talhão cadastrado.</p>
               <Button variant="outline" size="sm" onClick={() => setNovoDialog(true)}>
-                <Plus className="h-4 w-4 mr-1.5" />
+                <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
                 Cadastrar primeiro talhão
               </Button>
             </div>
@@ -334,9 +334,9 @@ export default function TalhoesPage() {
                       <button
                         onClick={() => { setDeleteErro(null); setDeleteDialog(t) }}
                         className="p-1.5 rounded text-muted-foreground/50 hover:text-red-600 hover:bg-red-50 transition-colors"
-                        title="Excluir talhão"
+                        aria-label="Excluir talhão"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
                       </button>
                     </TableCell>
                   </TableRow>

@@ -1,6 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+
+function setUrlParam(key: string, value: string, dflt = 'todos') {
+  const p = new URLSearchParams(window.location.search)
+  if (!value || value === dflt) p.delete(key)
+  else p.set(key, value)
+  window.history.replaceState(null, '', p.toString() ? `?${p}` : window.location.pathname)
+}
 import { Pencil, Plus, Trash2, Tractor } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -79,6 +86,7 @@ export default function OperacoesPage() {
 
   const [editingOp, setEditingOp] = useState<OperacaoCompleta | null>(null)
   const [deletando, setDeletando] = useState<string | null>(null)
+  const [deleteConfirmOp, setDeleteConfirmOp] = useState<OperacaoCompleta | null>(null)
 
   const [filtroTalhao, setFiltroTalhao] = useState('todos')
   const [form, setForm] = useState({
@@ -112,6 +120,12 @@ export default function OperacoesPage() {
 
   useEffect(() => { loadData() }, [])
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const talhao = params.get('talhao')
+    if (talhao !== null) setFiltroTalhao(talhao)
+  }, [])
+
   function addProduto() {
     setProdutos(p => [...p, { modo: 'estoque', insumo_id: '', nome_manual: '', unidade_dose: 'L', dose_por_ha: '' }])
   }
@@ -124,8 +138,14 @@ export default function OperacoesPage() {
     setProdutos(p => p.map((prod, i) => i === idx ? { ...prod, [field]: value } : prod))
   }
 
-  async function handleDelete(op: OperacaoCompleta) {
-    if (!confirm(`Excluir operação de ${tipoLabel(op.tipo)} em ${op.talhoes?.nome ?? 'talhão'}?\nOs produtos utilizados voltarão ao estoque.`)) return
+  function handleDelete(op: OperacaoCompleta) {
+    setDeleteConfirmOp(op)
+  }
+
+  async function confirmarDeleteOp() {
+    if (!deleteConfirmOp) return
+    const op = deleteConfirmOp
+    setDeleteConfirmOp(null)
     setDeletando(op.id)
 
     for (const item of op.itens_operacao ?? []) {
@@ -154,6 +174,12 @@ export default function OperacoesPage() {
     await supabase.from('operacoes').delete().eq('id', op.id)
     setDeletando(null)
     loadData()
+  }
+
+  function handleFiltroTalhao(v: string | null) {
+    const val = v ?? 'todos'
+    setFiltroTalhao(val)
+    setUrlParam('talhao', val)
   }
 
   function openEdit(op: OperacaoCompleta) {
@@ -305,14 +331,14 @@ export default function OperacoesPage() {
           <p className="text-sm text-muted-foreground mt-1 font-medium">Histórico de operações no campo</p>
         </div>
         <Button size="sm" className="shrink-0" onClick={abrirNovaOperacao}>
-          <Plus className="h-4 w-4 mr-1.5" />
+          <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
           Nova Operação
         </Button>
       </div>
 
       <div className="flex items-center gap-3">
         <Label className="text-sm shrink-0">Filtrar por talhão:</Label>
-        <Select value={filtroTalhao} onValueChange={v => setFiltroTalhao(v ?? 'todos')}>
+        <Select value={filtroTalhao} onValueChange={handleFiltroTalhao}>
           <SelectTrigger className="w-48">
             <SelectValue />
           </SelectTrigger>
@@ -364,7 +390,7 @@ export default function OperacoesPage() {
                           </Button>
                         )}
                         <Button size="sm" onClick={abrirNovaOperacao}>
-                          <Plus className="h-4 w-4 mr-1.5" />
+                          <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
                           Nova Operação
                         </Button>
                       </div>
@@ -427,18 +453,20 @@ export default function OperacoesPage() {
                         size="sm"
                         variant="ghost"
                         className="h-7 w-7 p-0"
+                        aria-label="Editar operação"
                         onClick={() => openEdit(op)}
                       >
-                        <Pencil className="h-3.5 w-3.5" />
+                        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                       </Button>
                       <Button
                         size="sm"
                         variant="ghost"
                         className="h-7 w-7 p-0 text-red-400 hover:text-red-600"
+                        aria-label="Excluir operação"
                         onClick={() => handleDelete(op)}
                         disabled={deletando === op.id}
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                       </Button>
                     </div>
                   </TableCell>
@@ -448,6 +476,25 @@ export default function OperacoesPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <Dialog open={!!deleteConfirmOp} onOpenChange={open => { if (!open) setDeleteConfirmOp(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Excluir operação?</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Excluir operação de{' '}
+            <span className="font-medium text-foreground">{deleteConfirmOp && tipoLabel(deleteConfirmOp.tipo)}</span>{' '}
+            em{' '}
+            <span className="font-medium text-foreground">{deleteConfirmOp?.talhoes?.nome ?? 'talhão'}</span>?
+            {' '}Os produtos utilizados voltarão ao estoque.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirmOp(null)}>Cancelar</Button>
+            <Button variant="destructive" onClick={confirmarDeleteOp} disabled={deletando !== null}>
+              {deletando !== null ? 'Excluindo…' : 'Excluir'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={modalOpen} onOpenChange={open => { setModalOpen(open); if (!open) { setErroSalvar(null); setEditingOp(null) } }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
@@ -581,7 +628,7 @@ export default function OperacoesPage() {
                     ) : (
                       <Input
                         className="h-8 text-sm"
-                        placeholder="Nome do produto..."
+                        placeholder="Nome do produto…"
                         value={prod.nome_manual}
                         onChange={e => setProdutos(p => p.map((x, i) => i === idx ? { ...x, nome_manual: e.target.value } : x))}
                       />
@@ -630,7 +677,7 @@ export default function OperacoesPage() {
               <Label htmlFor="descricao">Observações (opcional)</Label>
               <Textarea
                 id="descricao"
-                placeholder="Detalhes da operação..."
+                placeholder="Detalhes da operação…"
                 value={form.descricao}
                 onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))}
                 rows={2}
@@ -648,7 +695,7 @@ export default function OperacoesPage() {
                 Cancelar
               </Button>
               <Button type="submit" disabled={salvando || !form.talhao_id || !form.tipo}>
-                {salvando ? 'Salvando...' : editingOp ? 'Salvar alterações' : 'Salvar'}
+                {salvando ? 'Salvando…' : editingOp ? 'Salvar alterações' : 'Salvar'}
               </Button>
             </DialogFooter>
           </form>
