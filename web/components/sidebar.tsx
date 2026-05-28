@@ -62,24 +62,25 @@ export function Sidebar() {
             <Link
               key={href}
               href={href}
+              aria-current={active ? 'page' : undefined}
               className={cn(
-                'flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13.5px] font-semibold transition-all duration-150',
+                'relative flex items-center gap-3 rounded-lg pl-4 pr-3 py-2.5 text-[13.5px] font-semibold transition-all duration-150',
                 active
                   ? 'text-white'
                   : 'text-white/55 hover:text-white/85 hover:bg-white/6'
               )}
-              style={active ? { backgroundColor: 'rgba(143,184,64,0.18)' } : undefined}
+              style={active ? { backgroundColor: 'rgba(143,184,64,0.22)' } : undefined}
             >
+              {active && (
+                <span
+                  className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r"
+                  style={{ backgroundColor: '#8FB840' }}
+                />
+              )}
               <Icon
                 className={cn('h-[17px] w-[17px] shrink-0', active ? 'text-[#8FB840]' : 'text-white/40')}
               />
               <span>{label}</span>
-              {active && (
-                <span
-                  className="ml-auto h-1.5 w-1.5 rounded-full shrink-0"
-                  style={{ backgroundColor: '#8FB840' }}
-                />
-              )}
             </Link>
           )
         })}

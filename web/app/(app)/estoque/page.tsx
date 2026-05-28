@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Package, AlertTriangle, Plus, Pencil, Trash2, Search } from 'lucide-react'
+import { Package, AlertTriangle, Plus, Pencil, Trash2, Search, Wallet, PackageX, Boxes } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -14,23 +14,15 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { KpiCard } from '@/components/ui/kpi-card'
 import { supabase } from '@/lib/supabase'
 import { api } from '@/lib/api'
+import { TIPOS_INSUMO, formatTipoInsumo } from '@/lib/insumos'
 import type { Estoque, MovimentacaoEstoque } from '@/lib/types'
 
 type MovimentacaoComFornecedor = MovimentacaoEstoque & { fornecedor_nome?: string; talhao_nome?: string }
 
-const TIPOS: [string, string][] = [
-  ['herbicida', 'Herbicida'],
-  ['fungicida', 'Fungicida'],
-  ['inseticida', 'Inseticida'],
-  ['fertilizante_n', 'Fertilizante N'],
-  ['fertilizante_p', 'Fertilizante P'],
-  ['fertilizante_k', 'Fertilizante K'],
-  ['semente', 'Semente'],
-  ['combustivel', 'Combustível'],
-  ['outro', 'Outro'],
-]
+const TIPOS: [string, string][] = Object.entries(TIPOS_INSUMO)
 
 const UNIDADES      = ['L', 'KG', 'ml', 't', 'sc', 'un']
 const UNIDADES_BASE = new Set(['L', 'KG', 'kg', 'ml', 'ML', 'g', 't', 'sc', 'un', 'UN', 'ha'])
@@ -279,7 +271,11 @@ export default function EstoquePage() {
     loadData()
   }
 
-  const criticos = estoque.filter(e => e.quantidade_atual <= e.quantidade_minima_alerta)
+  const estoqueNegativo = estoque.filter(e => e.quantidade_atual < 0)
+  const estoqueCritico  = estoque.filter(e => e.quantidade_atual >= 0 && e.quantidade_atual <= e.quantidade_minima_alerta)
+  const valorInventario = estoque.reduce(
+    (s, e) => s + Math.max(0, e.quantidade_atual) * (e.preco_medio_unitario ?? 0), 0,
+  )
 
   const estoqueFiltrado = useMemo(() => {
     const buscaLower = busca.trim().toLowerCase()
@@ -312,18 +308,45 @@ export default function EstoquePage() {
           <h1 className="text-2xl font-semibold tracking-tight">Estoque</h1>
           <p className="text-sm text-muted-foreground mt-1 font-medium">Insumos cadastrados e histórico de movimentações</p>
         </div>
-        <div className="flex items-center gap-3 shrink-0">
-          {criticos.length > 0 && (
-            <div className="flex items-center gap-1.5 text-red-600 text-sm font-medium">
-              <AlertTriangle className="h-4 w-4" />
-              {criticos.length} insumo{criticos.length > 1 ? 's' : ''} crítico{criticos.length > 1 ? 's' : ''}
-            </div>
-          )}
-          <Button size="sm" onClick={() => setNovoDialog(true)}>
-            <Plus className="h-4 w-4 mr-1.5" />
-            Novo Insumo
-          </Button>
-        </div>
+        <Button size="sm" onClick={() => setNovoDialog(true)} className="shrink-0">
+          <Plus className="h-4 w-4 mr-1.5" />
+          Novo Insumo
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard
+          label="Valor em Estoque"
+          value={valorInventario.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })}
+          sub="soma quantidade × preço médio"
+          icon={<Wallet className="h-5 w-5" />}
+          iconBg="#EFF6FF" iconColor="#2563EB"
+        />
+        <KpiCard
+          label="Insumos Cadastrados"
+          value={estoque.length}
+          sub={`${TIPOS.length} tipos disponíveis`}
+          icon={<Boxes className="h-5 w-5" />}
+          iconBg="#EEF5E5" iconColor="#5B8C2A"
+        />
+        <KpiCard
+          label="Críticos"
+          value={estoqueCritico.length}
+          sub={estoqueCritico.length === 0 ? 'tudo acima do mínimo' : 'abaixo do mínimo'}
+          icon={<AlertTriangle className="h-5 w-5" />}
+          iconBg={estoqueCritico.length > 0 ? '#FFFBEB' : '#EDFAF1'}
+          iconColor={estoqueCritico.length > 0 ? '#D97706' : '#16A34A'}
+          valueColor={estoqueCritico.length > 0 ? 'text-amber-600' : undefined}
+        />
+        <KpiCard
+          label="Negativos"
+          value={estoqueNegativo.length}
+          sub={estoqueNegativo.length === 0 ? 'nenhum saldo negativo' : 'saldo abaixo de zero'}
+          icon={<PackageX className="h-5 w-5" />}
+          iconBg={estoqueNegativo.length > 0 ? '#FEF2F2' : '#EDFAF1'}
+          iconColor={estoqueNegativo.length > 0 ? '#DC2626' : '#16A34A'}
+          valueColor={estoqueNegativo.length > 0 ? 'text-red-600' : undefined}
+        />
       </div>
 
       <Card>
@@ -396,14 +419,37 @@ export default function EstoquePage() {
             <TableBody>
               {estoque.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                    Nenhum insumo cadastrado.
+                  <TableCell colSpan={6} className="py-10">
+                    <div className="flex flex-col items-center gap-3 text-center">
+                      <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
+                        <Package className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold">Nenhum insumo cadastrado</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Cadastre seu primeiro insumo ou importe via NF-e.
+                        </p>
+                      </div>
+                      <Button size="sm" onClick={() => setNovoDialog(true)}>
+                        <Plus className="h-4 w-4 mr-1.5" />
+                        Cadastrar insumo
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : estoqueFiltrado.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                    Nenhum insumo corresponde aos filtros aplicados.
+                  <TableCell colSpan={6} className="py-10">
+                    <div className="flex flex-col items-center gap-2 text-center">
+                      <p className="text-sm text-muted-foreground">Nenhum insumo corresponde aos filtros aplicados.</p>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => { setBusca(''); setFiltroTipo('todos'); setFiltroStatus('todos') }}
+                      >
+                        Limpar filtros
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : estoqueFiltrado.map(item => {
@@ -421,7 +467,7 @@ export default function EstoquePage() {
                       {item.insumos.nome}
                     </TableCell>
                     <TableCell>
-                      <span className="text-xs text-muted-foreground capitalize">{item.insumos.tipo}</span>
+                      <span className="text-xs text-muted-foreground">{formatTipoInsumo(item.insumos.tipo)}</span>
                     </TableCell>
                     <TableCell className={qtdClass}>
                       {item.quantidade_atual} {item.insumos.unidade}
@@ -446,7 +492,7 @@ export default function EstoquePage() {
                           <Button
                             size="sm"
                             variant="outline"
-                            className="text-amber-600 border-amber-300 hover:bg-amber-50 text-xs"
+                            className="text-xs"
                             onClick={() => {
                               setCorrigirItem(item)
                               setCorrigirForm({ novaUnidade: 'L', fator: '' })

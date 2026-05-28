@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Pencil, Plus, Trash2 } from 'lucide-react'
+import { Pencil, Plus, Trash2, Tractor } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -287,6 +287,14 @@ export default function OperacoesPage() {
     ? operacoes
     : operacoes.filter(o => o.talhao_id === filtroTalhao)
 
+  function abrirNovaOperacao() {
+    setEditingOp(null)
+    setErroSalvar(null)
+    setForm({ talhao_id: '', tipo: '', data: new Date().toISOString().split('T')[0], descricao: '' })
+    setProdutos([])
+    setModalOpen(true)
+  }
+
   if (loading) return <PageSkeleton />
 
   return (
@@ -296,7 +304,7 @@ export default function OperacoesPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Operações</h1>
           <p className="text-sm text-muted-foreground mt-1 font-medium">Histórico de operações no campo</p>
         </div>
-        <Button size="sm" className="shrink-0" onClick={() => { setEditingOp(null); setErroSalvar(null); setForm({ talhao_id: '', tipo: '', data: new Date().toISOString().split('T')[0], descricao: '' }); setProdutos([]); setModalOpen(true) }}>
+        <Button size="sm" className="shrink-0" onClick={abrirNovaOperacao}>
           <Plus className="h-4 w-4 mr-1.5" />
           Nova Operação
         </Button>
@@ -334,8 +342,33 @@ export default function OperacoesPage() {
             <TableBody>
               {operacoesFiltradas.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-10">
-                    Nenhuma operação encontrada.
+                  <TableCell colSpan={7} className="py-10">
+                    <div className="flex flex-col items-center gap-3 text-center">
+                      <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
+                        <Tractor className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold">
+                          {operacoes.length === 0 ? 'Nenhuma operação registrada' : 'Nenhuma operação nesse talhão'}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5 max-w-sm">
+                          {operacoes.length === 0
+                            ? 'Operações chegam via WhatsApp ou você pode registrar manualmente aqui.'
+                            : 'Mude o filtro de talhão ou registre uma nova operação.'}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        {operacoes.length > 0 && filtroTalhao !== 'todos' && (
+                          <Button variant="ghost" size="sm" onClick={() => setFiltroTalhao('todos')}>
+                            Ver todos os talhões
+                          </Button>
+                        )}
+                        <Button size="sm" onClick={abrirNovaOperacao}>
+                          <Plus className="h-4 w-4 mr-1.5" />
+                          Nova Operação
+                        </Button>
+                      </div>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : operacoesFiltradas.map(op => (
