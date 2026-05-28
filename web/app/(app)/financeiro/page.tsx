@@ -374,35 +374,19 @@ export default function FinanceiroPage() {
     )
   }
 
+  const filtroAtivo = filtroMes !== 'todos' || filtroCentro !== 'todos'
+
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Financeiro</h1>
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-muted-foreground" />
-          <Select value={filtroMes} onValueChange={v => setFiltroMes(v ?? 'todos')}>
-            <SelectTrigger className="w-36 h-8 text-sm"><SelectValue placeholder="Mês" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todos os meses</SelectItem>
-              {meses.map(m => (
-                <SelectItem key={m} value={m}>
-                  {new Date(m + '-01').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={filtroCentro} onValueChange={v => setFiltroCentro(v ?? 'todos')}>
-            <SelectTrigger className="w-40 h-8 text-sm"><SelectValue placeholder="Centro de custo" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todos os tipos</SelectItem>
-              {TIPOS.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Button size="sm" onClick={() => { setForm(FORM_VAZIO); setAddDialog(true) }}>
-            <Plus className="h-4 w-4 mr-1.5" />
-            Adicionar
-          </Button>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Financeiro</h1>
+          <p className="text-sm text-muted-foreground mt-1 font-medium">Despesas e lançamentos da fazenda</p>
         </div>
+        <Button size="sm" className="shrink-0" onClick={() => { setForm(FORM_VAZIO); setAddDialog(true) }}>
+          <Plus className="h-4 w-4 mr-1.5" />
+          Adicionar
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -492,8 +476,48 @@ export default function FinanceiroPage() {
       )}
 
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Lançamentos por Item</CardTitle>
+        <CardHeader className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="text-base">
+              Lançamentos por Item
+              {filtroAtivo && (
+                <span className="text-xs font-normal text-muted-foreground ml-2">
+                  {itensFiltrados.length} de {itens.length}
+                </span>
+              )}
+            </CardTitle>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Filter className="h-4 w-4 text-muted-foreground" />
+            <Select value={filtroMes} onValueChange={v => setFiltroMes(v ?? 'todos')}>
+              <SelectTrigger className="w-44 h-9 text-sm"><SelectValue placeholder="Mês" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os meses</SelectItem>
+                {meses.map(m => (
+                  <SelectItem key={m} value={m}>
+                    {new Date(m + '-01').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={filtroCentro} onValueChange={v => setFiltroCentro(v ?? 'todos')}>
+              <SelectTrigger className="w-44 h-9 text-sm"><SelectValue placeholder="Centro de custo" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os tipos</SelectItem>
+                {TIPOS.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {filtroAtivo && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 text-muted-foreground"
+                onClick={() => { setFiltroMes('todos'); setFiltroCentro('todos') }}
+              >
+                Limpar
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           <Table>

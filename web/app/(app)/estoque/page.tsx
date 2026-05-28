@@ -307,9 +307,12 @@ export default function EstoquePage() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Estoque</h1>
-        <div className="flex items-center gap-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Estoque</h1>
+          <p className="text-sm text-muted-foreground mt-1 font-medium">Insumos cadastrados e histórico de movimentações</p>
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
           {criticos.length > 0 && (
             <div className="flex items-center gap-1.5 text-red-600 text-sm font-medium">
               <AlertTriangle className="h-4 w-4" />

@@ -279,12 +279,22 @@ export default function NfePage() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Notas Fiscais</h1>
-        <Button size="sm" onClick={() => { setAddDialog(true); setAddMode('xml'); setXmlPreview(null); setXmlError('') }}>
-          <Plus className="h-4 w-4 mr-1.5" />
-          Adicionar NF
-        </Button>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Notas Fiscais</h1>
+          <p className="text-sm text-muted-foreground mt-1 font-medium">Notas fiscais recebidas e processadas</p>
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          {notas.length > 0 && (
+            <span className="text-sm text-muted-foreground font-medium">
+              {notas.length} nota{notas.length > 1 ? 's' : ''}
+            </span>
+          )}
+          <Button size="sm" onClick={() => { setAddDialog(true); setAddMode('xml'); setXmlPreview(null); setXmlError('') }}>
+            <Plus className="h-4 w-4 mr-1.5" />
+            Adicionar NF
+          </Button>
+        </div>
       </div>
 
       <Card>
