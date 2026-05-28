@@ -1,6 +1,13 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+
+function setUrlParam(key: string, value: string, dflt = 'todos') {
+  const p = new URLSearchParams(window.location.search)
+  if (!value || value === dflt) p.delete(key)
+  else p.set(key, value)
+  window.history.replaceState(null, '', p.toString() ? `?${p}` : window.location.pathname)
+}
 import { Package, AlertTriangle, Plus, Pencil, Trash2, Search, Wallet, PackageX, Boxes } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -103,6 +110,16 @@ export default function EstoquePage() {
   }
 
   useEffect(() => { loadData() }, [])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const q = params.get('q')
+    const tipo = params.get('tipo')
+    const status = params.get('status')
+    if (q !== null) setBusca(q)
+    if (tipo !== null) setFiltroTipo(tipo)
+    if (status !== null) setFiltroStatus(status as typeof filtroStatus)
+  }, [])
 
   async function handleAjuste(e: React.FormEvent) {
     e.preventDefault()
@@ -309,7 +326,7 @@ export default function EstoquePage() {
           <p className="text-sm text-muted-foreground mt-1 font-medium">Insumos cadastrados e histórico de movimentações</p>
         </div>
         <Button size="sm" onClick={() => setNovoDialog(true)} className="shrink-0">
-          <Plus className="h-4 w-4 mr-1.5" />
+          <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
           Novo Insumo
         </Button>
       </div>
@@ -366,16 +383,17 @@ export default function EstoquePage() {
             <div className="relative flex-1 min-w-[180px] max-w-xs">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
-                placeholder="Buscar por nome..."
+                placeholder="Buscar por nome…"
                 value={busca}
-                onChange={e => setBusca(e.target.value)}
+                onChange={e => { setBusca(e.target.value); setUrlParam('q', e.target.value, '') }}
                 className="pl-8 h-9"
               />
             </div>
             <select
+              aria-label="Filtrar por tipo"
               className={SELECT_CLASS.replace('w-full', 'w-auto') + ' min-w-[140px]'}
               value={filtroTipo}
-              onChange={e => setFiltroTipo(e.target.value)}
+              onChange={e => { setFiltroTipo(e.target.value); setUrlParam('tipo', e.target.value) }}
             >
               <option value="todos">Todos os tipos</option>
               {TIPOS.map(([value, label]) => (
@@ -383,9 +401,10 @@ export default function EstoquePage() {
               ))}
             </select>
             <select
+              aria-label="Filtrar por situação"
               className={SELECT_CLASS.replace('w-full', 'w-auto') + ' min-w-[140px]'}
               value={filtroStatus}
-              onChange={e => setFiltroStatus(e.target.value as typeof filtroStatus)}
+              onChange={e => { setFiltroStatus(e.target.value as typeof filtroStatus); setUrlParam('status', e.target.value) }}
             >
               <option value="todos">Todas situações</option>
               <option value="ok">OK</option>
@@ -397,7 +416,10 @@ export default function EstoquePage() {
                 variant="ghost"
                 size="sm"
                 className="h-9 text-muted-foreground"
-                onClick={() => { setBusca(''); setFiltroTipo('todos'); setFiltroStatus('todos') }}
+                onClick={() => {
+                  setBusca(''); setFiltroTipo('todos'); setFiltroStatus('todos')
+                  window.history.replaceState(null, '', window.location.pathname)
+                }}
               >
                 Limpar
               </Button>
@@ -431,7 +453,7 @@ export default function EstoquePage() {
                         </p>
                       </div>
                       <Button size="sm" onClick={() => setNovoDialog(true)}>
-                        <Plus className="h-4 w-4 mr-1.5" />
+                        <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
                         Cadastrar insumo
                       </Button>
                     </div>
@@ -472,7 +494,7 @@ export default function EstoquePage() {
                     <TableCell className={qtdClass}>
                       {item.quantidade_atual} {item.insumos.unidade}
                     </TableCell>
-                    <TableCell className="text-right text-sm">
+                    <TableCell className="text-right text-sm tabular-nums">
                       {item.preco_medio_unitario > 0
                         ? `R$ ${item.preco_medio_unitario.toFixed(2)}`
                         : '—'}
@@ -515,10 +537,10 @@ export default function EstoquePage() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          title="Excluir insumo"
+                          aria-label="Excluir insumo"
                           onClick={() => setDeleteInsumo(item)}
                         >
-                          <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                          <Trash2 className="h-3.5 w-3.5 text-red-400" aria-hidden="true" />
                         </Button>
                       </div>
                     </TableCell>
@@ -567,7 +589,7 @@ export default function EstoquePage() {
                       {m.tipo === 'entrada' ? '+ entrada' : '− saída'}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right font-medium">
+                  <TableCell className="text-right font-medium tabular-nums">
                     {m.quantidade} {m.insumos.unidade}
                   </TableCell>
                   <TableCell>
@@ -575,11 +597,11 @@ export default function EstoquePage() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-0.5">
-                      <Button size="sm" variant="ghost" title="Editar" onClick={() => abrirEditMov(m)}>
-                        <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                      <Button size="sm" variant="ghost" aria-label="Editar movimentação" onClick={() => abrirEditMov(m)}>
+                        <Pencil className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
                       </Button>
-                      <Button size="sm" variant="ghost" title="Excluir" onClick={() => { setDeleteMov(m); setDeleteMovErro(null) }}>
-                        <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                      <Button size="sm" variant="ghost" aria-label="Excluir movimentação" onClick={() => { setDeleteMov(m); setDeleteMovErro(null) }}>
+                        <Trash2 className="h-3.5 w-3.5 text-red-400" aria-hidden="true" />
                       </Button>
                     </div>
                   </TableCell>
@@ -651,7 +673,7 @@ export default function EstoquePage() {
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setCorrigirItem(null)}>Cancelar</Button>
                 <Button type="submit" disabled={salvandoCorrecao || !corrigirForm.fator}>
-                  {salvandoCorrecao ? 'Salvando...' : 'Converter'}
+                  {salvandoCorrecao ? 'Salvando…' : 'Converter'}
                 </Button>
               </DialogFooter>
             </form>
@@ -710,7 +732,7 @@ export default function EstoquePage() {
                   Cancelar
                 </Button>
                 <Button type="submit" disabled={salvando}>
-                  {salvando ? 'Salvando...' : 'Salvar'}
+                  {salvando ? 'Salvando…' : 'Salvar'}
                 </Button>
               </DialogFooter>
             </form>
@@ -759,7 +781,7 @@ export default function EstoquePage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditMov(null)}>Cancelar</Button>
             <Button onClick={handleEditMov} disabled={salvandoEditMov || !editMovForm.quantidade}>
-              {salvandoEditMov ? 'Salvando...' : 'Salvar'}
+              {salvandoEditMov ? 'Salvando…' : 'Salvar'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -778,14 +800,14 @@ export default function EstoquePage() {
             O saldo do estoque será ajustado automaticamente.
           </p>
           {deleteMovErro && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+            <p aria-live="polite" className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
               {deleteMovErro}
             </p>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => { setDeleteMov(null); setDeleteMovErro(null) }}>Cancelar</Button>
             <Button variant="destructive" onClick={handleDeleteMov} disabled={deletandoMov}>
-              {deletandoMov ? 'Excluindo...' : 'Excluir'}
+              {deletandoMov ? 'Excluindo…' : 'Excluir'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -801,14 +823,14 @@ export default function EstoquePage() {
             e todo o seu histórico de movimentações. Esta ação não pode ser desfeita.
           </p>
           {deleteInsumoErro && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+            <p aria-live="polite" className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
               {deleteInsumoErro}
             </p>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => { setDeleteInsumo(null); setDeleteInsumoErro(null) }}>Cancelar</Button>
             <Button variant="destructive" onClick={handleDeleteInsumo} disabled={deletandoInsumo}>
-              {deletandoInsumo ? 'Excluindo...' : 'Excluir'}
+              {deletandoInsumo ? 'Excluindo…' : 'Excluir'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -898,7 +920,7 @@ export default function EstoquePage() {
                 Cancelar
               </Button>
               <Button type="submit" disabled={salvandoNovo}>
-                {salvandoNovo ? 'Salvando...' : 'Adicionar'}
+                {salvandoNovo ? 'Salvando…' : 'Adicionar'}
               </Button>
             </DialogFooter>
           </form>

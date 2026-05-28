@@ -35,12 +35,12 @@ export function ActionMenu({ items, label = 'Mais ações' }: { items: ActionMen
       <Button
         size="sm"
         variant="ghost"
-        title={label}
+        aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen(o => !o)}
       >
-        <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
+        <MoreHorizontal className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
       </Button>
       {open && (
         <div
