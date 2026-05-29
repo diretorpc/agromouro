@@ -244,7 +244,8 @@ export default function CustosPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Custo por Hectare — Comparativo entre Talhões</CardTitle>
           </CardHeader>
-          <CardContent className="pt-0">
+          <CardContent className="pt-0 overflow-x-auto">
+            <div style={{ minWidth: 360 }}>
             <ResponsiveContainer width="100%" height={Math.max(chartHa.length * 52 + 16, 80)}>
               <BarChart data={chartHa} layout="vertical" margin={{ top: 0, right: 110, bottom: 0, left: 8 }}>
                 <XAxis type="number" hide />
@@ -263,6 +264,7 @@ export default function CustosPage() {
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -273,7 +275,8 @@ export default function CustosPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Custo por Tipo de Operação — por Talhão</CardTitle>
           </CardHeader>
-          <CardContent className="pt-0">
+          <CardContent className="pt-0 overflow-x-auto">
+            <div style={{ minWidth: 360 }}>
             <ResponsiveContainer width="100%" height={Math.max(chartStacked.length * 52 + 48, 100)}>
               <BarChart data={chartStacked} layout="vertical" margin={{ top: 0, right: 20, bottom: 0, left: 8 }}>
                 <XAxis type="number" hide />
@@ -294,6 +297,7 @@ export default function CustosPage() {
                 ))}
               </BarChart>
             </ResponsiveContainer>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -407,7 +411,7 @@ function PageSkeleton() {
   return (
     <div className="p-6 space-y-6 animate-pulse">
       <div className="h-8 w-48 bg-muted rounded" />
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[0, 1, 2].map(i => <div key={i} className="h-24 bg-muted rounded-xl" />)}
       </div>
       <div className="h-48 bg-muted rounded-xl" />

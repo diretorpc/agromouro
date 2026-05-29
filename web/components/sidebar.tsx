@@ -2,6 +2,7 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
+import { useEffect, useRef } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { LayoutDashboard, Package, Tractor, FileText, Bell, LogOut, CircleDollarSign, BarChart2, MapPin } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -18,9 +19,19 @@ const navItems = [
   { href: '/alertas',    label: 'Alertas',          icon: Bell },
 ]
 
-export function Sidebar() {
+interface SidebarProps {
+  onClose?: () => void
+}
+
+export function Sidebar({ onClose }: SidebarProps = {}) {
   const pathname = usePathname()
   const router = useRouter()
+  const mounted = useRef(false)
+
+  useEffect(() => {
+    if (!mounted.current) { mounted.current = true; return }
+    onClose?.()
+  }, [pathname]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function signOut() {
     await supabase.auth.signOut()
