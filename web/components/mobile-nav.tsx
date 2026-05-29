@@ -40,6 +40,7 @@ export function MobileNav() {
         role="dialog"
         aria-modal="true"
         aria-label="Menu de navegação"
+        aria-hidden={!open}
         className={[
           'fixed inset-y-0 left-0 z-50 md:hidden',
           'transition-transform duration-200 ease-in-out',
