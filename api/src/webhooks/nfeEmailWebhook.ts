@@ -1,15 +1,27 @@
 import { Router } from 'express'
+import { supabase } from '../services/supabase'
 import { parseXmlNFe, nfeJaProcessada, processarNFe } from '../services/nfeProcessor'
 
 export const nfeEmailWebhook = Router()
 
-// ─── Recebe XML de NF-e enviado pelo n8n ─────────────────────────────────────
-// n8n envia o arquivo como binary (application/octet-stream ou text/xml)
 nfeEmailWebhook.post('/', async (req, res) => {
-  res.status(200).json({ ok: true }) // Responder 200 imediatamente
+  res.status(200).json({ ok: true })
 
   try {
-    // Suporta body como Buffer (binary) ou string (text/xml)
+    // Identificar fazenda pelo query param (Make.com adiciona ?fazenda=mg na URL)
+    const fazenda_codigo = (req.query.fazenda as string) ?? 'mg'
+
+    const { data: fazenda } = await supabase
+      .from('fazendas')
+      .select('id, codigo')
+      .eq('codigo', fazenda_codigo)
+      .single()
+
+    if (!fazenda) {
+      console.error(`[NFeEmail] Fazenda não encontrada: ${fazenda_codigo}`)
+      return
+    }
+
     const xmlStr: string = Buffer.isBuffer(req.body)
       ? req.body.toString('utf-8')
       : typeof req.body === 'string'
@@ -23,18 +35,18 @@ nfeEmailWebhook.post('/', async (req, res) => {
 
     const nfe = parseXmlNFe(xmlStr)
     if (!nfe) {
-      console.warn('[NFeEmail] XML recebido não é uma NF-e válida.')
+      console.warn('[NFeEmail] XML não é uma NF-e válida.')
       return
     }
 
-    if (await nfeJaProcessada(nfe.numero)) {
-      console.log(`[NFeEmail] NF-e ${nfe.numero} já processada — ignorando.`)
+    if (await nfeJaProcessada(nfe.numero, fazenda.id)) {
+      console.log(`[NFeEmail] NF-e ${nfe.numero} já processada para ${fazenda_codigo} — ignorando.`)
       return
     }
 
-    console.log(`[NFeEmail] Processando NF-e ${nfe.numero} de ${nfe.emitenteNome}...`)
-    await processarNFe(nfe, 'email')
-    console.log(`[NFeEmail] NF-e ${nfe.numero} processada com sucesso.`)
+    console.log(`[NFeEmail][${fazenda_codigo}] Processando NF-e ${nfe.numero}...`)
+    await processarNFe(nfe, 'email', fazenda.id)
+    console.log(`[NFeEmail][${fazenda_codigo}] NF-e ${nfe.numero} processada.`)
 
   } catch (err) {
     console.error('[NFeEmail] Erro:', err instanceof Error ? err.message : err)

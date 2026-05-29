@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { processarNFe, nfeJaProcessada, type NFeData } from '../services/nfeProcessor'
+import { supabase } from '../services/supabase'
 
 export const nfeWebhook = Router()
 
@@ -10,6 +11,19 @@ nfeWebhook.post('/', async (req, res) => {
   const payload = req.body
 
   try {
+    // Identificar fazenda pelo query param; fallback para env var ou 'mg'
+    const fazendaCodigo = (req.query.fazenda as string) ?? process.env.FAZENDA_CODIGO ?? 'mg'
+    const { data: fazenda } = await supabase
+      .from('fazendas')
+      .select('id, codigo')
+      .eq('codigo', fazendaCodigo)
+      .single()
+
+    if (!fazenda) {
+      console.error(`[NFeWebhook] Fazenda não encontrada: ${fazendaCodigo}`)
+      return
+    }
+
     const {
       number:     numero,
       issuedOn:   dataEmissao,
@@ -19,7 +33,7 @@ nfeWebhook.post('/', async (req, res) => {
       items = [],
     } = payload
 
-    if (await nfeJaProcessada(numero)) {
+    if (await nfeJaProcessada(numero, fazenda.id)) {
       console.log(`[NFeWebhook] NF-e ${numero} já processada — ignorando.`)
       return
     }
@@ -41,7 +55,7 @@ nfeWebhook.post('/', async (req, res) => {
       })),
     }
 
-    await processarNFe(nfe, 'webhook')
+    await processarNFe(nfe, 'webhook', fazenda.id)
 
   } catch (err) {
     console.error('[NFeWebhook] Erro:', err instanceof Error ? err.message : err)

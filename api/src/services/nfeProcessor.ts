@@ -91,11 +91,12 @@ export function parseXmlNFe(xmlStr: string): NFeData | null {
 }
 
 // ─── Verificar duplicata ──────────────────────────────────────────────────────
-export async function nfeJaProcessada(numero: string): Promise<boolean> {
+export async function nfeJaProcessada(numero: string, fazenda_id: string): Promise<boolean> {
   const { data } = await supabase
     .from('notas_fiscais')
     .select('id')
     .eq('numero', numero)
+    .eq('fazenda_id', fazenda_id)
     .limit(1)
     .single()
   return !!data
@@ -117,13 +118,14 @@ async function categorizarItem(descricao: string): Promise<TipoInsumo> {
 
 // ─── Buscar ou criar insumo ───────────────────────────────────────────────────
 async function vincularOuCriarInsumo(
-  descricao: string, tipo: TipoInsumo, unidadeBase: string,
+  descricao: string, tipo: TipoInsumo, unidadeBase: string, fazenda_id: string,
 ): Promise<{ id: string; nome: string; unidade: string; autoCreated: boolean }> {
   const primeirasPalavras = descricao.trim().split(' ').slice(0, 2).join(' ')
   const { data: existente } = await supabase
     .from('insumos')
     .select('id, nome, unidade')
     .ilike('nome', `%${primeirasPalavras}%`)
+    .eq('fazenda_id', fazenda_id)
     .limit(1)
     .single()
 
@@ -134,21 +136,21 @@ async function vincularOuCriarInsumo(
 
   const { data: novoInsumo, error } = await supabase
     .from('insumos')
-    .insert({ nome, tipo, unidade })
+    .insert({ nome, tipo, unidade, fazenda_id })
     .select('id, nome, unidade')
     .single()
 
   if (error || !novoInsumo) throw new Error(`Falha ao criar insumo: ${error?.message}`)
 
   await supabase.from('estoque').insert({
-    insumo_id: novoInsumo.id, quantidade_atual: 0, quantidade_minima_alerta: 0,
+    insumo_id: novoInsumo.id, quantidade_atual: 0, quantidade_minima_alerta: 0, fazenda_id,
   })
 
   return { ...novoInsumo, autoCreated: true }
 }
 
 // ─── Processador principal ────────────────────────────────────────────────────
-export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = 'webhook'): Promise<void> {
+export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = 'webhook', fazenda_id: string): Promise<void> {
   const { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items } = nfe
 
   const itensSeguros  = items.slice(0, 200)
@@ -169,6 +171,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
         data_emissao:  dataEmissao,
         valor_total:   valorTotal,
         status:        'processando',
+        fazenda_id,
       })
       .select('id')
       .single()
@@ -191,7 +194,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
       const fator        = isComercial && item.quantity > 0 ? item.quantityTrib / item.quantity : 1
       const precoUnitario = fator > 0 ? item.unitValue / fator : item.unitValue
 
-      const insumo = await vincularOuCriarInsumo(item.description, tipo, unidadeBase)
+      const insumo = await vincularOuCriarInsumo(item.description, tipo, unidadeBase, fazenda_id)
 
       await supabase.from('itens_nfe').insert({
         nota_fiscal_id: nfeId,
@@ -201,6 +204,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
         valor_unitario: item.unitValue,
         valor_total:    item.totalValue,
         insumo_id:      insumo.id,
+        fazenda_id,
       })
 
       if (precoUnitario > 0) {
@@ -219,6 +223,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
         unidade_comercial:    isComercial ? item.unit            : null,
         quantidade_comercial: isComercial ? item.quantity        : null,
         fator_conversao:      isComercial ? parseFloat(fator.toFixed(4)) : null,
+        fazenda_id,
       })
 
       await supabase.rpc('incrementar_estoque', {
@@ -239,6 +244,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
       tipo:           'despesa',
       categoria:      'insumos',
       nota_fiscal_id: nfeId,
+      fazenda_id,
     })
 
     await supabase.from('notas_fiscais').update({ status: 'processada' }).eq('id', nfeId)
