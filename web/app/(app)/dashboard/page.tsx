@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { TrendingDown, Package, Sprout, Tractor } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend,
+  PieChart, Pie, Cell, Label,
 } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { KpiCard } from '@/components/ui/kpi-card'
@@ -17,8 +17,22 @@ function formatBRL(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
 }
 
-// ─── Cores culturas ────────────────────────────────────────
-const CULTURE_COLORS = ['#5B8C2A', '#7B3D1A', '#8FB840', '#A0522D', '#6BAF2A', '#4A7020']
+// ─── Paleta semântica por cultura ──────────────────────────
+const CULTURE_PALETTE: Record<string, string> = {
+  soja:          '#22C55E',
+  milho:         '#EAB308',
+  trigo:         '#F97316',
+  aveia:         '#3B82F6',
+  cana:          '#8B5CF6',
+  sorgo:         '#06B6D4',
+  pasto:         '#84CC16',
+  'sem cultura': '#9CA3AF',
+}
+const CULTURE_FALLBACK = ['#22C55E','#EAB308','#F97316','#3B82F6','#8B5CF6','#06B6D4','#84CC16','#F43F5E']
+
+function getCultureColor(name: string, index: number): string {
+  return CULTURE_PALETTE[name.toLowerCase()] ?? CULTURE_FALLBACK[index % CULTURE_FALLBACK.length]
+}
 
 // ─── Página ────────────────────────────────────────────────
 export default function DashboardPage() {
@@ -86,7 +100,11 @@ export default function DashboardPage() {
       const c = t.cultura_atual ?? 'Sem cultura'
       acc[c] = (acc[c] ?? 0) + t.area_ha; return acc
     }, {})
-  ).map(([name, value]) => ({ name, value: Math.round(value * 10) / 10 }))
+  )
+    .map(([name, value], i) => ({ name, value: Math.round(value * 10) / 10, color: getCultureColor(name, i) }))
+    .sort((a, b) => b.value - a.value)
+
+  const totalHaCulturas = culturasPorArea.reduce((s, c) => s + c.value, 0)
 
   if (loading) return <DashboardSkeleton />
 
@@ -175,17 +193,63 @@ export default function DashboardPage() {
                 Nenhum talhão cadastrado.
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
-                  <Pie data={culturasPorArea} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={3} dataKey="value">
-                    {culturasPorArea.map((_, i) => <Cell key={i} fill={CULTURE_COLORS[i % CULTURE_COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip formatter={(v) => [`${v} ha`, '']}
-                    contentStyle={{ border: 'none', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: 12 }} />
-                  <Legend iconType="circle" iconSize={8}
-                    formatter={(v) => <span style={{ fontSize: 12, fontWeight: 600 }}>{v}</span>} />
-                </PieChart>
-              </ResponsiveContainer>
+              <div className="flex items-center gap-6">
+                <div className="shrink-0" style={{ width: 160, height: 160 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={culturasPorArea}
+                        cx="50%" cy="50%"
+                        innerRadius={50} outerRadius={72}
+                        paddingAngle={3}
+                        dataKey="value"
+                        strokeWidth={0}
+                      >
+                        {culturasPorArea.map((c, i) => <Cell key={i} fill={c.color} />)}
+                        <Label
+                          content={(props) => {
+                            const vb = (props as { viewBox?: { cx?: number; cy?: number } }).viewBox
+                            const cx = vb?.cx ?? 80
+                            const cy = vb?.cy ?? 80
+                            return (
+                              <g>
+                                <text x={cx} y={cy - 4} textAnchor="middle" fontSize={17} fontWeight={700} fill="#111827">
+                                  {totalHaCulturas.toFixed(0)}
+                                </text>
+                                <text x={cx} y={cy + 13} textAnchor="middle" fontSize={10} fill="#9CA3AF" fontWeight={500}>
+                                  ha total
+                                </text>
+                              </g>
+                            )
+                          }}
+                          position="center"
+                        />
+                      </Pie>
+                      <Tooltip
+                        formatter={(v, _, entry) => [
+                          `${Number(v)} ha · ${((Number(v) / totalHaCulturas) * 100).toFixed(1)}%`,
+                          (entry as { payload?: { name: string } }).payload?.name ?? '',
+                        ]}
+                        contentStyle={{ border: 'none', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: 12 }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="flex-1 min-w-0 space-y-2.5">
+                  {culturasPorArea.map((c) => {
+                    const pct = totalHaCulturas > 0 ? ((c.value / totalHaCulturas) * 100).toFixed(1) : '0'
+                    return (
+                      <div key={c.name} className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: c.color }} />
+                        <span className="text-sm capitalize flex-1 truncate font-medium">{c.name}</span>
+                        <span className="text-sm text-muted-foreground tabular-nums">{c.value} ha</span>
+                        <span className="text-sm font-bold tabular-nums w-12 text-right" style={{ color: c.color }}>{pct}%</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -263,6 +327,7 @@ export default function DashboardPage() {
     </div>
   )
 }
+
 
 function FonteLabel({ fonte }: { fonte: string }) {
   const map: Record<string, string> = { whatsapp: '💬', manual: '✏️', jd: '🚜', nfe: '📄' }
