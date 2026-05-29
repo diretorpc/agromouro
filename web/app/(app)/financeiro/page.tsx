@@ -400,7 +400,7 @@ export default function FinanceiroPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Financeiro</h1>
           <p className="text-sm text-muted-foreground mt-1 font-medium">Despesas e lançamentos da fazenda</p>
@@ -460,7 +460,8 @@ export default function FinanceiroPage() {
           <CardHeader>
             <CardTitle className="text-base">Gastos por Categoria</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="overflow-x-auto">
+            <div style={{ minWidth: 360 }}>
             <ResponsiveContainer width="100%" height={chartData.length * 48 + 16}>
               <BarChart
                 data={chartData}
@@ -493,6 +494,7 @@ export default function FinanceiroPage() {
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -711,7 +713,7 @@ function PageSkeleton() {
   return (
     <div className="p-6 space-y-6 animate-pulse">
       <div className="h-8 w-40 bg-muted rounded" />
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-28 bg-muted rounded-xl" />)}
       </div>
       <div className="h-72 bg-muted rounded-xl" />
