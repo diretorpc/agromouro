@@ -8,7 +8,7 @@ function setUrlParam(key: string, value: string, dflt = 'todos') {
   else p.set(key, value)
   window.history.replaceState(null, '', p.toString() ? `?${p}` : window.location.pathname)
 }
-import { DollarSign, TrendingDown, Package, Filter, Plus, Pencil, Trash2 } from 'lucide-react'
+import { DollarSign, TrendingDown, Package, Filter, Plus, Pencil, Trash2, ArrowUp, ArrowDown } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip,
   ResponsiveContainer, Cell, LabelList,
@@ -208,6 +208,7 @@ export default function FinanceiroPage() {
   const [loading, setLoading] = useState(true)
   const [filtroCentro, setFiltroCentro] = useState('todos')
   const [filtroMes, setFiltroMes] = useState('todos')
+  const [sortData, setSortData] = useState<'desc' | 'asc'>('desc')
 
   const [addDialog, setAddDialog] = useState(false)
   const [editItem, setEditItem] = useState<ItemFinanceiro | null>(null)
@@ -370,11 +371,17 @@ export default function FinanceiroPage() {
     new Set(itens.filter(i => i.data_emissao).map(i => i.data_emissao.slice(0, 7)))
   ).sort((a, b) => b.localeCompare(a))
 
-  const itensFiltrados = itens.filter(i => {
-    const okCentro = filtroCentro === 'todos' || i.centro_custo === filtroCentro
-    const okMes = filtroMes === 'todos' || i.data_emissao.startsWith(filtroMes)
-    return okCentro && okMes
-  })
+  const itensFiltrados = itens
+    .filter(i => {
+      const okCentro = filtroCentro === 'todos' || i.centro_custo === filtroCentro
+      const okMes = filtroMes === 'todos' || i.data_emissao.startsWith(filtroMes)
+      return okCentro && okMes
+    })
+    .sort((a, b) => {
+      const da = a.data_emissao ?? ''
+      const db = b.data_emissao ?? ''
+      return sortData === 'desc' ? db.localeCompare(da) : da.localeCompare(db)
+    })
 
   const totalGeral = itensFiltrados.reduce((s, i) => s + i.valor_total, 0)
   const porCategoria = itensFiltrados.reduce<Record<string, number>>((acc, i) => {
@@ -544,7 +551,18 @@ export default function FinanceiroPage() {
                 <TableHead className="w-[120px] text-right">Valor Total</TableHead>
                 <TableHead className="w-[140px]">Centro de Custo</TableHead>
                 <TableHead className="w-[160px]">Origem</TableHead>
-                <TableHead className="w-[90px]">Data</TableHead>
+                <TableHead className="w-[90px]">
+                  <button
+                    onClick={() => setSortData(s => s === 'desc' ? 'asc' : 'desc')}
+                    className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                    aria-label={sortData === 'desc' ? 'Ordenado: mais recente primeiro. Clique para inverter' : 'Ordenado: mais antigo primeiro. Clique para inverter'}
+                  >
+                    Data
+                    {sortData === 'desc'
+                      ? <ArrowDown className="h-3 w-3" aria-hidden="true" />
+                      : <ArrowUp className="h-3 w-3" aria-hidden="true" />}
+                  </button>
+                </TableHead>
                 <TableHead className="w-[72px]" />
               </TableRow>
             </TableHeader>
