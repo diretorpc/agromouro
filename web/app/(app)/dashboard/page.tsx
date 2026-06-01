@@ -8,7 +8,6 @@ import {
 } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { KpiCard } from '@/components/ui/kpi-card'
-import { api } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 import type { Talhao, Operacao, Estoque, Alerta, LancamentoFinanceiro, Safra, Insumo } from '@/lib/types'
 
@@ -47,10 +46,10 @@ export default function DashboardPage() {
 
   useEffect(() => {
     Promise.all([
-      api.get<Talhao[]>('/talhoes').catch(() => [] as Talhao[]),
-      api.get<Operacao[]>('/operacoes').catch(() => [] as Operacao[]),
-      api.get<Estoque[]>('/estoque').catch(() => [] as Estoque[]),
-      api.get<Alerta[]>('/alertas').catch(() => [] as Alerta[]),
+      supabase.from('talhoes').select('id, nome, area_ha, cultura_atual, status').then(r => (r.data ?? []) as Talhao[]),
+      supabase.from('operacoes').select('id, talhao_id, safra_id, tipo, data, descricao, fonte, talhoes(nome)').then(r => (r.data ?? []) as Operacao[]),
+      supabase.from('estoque').select('id, insumo_id, quantidade_atual, quantidade_minima_alerta, preco_medio_unitario, insumos(id, nome, tipo, unidade)').then(r => (r.data ?? []) as Estoque[]),
+      supabase.from('alertas').select('id, tipo, titulo, mensagem, nivel, lido, enviado_whatsapp, created_at').then(r => (r.data ?? []) as Alerta[]),
       supabase.from('lancamentos_financeiros').select('*').then(r => (r.data ?? []) as LancamentoFinanceiro[]),
       supabase.from('safras').select('*, talhoes(area_ha)').then(r => (r.data ?? []) as Safra[]),
       supabase.from('insumos').select('id, nome, tipo, unidade').then(r => (r.data ?? []) as Insumo[]),
