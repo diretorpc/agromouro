@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabase } from '../services/supabase'
-import { enviarMensagem } from '../services/zapi'
+import { enviarMensagem, getAuthorizedPhones } from '../services/zapi'
 
 export const whatsappWebhook = Router()
 
@@ -260,7 +260,7 @@ async function resolverInsumos(
 }
 
 // ─── Processar mensagem recebida ──────────────────────────────────────────────
-async function processarMensagem(telefone: string, texto: string) {
+async function processarMensagem(telefone: string, texto: string, fazenda_codigo: string = 'mg', fazenda_id?: string) {
   try {
     const classificacao = await classificarMensagem(texto)
     const { tipo, dados } = classificacao
@@ -281,11 +281,12 @@ async function processarMensagem(telefone: string, texto: string) {
       const { data: operacao, error: opErr } = await supabase
         .from('operacoes')
         .insert({
-          talhao_id: talhao?.id || null,
-          tipo:      dados.operacao_tipo || 'outro',
-          data:      dataOp,
-          descricao: texto.slice(0, 500),
-          fonte:     'whatsapp',
+          talhao_id:  talhao?.id || null,
+          tipo:       dados.operacao_tipo || 'outro',
+          data:       dataOp,
+          descricao:  texto.slice(0, 500),
+          fonte:      'whatsapp',
+          fazenda_id: fazenda_id ?? null,
         })
         .select('id')
         .single()
@@ -333,6 +334,7 @@ async function processarMensagem(telefone: string, texto: string) {
             data:        dataOp,
             origem:      'operacao' as const,
             operacao_id: operacaoId,
+            fazenda_id:  fazenda_id ?? null,
           })),
         )
         if (movErr) {
@@ -361,10 +363,13 @@ async function processarMensagem(telefone: string, texto: string) {
             return { nome: item.nome, quantidade: item.quantidade, unidade: item.unidade, novaQuantidade: null, minimo: null }
           }
           const nova = linha.atual - item.quantidade
-          const { error: updErr } = await supabase
+          const estoqueUpdate = supabase
             .from('estoque')
             .update({ quantidade_atual: nova })
             .eq('insumo_id', item.insumo_id)
+          const { error: updErr } = fazenda_id
+            ? await estoqueUpdate.eq('fazenda_id', fazenda_id)
+            : await estoqueUpdate
           if (updErr) {
             console.error(`[WhatsApp] Falha ao decrementar estoque de ${item.nome}:`, updErr.message)
           }
@@ -398,20 +403,18 @@ async function processarMensagem(telefone: string, texto: string) {
         `• "Quanto tem de glifosato no estoque?"`
     }
 
-    await enviarMensagem(telefone, resposta)
+    await enviarMensagem(telefone, resposta, fazenda_codigo)
 
   } catch (err) {
     console.error('[WhatsApp] Erro ao processar mensagem:', err instanceof Error ? err.message : err)
-    await enviarMensagem(telefone, `Tive um problema ao processar sua mensagem. Tente novamente em instantes.`)
+    await enviarMensagem(telefone, `Tive um problema ao processar sua mensagem. Tente novamente em instantes.`, fazenda_codigo)
   }
 }
 
 // ─── Proteção: whitelist de números autorizados ───────────────────────────────
-function isAuthorized(phone: string): boolean {
-  const raw = process.env.WHATSAPP_AUTHORIZED_PHONES || ''
-  if (!raw.trim()) return true // sem whitelist configurada → permite tudo (retrocompat)
-  const authorized = raw.split(',').map(p => normalizarPhone(p.trim())).filter(Boolean)
-  return authorized.includes(normalizarPhone(phone))
+function isAuthorized(phone: string, authorizedPhones: string[]): boolean {
+  if (authorizedPhones.length === 0) return true // sem whitelist configurada → permite tudo (retrocompat)
+  return authorizedPhones.map(p => normalizarPhone(p)).includes(normalizarPhone(phone))
 }
 
 // ─── Rota do webhook ──────────────────────────────────────────────────────────
@@ -423,6 +426,21 @@ whatsappWebhook.post('/', async (req, res) => {
 
   if (!text?.message?.trim()) return res.status(200).json({ ok: true })
 
+  res.status(200).json({ ok: true })
+
+  const fazenda_codigo = (req.query.fazenda as string) ?? 'mg'
+
+  const { data: fazenda } = await supabase
+    .from('fazendas')
+    .select('id, codigo')
+    .eq('codigo', fazenda_codigo)
+    .single()
+
+  if (!fazenda) {
+    console.warn(`[WA] Fazenda não encontrada: ${fazenda_codigo}`)
+    return
+  }
+
   // Prefixo de ativação — calculado antes da proteção anti-loop porque mensagens
   // do próprio número COM o prefixo são propositais (uso single-tenant), não loop
   const prefix     = (process.env.WHATSAPP_TRIGGER_PREFIX || '').trim().toLowerCase()
@@ -431,24 +449,24 @@ whatsappWebhook.post('/', async (req, res) => {
 
   // Anti-loop: ignorar mensagens do próprio bot SALVO quando começam com o prefixo
   // (no setup single-tenant o agricultor manda pra própria conta com "!agro …")
-  const botPhone = normalizarPhone(process.env.ZAPI_PHONE || '')
+  const botPhone = normalizarPhone(process.env[`ZAPI_PHONE_${fazenda_codigo.toUpperCase()}`] ?? process.env.ZAPI_PHONE ?? '')
   if (normalizarPhone(phone) === botPhone && !hasExplicitTrigger) {
-    return res.status(200).json({ ok: true })
+    return
   }
 
+  const authorizedPhones = getAuthorizedPhones(fazenda_codigo)
+
   // Whitelist: só números autorizados acionam o bot
-  if (!isAuthorized(phone)) return res.status(200).json({ ok: true })
+  if (!isAuthorized(phone, authorizedPhones)) return
 
   // Prefixo obrigatório (quando configurado)
-  if (prefix && !hasExplicitTrigger) return res.status(200).json({ ok: true })
+  if (prefix && !hasExplicitTrigger) return
 
   // Strip do prefixo antes de passar ao Claude
   const texto = (prefix ? rawMessage.slice(prefix.length).trim() : rawMessage).slice(0, 1000)
-  if (!texto) return res.status(200).json({ ok: true })
+  if (!texto) return
 
-  processarMensagem(phone, texto).catch((err) =>
+  processarMensagem(phone, texto, fazenda_codigo, fazenda.id).catch((err) =>
     console.error('[WhatsApp] Erro inesperado em background:', err instanceof Error ? err.message : err)
   )
-
-  res.status(200).json({ ok: true })
 })

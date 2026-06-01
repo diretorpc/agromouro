@@ -1,6 +1,7 @@
 import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import { parseXmlNFe, nfeJaProcessada, processarNFe } from '../services/nfeProcessor'
+import { supabase } from '../services/supabase'
 
 // ─── Verificar se o XML é uma NF-e válida ────────────────────────────────────
 function isNFeXml(content: string): boolean {
@@ -24,6 +25,19 @@ export async function buscarNFesNoEmail(): Promise<void> {
     auth:   { user, pass },
     logger: false,
   })
+
+  // Resolver fazenda padrão (IMAP job não tem query param — usa env var ou 'mg')
+  const fazendaCodigo = process.env.FAZENDA_CODIGO ?? 'mg'
+  const { data: fazenda } = await supabase
+    .from('fazendas')
+    .select('id, codigo')
+    .eq('codigo', fazendaCodigo)
+    .single()
+
+  if (!fazenda) {
+    console.error(`[NFeEmail] Fazenda não encontrada: ${fazendaCodigo}`)
+    return
+  }
 
   try {
     await client.connect()
@@ -72,14 +86,14 @@ export async function buscarNFesNoEmail(): Promise<void> {
             }
 
             // Evitar duplicatas
-            const jaExiste = await nfeJaProcessada(nfe.numero)
+            const jaExiste = await nfeJaProcessada(nfe.numero, fazenda.id)
             if (jaExiste) {
               console.log(`[NFeEmail] NF-e ${nfe.numero} já processada — ignorando.`)
               continue
             }
 
             console.log(`[NFeEmail] Processando NF-e ${nfe.numero} de ${nfe.emitenteNome}...`)
-            await processarNFe(nfe, 'email')
+            await processarNFe(nfe, 'email', fazenda.id)
             console.log(`[NFeEmail] NF-e ${nfe.numero} processada com sucesso.`)
           }
 

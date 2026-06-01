@@ -7,6 +7,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { LayoutDashboard, Package, Tractor, FileText, Bell, LogOut, CircleDollarSign, BarChart2, MapPin } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
+import { FazendaSwitcher } from '@/components/fazenda-switcher'
 
 const navItems = [
   { href: '/dashboard',  label: 'Dashboard',       icon: LayoutDashboard },
@@ -65,6 +66,9 @@ export function Sidebar({ onClose }: SidebarProps = {}) {
           <p className="text-white/40 text-[11px] font-medium tracking-widest uppercase">Gestão Agrícola</p>
         </div>
       </div>
+
+      {/* Fazenda switcher */}
+      <FazendaSwitcher />
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-4 space-y-0.5">
