@@ -8,7 +8,7 @@ API com `?fazenda=<codigo>`. O código já roteia para a fazenda correta.
 | Fazenda | Código | Email monitorado | URL do webhook |
 |---------|--------|-----------------|----------------|
 | MG (existente) | `mg` | matheusmouro@hotmail.com / ivanmouro@hotmail.com | `.../webhook/nfe-email?fazenda=mg` |
-| Tejuco (novo) | `sp` | nfe.tejuco@hotmail.com *(criar)* | `.../webhook/nfe-email?fazenda=sp` |
+| Tejuco (novo) | `tejuco` | nfe.tejuco@hotmail.com *(criar)* | `.../webhook/nfe-email?fazenda=tejuco` |
 | MT (novo) | `mt` | nfe.mt@hotmail.com *(criar)* | `.../webhook/nfe-email?fazenda=mt` |
 
 ---
@@ -50,7 +50,7 @@ No cenário `AgroMouro — NF-e Tejuco`:
   ```
   para:
   ```
-  https://agromouro-production.up.railway.app/webhook/nfe-email?fazenda=sp
+  https://agromouro-production.up.railway.app/webhook/nfe-email?fazenda=tejuco
   ```
 - Mantenha o header `x-webhook-secret` com o mesmo valor de `WEBHOOK_SECRET`
 

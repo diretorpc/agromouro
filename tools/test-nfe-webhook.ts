@@ -1,10 +1,10 @@
 #!/usr/bin/env tsx
 /**
- * Valida o roteamento do webhook NF-e para as 3 fazendas (mg / sp / mt).
+ * Valida o roteamento do webhook NF-e para as 3 fazendas (mg / tejuco / mt).
  *
  * Uso:
- *   npx tsx tools/test-nfe-webhook.ts                      # testa todas as fazendas
- *   npx tsx tools/test-nfe-webhook.ts --fazenda=sp         # testa só Tejuco
+ *   npx tsx tools/test-nfe-webhook.ts                         # testa todas as fazendas
+ *   npx tsx tools/test-nfe-webhook.ts --fazenda=tejuco        # testa só Tejuco
  *   npx tsx tools/test-nfe-webhook.ts --url=http://localhost:3001
  *
  * Cada execução gera um número de NF-e único (TEST + timestamp) para evitar
@@ -24,7 +24,7 @@ const SECRET = process.env.WEBHOOK_SECRET ?? ''
 
 const FARMS = [
   { codigo: 'mg',  nome: 'Fazenda MG (existente)',   xmlFile: 'nfe_teste.xml'  },
-  { codigo: 'sp',  nome: 'Fazenda Tejuco (novo)',     xmlFile: 'nfe_teste2.xml' },
+  { codigo: 'tejuco', nome: 'Fazenda Tejuco (novo)',  xmlFile: 'nfe_teste2.xml' },
   { codigo: 'mt',  nome: 'Fazenda MT (novo)',         xmlFile: 'nfe_teste3.xml' },
 ]
 
@@ -111,7 +111,7 @@ async function main() {
     : FARMS
 
   if (farms.length === 0) {
-    console.error(`\nFazenda inválida: "${targetCodigo}". Use mg, sp ou mt.`)
+    console.error(`\nFazenda inválida: "${targetCodigo}". Use mg, tejuco ou mt.`)
     process.exit(1)
   }
 
