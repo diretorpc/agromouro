@@ -8,8 +8,9 @@ function setUrlParam(key: string, value: string, dflt = 'todos') {
   else p.set(key, value)
   window.history.replaceState(null, '', p.toString() ? `?${p}` : window.location.pathname)
 }
-import { Pencil, Plus, Trash2, Tractor } from 'lucide-react'
+import { Pencil, Plus, Trash2, Tractor, Calendar, Layers, BarChart2 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
+import { KpiCard } from '@/components/ui/kpi-card'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
@@ -313,6 +314,15 @@ export default function OperacoesPage() {
     ? operacoes
     : operacoes.filter(o => o.talhao_id === filtroTalhao)
 
+  const areaTotal = operacoesFiltradas.reduce((sum, op) => {
+    const t = talhoes.find(t => t.id === op.talhao_id)
+    return sum + (t?.area_ha ?? 0)
+  }, 0)
+  const ultimaOpData = operacoesFiltradas[0]?.data
+    ? operacoesFiltradas[0].data.slice(0, 10).split('-').reverse().join('/')
+    : '—'
+  const tiposDistintos = new Set(operacoesFiltradas.map(o => o.tipo)).size
+
   function abrirNovaOperacao() {
     setEditingOp(null)
     setErroSalvar(null)
@@ -350,6 +360,43 @@ export default function OperacoesPage() {
           </SelectContent>
         </Select>
       </div>
+
+      {operacoesFiltradas.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <KpiCard
+            label="Total de Operações"
+            value={operacoesFiltradas.length}
+            sub={filtroTalhao !== 'todos' ? talhoes.find(t => t.id === filtroTalhao)?.nome : 'todos os talhões'}
+            icon={<Tractor className="h-5 w-5" />}
+            iconBg="#F0FDF4"
+            iconColor="#16A34A"
+          />
+          <KpiCard
+            label="Área Operada"
+            value={`${areaTotal.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} ha`}
+            sub="soma das operações filtradas"
+            icon={<Layers className="h-5 w-5" />}
+            iconBg="#EFF6FF"
+            iconColor="#2563EB"
+          />
+          <KpiCard
+            label="Última Operação"
+            value={ultimaOpData}
+            sub={operacoesFiltradas[0] ? tipoLabel(operacoesFiltradas[0].tipo) : undefined}
+            icon={<Calendar className="h-5 w-5" />}
+            iconBg="#FFF7ED"
+            iconColor="#EA580C"
+          />
+          <KpiCard
+            label="Tipos Distintos"
+            value={tiposDistintos}
+            sub={tiposDistintos === 1 ? 'tipo de operação' : 'tipos de operação'}
+            icon={<BarChart2 className="h-5 w-5" />}
+            iconBg="#FAF5FF"
+            iconColor="#9333EA"
+          />
+        </div>
+      )}
 
       <Card>
         <CardContent className="p-0">

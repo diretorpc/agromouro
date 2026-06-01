@@ -1,12 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
+import { AlertCircle, ChevronDown, ChevronRight, Tractor } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip,
   ResponsiveContainer, LabelList, Legend,
 } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { EmptyState } from '@/components/ui/empty-state'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
@@ -309,9 +310,11 @@ export default function CustosPage() {
         </CardHeader>
         <CardContent className="p-0">
           {talhoes.length === 0 ? (
-            <p className="text-center text-muted-foreground py-10 text-sm">
-              Nenhuma operação com custo registrado ainda.
-            </p>
+            <EmptyState
+              icon={<Tractor className="h-6 w-6" />}
+              title="Nenhuma operação com custo registrado"
+              description="Registre operações no campo e importe NF-es para calcular o custo por hectare automaticamente."
+            />
           ) : (
             <div className="divide-y">
               {talhoes.map(t => (

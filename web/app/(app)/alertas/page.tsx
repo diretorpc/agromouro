@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Bell, CheckCheck, Filter } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -10,6 +11,14 @@ import {
 } from '@/components/ui/select'
 import { api } from '@/lib/api'
 import type { Alerta } from '@/lib/types'
+
+const NIVEL_LABELS: Record<string, string> = {
+  todos: 'Todos os níveis', info: 'Info', aviso: 'Aviso', critico: 'Crítico',
+}
+
+const LIDO_LABELS: Record<string, string> = {
+  nao_lido: 'Não lidos', todos: 'Todos', lido: 'Lidos',
+}
 
 const NIVEL_STYLE: Record<string, string> = {
   info: 'bg-blue-100 text-blue-700 border-blue-200',
@@ -57,14 +66,17 @@ export default function AlertasPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-semibold">Alertas</h1>
-          {naoLidosCount > 0 && (
-            <Badge className="bg-orange-500 hover:bg-orange-500 text-white">
-              {naoLidosCount} não {naoLidosCount === 1 ? 'lido' : 'lidos'}
-            </Badge>
-          )}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-semibold">Alertas</h1>
+            {naoLidosCount > 0 && (
+              <Badge className="bg-orange-500 hover:bg-orange-500 text-white">
+                {naoLidosCount} não {naoLidosCount === 1 ? 'lido' : 'lidos'}
+              </Badge>
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground mt-1 font-medium">Central de notificações e avisos da fazenda</p>
         </div>
         {naoLidosCount > 0 && (
           <Button size="sm" variant="outline" onClick={marcarTodosLidos}>
@@ -79,7 +91,7 @@ export default function AlertasPage() {
 
         <Select value={filtroNivel} onValueChange={v => setFiltroNivel(v ?? 'todos')}>
           <SelectTrigger className="w-36">
-            <SelectValue />
+            <SelectValue>{NIVEL_LABELS[filtroNivel]}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="todos">Todos os níveis</SelectItem>
@@ -91,7 +103,7 @@ export default function AlertasPage() {
 
         <Select value={filtroLido} onValueChange={v => setFiltroLido(v ?? 'nao_lido')}>
           <SelectTrigger className="w-36">
-            <SelectValue />
+            <SelectValue>{LIDO_LABELS[filtroLido]}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="nao_lido">Não lidos</SelectItem>
@@ -104,9 +116,12 @@ export default function AlertasPage() {
       <div className="space-y-3">
         {filtrados.length === 0 ? (
           <Card>
-            <CardContent className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
-              <Bell className="h-8 w-8 opacity-30" />
-              <p className="text-sm">Nenhum alerta encontrado.</p>
+            <CardContent className="p-0">
+              <EmptyState
+                icon={<Bell className="h-6 w-6" />}
+                title={filtroLido === 'nao_lido' ? 'Nenhum alerta não lido' : 'Nenhum alerta encontrado'}
+                description={filtroLido === 'nao_lido' ? 'Tudo certo por aqui. Novos alertas aparecerão quando houver estoque crítico ou erros de processamento.' : 'Tente ajustar os filtros acima.'}
+              />
             </CardContent>
           </Card>
         ) : filtrados.map(alerta => (
