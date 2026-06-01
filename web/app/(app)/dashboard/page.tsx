@@ -1,13 +1,14 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { TrendingDown, Package, Sprout, Tractor } from 'lucide-react'
+import { TrendingDown, DollarSign, Package, Sprout, Tractor, BarChart2 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Label,
 } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { KpiCard } from '@/components/ui/kpi-card'
+import { EmptyState } from '@/components/ui/empty-state'
 import { supabase } from '@/lib/supabase'
 import type { Talhao, Operacao, Estoque, Alerta, LancamentoFinanceiro, Safra, Insumo } from '@/lib/types'
 
@@ -123,8 +124,9 @@ export default function DashboardPage() {
           label={`Gasto em ${nomeMesAtual}`}
           value={formatBRL(totalGastoMes)}
           sub={`${lancamentosMes.length} lançamento${lancamentosMes.length !== 1 ? 's' : ''}`}
-          icon={<TrendingDown className="h-5 w-5" />}
-          iconBg="#FEF2F2" iconColor="#DC2626"
+          icon={totalGastoMes > 0 ? <TrendingDown className="h-5 w-5" /> : <DollarSign className="h-5 w-5" />}
+          iconBg={totalGastoMes > 0 ? '#FEF2F2' : '#F3F4F6'}
+          iconColor={totalGastoMes > 0 ? '#DC2626' : '#6B7280'}
           valueColor={totalGastoMes > 0 ? 'text-red-600' : undefined}
         />
         <KpiCard
@@ -163,9 +165,11 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             {opsPorTipo.length === 0 ? (
-              <div className="h-48 flex items-center justify-center text-sm text-muted-foreground">
-                Nenhuma operação registrada.
-              </div>
+              <EmptyState
+                icon={<BarChart2 className="h-6 w-6" />}
+                title="Nenhuma operação registrada"
+                description="Registre operações via WhatsApp ou manualmente para visualizar o gráfico."
+              />
             ) : (
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={opsPorTipo} barCategoryGap="30%">
@@ -305,7 +309,12 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent className="pt-0">
               {operacoes.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-4 text-center">Nenhuma operação registrada.</p>
+                <EmptyState
+                  size="sm"
+                  icon={<Tractor className="h-4 w-4" />}
+                  title="Nenhuma operação no campo"
+                  description="As operações aparecerão aqui conforme forem registradas."
+                />
               ) : operacoes.slice(0, 6).map((op, i) => (
                 <div key={op.id} className="flex items-start justify-between gap-3 py-2.5 text-sm"
                   style={i < Math.min(operacoes.length, 6) - 1 ? { borderBottom: '1px solid var(--border)' } : undefined}>

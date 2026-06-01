@@ -485,8 +485,15 @@ export default function EstoquePage() {
                     : 'text-right font-semibold'
                 return (
                   <TableRow key={item.id} className={linhaBg}>
-                    <TableCell className={`font-medium ${negativo ? 'font-bold' : ''}`}>
-                      {item.insumos.nome}
+                    <TableCell className={`font-medium max-w-[180px] ${negativo ? 'font-bold' : ''}`}>
+                      <Tooltip>
+                        <TooltipTrigger className="truncate block w-full text-left cursor-default bg-transparent border-0 p-0 font-[inherit]">
+                          {item.insumos.nome}
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs text-xs">
+                          {item.insumos.nome}
+                        </TooltipContent>
+                      </Tooltip>
                     </TableCell>
                     <TableCell>
                       <span className="text-xs text-muted-foreground">{formatTipoInsumo(item.insumos.tipo)}</span>

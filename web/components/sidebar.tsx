@@ -2,7 +2,7 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { LayoutDashboard, Package, Tractor, FileText, Bell, LogOut, CircleDollarSign, BarChart2, MapPin } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -28,6 +28,15 @@ export function Sidebar({ onClose }: SidebarProps = {}) {
   const pathname = usePathname()
   const router = useRouter()
   const mounted = useRef(false)
+  const [naoLidosCount, setNaoLidosCount] = useState(0)
+
+  useEffect(() => {
+    supabase
+      .from('alertas')
+      .select('*', { count: 'exact', head: true })
+      .eq('lido', false)
+      .then(({ count }) => setNaoLidosCount(count ?? 0))
+  }, [])
 
   useEffect(() => {
     if (!mounted.current) { mounted.current = true; return }
@@ -93,10 +102,22 @@ export function Sidebar({ onClose }: SidebarProps = {}) {
                   style={{ backgroundColor: '#8FB840' }}
                 />
               )}
-              <Icon
-                className={cn('h-[17px] w-[17px] shrink-0', active ? 'text-[#8FB840]' : 'text-white/40')}
-                aria-hidden="true"
-              />
+              {href === '/alertas' && naoLidosCount > 0 ? (
+                <span className="relative shrink-0">
+                  <Icon
+                    className={cn('h-[17px] w-[17px]', active ? 'text-[#8FB840]' : 'text-white/40')}
+                    aria-hidden="true"
+                  />
+                  <span className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-orange-500 flex items-center justify-center text-[9px] font-bold text-white leading-none">
+                    {naoLidosCount > 9 ? '9+' : naoLidosCount}
+                  </span>
+                </span>
+              ) : (
+                <Icon
+                  className={cn('h-[17px] w-[17px] shrink-0', active ? 'text-[#8FB840]' : 'text-white/40')}
+                  aria-hidden="true"
+                />
+              )}
               <span>{label}</span>
             </Link>
           )

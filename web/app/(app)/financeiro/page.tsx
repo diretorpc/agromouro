@@ -102,29 +102,33 @@ const CENTRO_CUSTO_STYLE: Record<string, string> = {
 }
 
 const CENTRO_CUSTO_COLOR: Record<string, string> = {
-  herbicida:          '#ef4444',
-  fungicida:          '#a855f7',
-  inseticida:         '#f97316',
-  adjuvante:          '#06b6d4',
-  biologico:          '#14b8a6',
-  fertilizante_n:     '#22c55e',
-  fertilizante_p:     '#16a34a',
-  fertilizante_k:     '#15803d',
-  fertilizante_outro: '#166534',
-  calcario:           '#78716c',
-  semente:            '#eab308',
-  combustivel:        '#3b82f6',
-  lubrificante:       '#2563eb',
-  peca_maquina:       '#6366f1',
-  servico:            '#ec4899',
-  frete:              '#64748b',
-  operacional:        '#6b7280',
-  rh:                 '#f43f5e',
-  outro:              '#9ca3af',
+  herbicida:          '#C05621',  // terracota — queimado, não alarme
+  fungicida:          '#6B21A8',  // roxo escuro
+  inseticida:         '#B91C1C',  // vermelho escuro
+  adjuvante:          '#0E7490',  // cyan profundo
+  biologico:          '#059669',  // verde esmeralda
+  fertilizante_n:     '#15803D',  // verde app
+  fertilizante_p:     '#166534',  // verde mais escuro
+  fertilizante_k:     '#14532D',  // verde floresta
+  fertilizante_outro: '#1A3D2B',  // verde bem escuro
+  calcario:           '#78716C',  // stone/mineral — perfeito
+  semente:            '#CA8A04',  // âmbar escuro
+  combustivel:        '#1D4ED8',  // azul cobalto
+  lubrificante:       '#1E3A5F',  // azul petróleo
+  peca_maquina:       '#374151',  // cinza grafite
+  servico:            '#9D174D',  // rosa escuro
+  frete:              '#475569',  // slate médio
+  operacional:        '#6B7280',  // cinza neutro
+  rh:                 '#9F1239',  // vermelho escuro
+  outro:              '#9CA3AF',  // cinza claro
 }
 
 function fmtBRL(value: number) {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+}
+
+function fmtBRLKpi(value: number) {
+  return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
 }
 
 function fmtDate(dateStr: string) {
@@ -397,6 +401,10 @@ export default function FinanceiroPage() {
   if (loading) return <PageSkeleton />
 
   const filtroAtivo = filtroMes !== 'todos' || filtroCentro !== 'todos'
+  const filtroMesLabel = filtroMes === 'todos'
+    ? 'Todos os meses'
+    : new Date(filtroMes + '-01').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+  const filtroCentroLabel = filtroCentro === 'todos' ? 'Todos os tipos' : tipoLabel(filtroCentro)
 
   return (
     <div className="p-6 space-y-6">
@@ -419,7 +427,7 @@ export default function FinanceiroPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold">{fmtBRL(totalGeral)}</p>
+            <p className="text-2xl font-bold">{fmtBRLKpi(totalGeral)}</p>
             <p className="text-xs text-muted-foreground mt-1">{itensFiltrados.length} item(ns) no período</p>
           </CardContent>
         </Card>
@@ -433,7 +441,7 @@ export default function FinanceiroPage() {
           <CardContent>
             {maiorCategoria ? (
               <>
-                <p className="text-2xl font-bold">{fmtBRL(maiorCategoria[1])}</p>
+                <p className="text-2xl font-bold">{fmtBRLKpi(maiorCategoria[1])}</p>
                 <p className="text-xs text-muted-foreground mt-1">{tipoLabel(maiorCategoria[0])}</p>
               </>
             ) : <p className="text-muted-foreground text-sm">—</p>}
@@ -514,7 +522,7 @@ export default function FinanceiroPage() {
           <div className="flex flex-wrap items-center gap-2">
             <Filter className="h-4 w-4 text-muted-foreground" />
             <Select value={filtroMes} onValueChange={v => { const val = v ?? 'todos'; setFiltroMes(val); setUrlParam('mes', val) }}>
-              <SelectTrigger className="w-44 h-9 text-sm"><SelectValue placeholder="Mês" /></SelectTrigger>
+              <SelectTrigger className="w-44 h-9 text-sm"><SelectValue>{filtroMesLabel}</SelectValue></SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos os meses</SelectItem>
                 {meses.map(m => (
@@ -525,7 +533,7 @@ export default function FinanceiroPage() {
               </SelectContent>
             </Select>
             <Select value={filtroCentro} onValueChange={v => { const val = v ?? 'todos'; setFiltroCentro(val); setUrlParam('centro', val) }}>
-              <SelectTrigger className="w-44 h-9 text-sm"><SelectValue placeholder="Centro de custo" /></SelectTrigger>
+              <SelectTrigger className="w-44 h-9 text-sm"><SelectValue>{filtroCentroLabel}</SelectValue></SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos os tipos</SelectItem>
                 {TIPOS.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
