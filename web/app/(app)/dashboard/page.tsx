@@ -48,8 +48,8 @@ export default function DashboardPage() {
   useEffect(() => {
     Promise.all([
       supabase.from('talhoes').select('id, nome, area_ha, cultura_atual, status').then(r => (r.data ?? []) as Talhao[]),
-      supabase.from('operacoes').select('id, talhao_id, safra_id, tipo, data, descricao, fonte, talhoes(nome)').then(r => (r.data ?? []) as Operacao[]),
-      supabase.from('estoque').select('id, insumo_id, quantidade_atual, quantidade_minima_alerta, preco_medio_unitario, insumos(id, nome, tipo, unidade)').then(r => (r.data ?? []) as Estoque[]),
+      supabase.from('operacoes').select('id, talhao_id, safra_id, tipo, data, descricao, fonte, talhoes(nome)').then(r => (r.data ?? []) as unknown as Operacao[]),
+      supabase.from('estoque').select('id, insumo_id, quantidade_atual, quantidade_minima_alerta, preco_medio_unitario, insumos(id, nome, tipo, unidade)').then(r => (r.data ?? []) as unknown as Estoque[]),
       supabase.from('alertas').select('id, tipo, titulo, mensagem, nivel, lido, enviado_whatsapp, created_at').then(r => (r.data ?? []) as Alerta[]),
       supabase.from('lancamentos_financeiros').select('*').then(r => (r.data ?? []) as LancamentoFinanceiro[]),
       supabase.from('safras').select('*, talhoes(area_ha)').then(r => (r.data ?? []) as Safra[]),
