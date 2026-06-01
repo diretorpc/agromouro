@@ -35,7 +35,7 @@ export function FazendaSwitcher() {
       <button
         onClick={() => setOpen(o => !o)}
         disabled={switching}
-        className="w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-[13px] font-semibold text-white/70 hover:text-white hover:bg-white/8 transition-all disabled:opacity-50"
+        className="w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-base font-bold text-white/70 hover:text-white hover:bg-white/8 transition-all disabled:opacity-50"
       >
         <span className="flex items-center gap-2 min-w-0">
           <span className="shrink-0">{ESTADO_ICON[fazendaAtiva.estado] ?? '🏡'}</span>
