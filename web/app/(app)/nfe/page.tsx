@@ -506,7 +506,7 @@ export default function NfePage() {
 
       {/* Dialog: Ver Itens */}
       <Dialog open={!!selected} onOpenChange={open => { if (!open) setSelected(null) }}>
-        <DialogContent className="max-w-3xl w-full">
+        <DialogContent className="sm:max-w-[800px]">
           <DialogHeader>
             <DialogTitle className="text-base">
               NF-e {selected?.numero}
@@ -515,7 +515,7 @@ export default function NfePage() {
               <p className="text-sm text-muted-foreground truncate">{selected.emitente_nome}</p>
             )}
           </DialogHeader>
-          <div className="max-h-[65vh] overflow-y-auto">
+          <div className="max-h-[65vh] overflow-y-auto overflow-x-hidden">
             {loadingItens ? (
               <div className="space-y-2 animate-pulse p-1">
                 {Array.from({ length: 3 }).map((_, i) => (
@@ -524,46 +524,51 @@ export default function NfePage() {
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
+                <Table className="table-fixed w-full">
+                  <colgroup>
+                    <col />
+                    <col className="w-[90px]" />
+                    <col className="w-[110px]" />
+                    <col className="w-[110px]" />
+                    <col className="w-[160px]" />
+                  </colgroup>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Descrição</TableHead>
+                      <TableHead className="text-right">Qtd.</TableHead>
+                      <TableHead className="text-right">Valor Unit.</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead>Insumo Vinculado</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {itens.length === 0 ? (
                       <TableRow>
-                        <TableHead className="min-w-[160px]">Descrição</TableHead>
-                        <TableHead className="text-right whitespace-nowrap">Qtd.</TableHead>
-                        <TableHead className="text-right whitespace-nowrap">Valor Unit.</TableHead>
-                        <TableHead className="text-right whitespace-nowrap">Total</TableHead>
-                        <TableHead className="min-w-[140px]">Insumo Vinculado</TableHead>
+                        <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
+                          Nenhum item encontrado.
+                        </TableCell>
                       </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {itens.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
-                            Nenhum item encontrado.
-                          </TableCell>
-                        </TableRow>
-                      ) : itens.map(item => (
-                        <TableRow key={item.id} className={!item.insumo_id ? 'bg-yellow-50/50' : ''}>
-                          <TableCell className="text-sm font-medium max-w-[200px]">
-                            <span className="block truncate" title={item.descricao}>{item.descricao}</span>
-                          </TableCell>
-                          <TableCell className="text-right text-sm whitespace-nowrap">{item.quantidade} {item.unidade}</TableCell>
-                          <TableCell className="text-right text-sm tabular-nums whitespace-nowrap">
-                            {item.valor_unitario.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                          </TableCell>
-                          <TableCell className="text-right text-sm font-semibold tabular-nums whitespace-nowrap">
-                            {item.valor_total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                          </TableCell>
-                          <TableCell className="text-sm max-w-[160px]">
-                            {item.insumos
-                              ? <span className="text-green-700 block truncate" title={item.insumos.nome}>{item.insumos.nome}</span>
-                              : <span className="text-yellow-600 text-xs">Não vinculado</span>}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
+                    ) : itens.map(item => (
+                      <TableRow key={item.id} className={!item.insumo_id ? 'bg-yellow-50/50' : ''}>
+                        <TableCell className="text-sm font-medium">
+                          <span className="block truncate" title={item.descricao}>{item.descricao}</span>
+                        </TableCell>
+                        <TableCell className="text-right text-sm">{item.quantidade} {item.unidade}</TableCell>
+                        <TableCell className="text-right text-sm tabular-nums">
+                          {item.valor_unitario.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                        </TableCell>
+                        <TableCell className="text-right text-sm font-semibold tabular-nums">
+                          {item.valor_total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {item.insumos
+                            ? <span className="text-green-700 block truncate" title={item.insumos.nome}>{item.insumos.nome}</span>
+                            : <span className="text-yellow-600 text-xs">Não vinculado</span>}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
                 {selected && (
                   <div className="flex justify-between text-sm border-t pt-3 px-1">
                     <span className="text-muted-foreground">Total da NF-e</span>
