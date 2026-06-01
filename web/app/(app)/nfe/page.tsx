@@ -527,10 +527,10 @@ export default function NfePage() {
                 <Table className="table-fixed w-full">
                   <colgroup>
                     <col />
-                    <col className="w-[90px]" />
-                    <col className="w-[110px]" />
-                    <col className="w-[110px]" />
-                    <col className="w-[160px]" />
+                    <col className="w-[80px]" />
+                    <col className="w-[100px]" />
+                    <col className="w-[100px]" />
+                    <col className="w-[200px]" />
                   </colgroup>
                   <TableHeader>
                     <TableRow>
@@ -560,9 +560,9 @@ export default function NfePage() {
                         <TableCell className="text-right text-sm font-semibold tabular-nums">
                           {item.valor_total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                         </TableCell>
-                        <TableCell className="text-sm">
+                        <TableCell className="text-sm overflow-hidden align-top whitespace-normal">
                           {item.insumos
-                            ? <span className="text-green-700 block truncate" title={item.insumos.nome}>{item.insumos.nome}</span>
+                            ? <span className="text-green-700 leading-snug">{item.insumos.nome}</span>
                             : <span className="text-yellow-600 text-xs">Não vinculado</span>}
                         </TableCell>
                       </TableRow>
