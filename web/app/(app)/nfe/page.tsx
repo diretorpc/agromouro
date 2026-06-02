@@ -9,7 +9,7 @@ function setUrlParam(key: string, value: string, dflt = 'todos') {
   else p.set(key, value)
   window.history.replaceState(null, '', p.toString() ? `?${p}` : window.location.pathname)
 }
-import { FileText, RefreshCw, Plus, Download, Upload, CircleDollarSign, Trash2, Search, Wallet, Hourglass, AlertCircle } from 'lucide-react'
+import { FileText, RefreshCw, Plus, Download, Upload, CircleDollarSign, Trash2, Search, Wallet, Hourglass, AlertCircle, XCircle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -24,6 +24,7 @@ import { Label } from '@/components/ui/label'
 import { KpiCard } from '@/components/ui/kpi-card'
 import { ActionMenu } from '@/components/ui/action-menu'
 import { supabase } from '@/lib/supabase'
+import { useFazenda } from '@/context/fazenda-context'
 import type { NotaFiscal, ItemNfe } from '@/lib/types'
 
 const STATUS_STYLE: Record<string, string> = {
@@ -117,6 +118,7 @@ ${itensXml}
 
 export default function NfePage() {
   const router = useRouter()
+  const { fazendaAtiva } = useFazenda()
   const [notas, setNotas] = useState<NotaFiscal[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<NotaFiscal | null>(null)
@@ -133,6 +135,7 @@ export default function NfePage() {
   const [addMode, setAddMode] = useState<'xml' | 'manual'>('xml')
   const [xmlPreview, setXmlPreview] = useState<ParsedNFe | null>(null)
   const [xmlError, setXmlError] = useState('')
+  const [addErro, setAddErro] = useState('')
   const [salvandoNF, setSalvandoNF] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const [manualForm, setManualForm] = useState({
@@ -226,12 +229,15 @@ export default function NfePage() {
   }
 
   async function handleSaveNF() {
+    if (!fazendaAtiva) return
     setSalvandoNF(true)
+    setAddErro('')
     try {
       if (addMode === 'xml' && xmlPreview) {
-        const { data: nota } = await supabase
+        const { data: nota, error: errNota } = await supabase
           .from('notas_fiscais')
           .insert({
+            fazenda_id: fazendaAtiva.id,
             numero: xmlPreview.numero,
             emitente_nome: xmlPreview.emitente_nome,
             emitente_cnpj: xmlPreview.emitente_cnpj,
@@ -241,10 +247,12 @@ export default function NfePage() {
           })
           .select()
           .single()
+        if (errNota) { setAddErro(errNota.message); return }
         if (nota && xmlPreview.itens.length > 0) {
-          await supabase.from('itens_nfe').insert(
+          const { error: errItens } = await supabase.from('itens_nfe').insert(
             xmlPreview.itens.map(item => ({
               nota_fiscal_id: nota.id,
+              fazenda_id: fazendaAtiva.id,
               descricao: item.descricao,
               quantidade: item.quantidade,
               unidade: item.unidade,
@@ -253,9 +261,11 @@ export default function NfePage() {
               insumo_id: null,
             }))
           )
+          if (errItens) { setAddErro(errItens.message); return }
         }
       } else if (addMode === 'manual') {
-        await supabase.from('notas_fiscais').insert({
+        const { error: errManual } = await supabase.from('notas_fiscais').insert({
+          fazenda_id: fazendaAtiva.id,
           numero: manualForm.numero.trim(),
           emitente_nome: manualForm.emitente_nome.trim(),
           emitente_cnpj: manualForm.emitente_cnpj.trim(),
@@ -263,14 +273,15 @@ export default function NfePage() {
           valor_total: parseFloat(manualForm.valor_total) || 0,
           status: 'recebida',
         })
+        if (errManual) { setAddErro(errManual.message); return }
       }
-    } finally {
-      setSalvandoNF(false)
       setAddDialog(false)
       setXmlPreview(null)
       setXmlError('')
       setManualForm({ numero: '', emitente_nome: '', emitente_cnpj: '', data_emissao: '', valor_total: '' })
       loadNotas()
+    } finally {
+      setSalvandoNF(false)
     }
   }
 
@@ -307,7 +318,7 @@ export default function NfePage() {
         </div>
         <Button
           size="sm"
-          onClick={() => { setAddDialog(true); setAddMode('xml'); setXmlPreview(null); setXmlError('') }}
+          onClick={() => { setAddDialog(true); setAddMode('xml'); setXmlPreview(null); setXmlError(''); setAddErro('') }}
           className="shrink-0"
         >
           <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
@@ -425,7 +436,7 @@ export default function NfePage() {
                       </div>
                       <Button
                         size="sm"
-                        onClick={() => { setAddDialog(true); setAddMode('xml'); setXmlPreview(null); setXmlError('') }}
+                        onClick={() => { setAddDialog(true); setAddMode('xml'); setXmlPreview(null); setXmlError(''); setAddErro('') }}
                       >
                         <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
                         Adicionar NF
@@ -607,7 +618,7 @@ export default function NfePage() {
       </Dialog>
 
       {/* Dialog: Adicionar NF */}
-      <Dialog open={addDialog} onOpenChange={open => { if (!open) setAddDialog(false) }}>
+      <Dialog open={addDialog} onOpenChange={open => { if (!open) { setAddDialog(false); setAddErro('') } }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Adicionar Nota Fiscal</DialogTitle>
@@ -617,7 +628,7 @@ export default function NfePage() {
           <div className="flex gap-1 p-1 bg-muted rounded-lg">
             <button
               type="button"
-              onClick={() => { setAddMode('xml'); setXmlPreview(null); setXmlError('') }}
+              onClick={() => { setAddMode('xml'); setXmlPreview(null); setXmlError(''); setAddErro('') }}
               className={`flex-1 flex items-center justify-center gap-2 rounded-md py-1.5 text-sm font-medium transition-all ${addMode === 'xml' ? 'bg-white shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
             >
               <Upload className="h-3.5 w-3.5" />
@@ -745,11 +756,18 @@ export default function NfePage() {
             </div>
           )}
 
+          {addErro && (
+            <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+              <XCircle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
+              <span>{addErro}</span>
+            </div>
+          )}
+
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddDialog(false)}>
+            <Button variant="outline" onClick={() => { setAddDialog(false); setAddErro('') }}>
               Cancelar
             </Button>
-            <Button onClick={handleSaveNF} disabled={salvandoNF || !canSave}>
+            <Button onClick={handleSaveNF} disabled={salvandoNF || !canSave || !fazendaAtiva}>
               {salvandoNF ? 'Salvando…' : 'Importar'}
             </Button>
           </DialogFooter>
