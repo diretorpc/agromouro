@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { TrendingDown, DollarSign, Package, Sprout, Tractor, BarChart2 } from 'lucide-react'
+import { TrendingDown, DollarSign, Package, Sprout, Tractor, BarChart2, CloudRain, Sun, Cloud, TrendingUp, AlertTriangle, Wind, Droplets, CloudDrizzle, MapPin } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Label,
@@ -10,7 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { KpiCard } from '@/components/ui/kpi-card'
 import { EmptyState } from '@/components/ui/empty-state'
 import { supabase } from '@/lib/supabase'
-import type { Talhao, Operacao, Estoque, Alerta, LancamentoFinanceiro, Safra, Insumo } from '@/lib/types'
+import { useFazenda } from '@/context/fazenda-context'
+import type { Talhao, Operacao, Estoque, Alerta, LancamentoFinanceiro, Safra, Insumo, Cotacao, ClimaDay } from '@/lib/types'
 
 // ─── helpers ───────────────────────────────────────────────
 function formatBRL(v: number) {
@@ -36,6 +37,8 @@ function getCultureColor(name: string, index: number): string {
 
 // ─── Página ────────────────────────────────────────────────
 export default function DashboardPage() {
+  const { fazendaAtiva } = useFazenda()
+
   const [talhoes, setTalhoes] = useState<Talhao[]>([])
   const [operacoes, setOperacoes] = useState<Operacao[]>([])
   const [estoque, setEstoque] = useState<Estoque[]>([])
@@ -43,9 +46,14 @@ export default function DashboardPage() {
   const [lancamentos, setLancamentos] = useState<LancamentoFinanceiro[]>([])
   const [safras, setSafras] = useState<Safra[]>([])
   const [insumos, setInsumos] = useState<Insumo[]>([])
+  const [cotacoes, setCotacoes] = useState<Cotacao[]>([])
+  const [clima, setClima] = useState<ClimaDay[] | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    const twoDaysAgo = new Date()
+    twoDaysAgo.setDate(twoDaysAgo.getDate() - 2)
+
     Promise.all([
       supabase.from('talhoes').select('id, nome, area_ha, cultura_atual, status').then(r => (r.data ?? []) as Talhao[]),
       supabase.from('operacoes').select('id, talhao_id, safra_id, tipo, data, descricao, fonte, talhoes(nome)').then(r => (r.data ?? []) as unknown as Operacao[]),
@@ -54,12 +62,67 @@ export default function DashboardPage() {
       supabase.from('lancamentos_financeiros').select('*').then(r => (r.data ?? []) as LancamentoFinanceiro[]),
       supabase.from('safras').select('*, talhoes(area_ha)').then(r => (r.data ?? []) as Safra[]),
       supabase.from('insumos').select('id, nome, tipo, unidade').then(r => (r.data ?? []) as Insumo[]),
-    ]).then(([t, o, e, a, l, s, ins]) => {
+      supabase.from('cotacoes_commodities').select('commodity, preco_rs, data')
+        .gte('data', twoDaysAgo.toISOString().slice(0, 10))
+        .order('data', { ascending: false })
+        .then(r => (r.data ?? []) as Cotacao[]),
+    ]).then(([t, o, e, a, l, s, ins, cot]) => {
       setTalhoes(t); setOperacoes(o); setEstoque(e)
       setAlertas(a); setLancamentos(l); setSafras(s); setInsumos(ins)
+      setCotacoes(cot)
       setLoading(false)
     })
   }, [])
+
+  // Busca clima quando a fazenda ativa estiver disponível
+  useEffect(() => {
+    if (!fazendaAtiva?.id) return
+
+    async function carregarClima() {
+      const { data: fazenda } = await supabase
+        .from('fazendas')
+        .select('lat, lng')
+        .eq('id', fazendaAtiva!.id)
+        .single()
+
+      const lat = (fazenda as { lat?: number | null } | null)?.lat
+      const lng = (fazenda as { lng?: number | null } | null)?.lng
+      if (!lat || !lng) return
+
+      try {
+        const url = [
+          'https://api.open-meteo.com/v1/forecast',
+          `?latitude=${lat}&longitude=${lng}`,
+          '&daily=temperature_2m_min,temperature_2m_max,precipitation_sum,precipitation_probability_max,windspeed_10m_max',
+          '&forecast_days=5&timezone=America%2FSao_Paulo',
+        ].join('')
+
+        const res = await fetch(url)
+        if (!res.ok) return
+
+        const json = await res.json()
+        const {
+          time,
+          temperature_2m_min, temperature_2m_max,
+          precipitation_sum, precipitation_probability_max,
+          windspeed_10m_max,
+        } = json.daily
+
+        setClima((time as string[]).map((date: string, i: number) => ({
+          date,
+          tempMin:                  temperature_2m_min[i]         as number,
+          tempMax:                  temperature_2m_max[i]         as number,
+          precipitation:            precipitation_sum[i]          as number,
+          precipitationProbability: precipitation_probability_max[i] as number,
+          windspeed:                windspeed_10m_max[i]          as number,
+        })))
+      } catch {
+        // falha silenciosa — card mostra estado vazio
+      }
+    }
+
+    carregarClima()
+  }, [fazendaAtiva?.id])
 
   // ── Métricas dos 4 KPIs ──
   // 1. Total gasto no mês atual (calendar month)
@@ -108,6 +171,12 @@ export default function DashboardPage() {
 
   if (loading) return <DashboardSkeleton />
 
+  // Última cotação por commodity
+  const cotacaoMap = cotacoes.reduce<Record<string, Cotacao>>((acc, c) => {
+    if (!acc[c.commodity]) acc[c.commodity] = c
+    return acc
+  }, {})
+
   void alertas; void safras
 
   return (
@@ -115,6 +184,12 @@ export default function DashboardPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
         <p className="text-sm text-muted-foreground mt-1 font-medium">Visão geral das suas operações agrícolas</p>
+      </div>
+
+      {/* Cards de clima + cotações */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ClimaCard clima={clima} fazenda={fazendaAtiva} />
+        <CotacoesCard cotacaoMap={cotacaoMap} />
       </div>
 
       {/* KPIs principais — 4 cards em fileira única */}
@@ -336,6 +411,185 @@ export default function DashboardPage() {
   )
 }
 
+
+// ─── Card Clima ────────────────────────────────────────────
+interface FazendaBasic { nome: string; estado: string; municipio?: string | null }
+
+function climaIcon(prob: number, tempMin: number, size: 'sm' | 'lg' | 'xl' = 'sm') {
+  const cls = size === 'xl' ? 'h-14 w-14' : size === 'lg' ? 'h-8 w-8' : 'h-5 w-5'
+  if (tempMin < 2)   return <AlertTriangle className={`${cls} text-red-500`} />
+  if (prob > 60)     return <CloudRain     className={`${cls} text-blue-500`} />
+  if (prob > 25)     return <CloudDrizzle  className={`${cls} text-sky-400`}  />
+  if (prob > 10)     return <Cloud         className={`${cls} text-slate-400`} />
+  return <Sun className={`${cls} text-yellow-400`} />
+}
+
+function climaLabel(prob: number, tempMin: number): string {
+  if (tempMin < 2) return 'Risco de geada'
+  if (prob > 60)   return 'Chuvoso'
+  if (prob > 25)   return 'Pancadas'
+  if (prob > 10)   return 'Nublado'
+  return 'Ensolarado'
+}
+
+function ClimaCard({ clima, fazenda }: { clima: ClimaDay[] | null; fazenda: FazendaBasic | null }) {
+  const hoje     = clima?.[0]
+  const previsao = clima?.slice(0, 5) ?? []
+
+  const locLabel = fazenda
+    ? (fazenda.municipio && fazenda.municipio !== 'A preencher'
+        ? `${fazenda.municipio}, ${fazenda.estado}`
+        : `${fazenda.nome}, ${fazenda.estado}`)
+    : 'Previsão do tempo'
+
+  return (
+    <Card className="border-0 shadow-sm overflow-hidden">
+      <CardContent className="p-0">
+        {!clima ? (
+          <div className="h-36 flex items-center justify-center text-sm text-muted-foreground animate-pulse px-6">
+            Carregando previsão…
+          </div>
+        ) : !hoje ? (
+          <div className="h-36 flex items-center justify-center text-sm text-muted-foreground px-6 text-center">
+            Coordenadas não configuradas para esta fazenda.
+          </div>
+        ) : (
+          <>
+            {/* ── Seção principal ── */}
+            <div className="flex items-center justify-between px-5 pt-5 pb-4">
+              {/* Esquerda: ícone + condição */}
+              <div className="flex items-center gap-4">
+                {climaIcon(hoje.precipitationProbability, hoje.tempMin, 'xl')}
+                <div>
+                  <p className="text-3xl font-bold leading-tight">
+                    {climaLabel(hoje.precipitationProbability, hoje.tempMin)}
+                  </p>
+                  <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1">
+                    <MapPin className="h-3.5 w-3.5 shrink-0" />{locLabel}
+                  </p>
+                  <div className="flex items-center gap-4 mt-2">
+                    <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                      <Droplets className="h-4 w-4 text-blue-500 shrink-0" />
+                      {hoje.precipitationProbability}% chuva
+                    </span>
+                    <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                      <Wind className="h-4 w-4 shrink-0" />
+                      {Math.round(hoje.windspeed)} km/h
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Direita: temperatura */}
+              <div className="text-right shrink-0 ml-4">
+                <p className="text-6xl font-bold leading-none tabular-nums">
+                  {Math.round(hoje.tempMax)}°
+                </p>
+                <p className="text-sm text-muted-foreground mt-2 tabular-nums">
+                  {Math.round(hoje.tempMax)}° / {Math.round(hoje.tempMin)}°C
+                </p>
+              </div>
+            </div>
+
+            {/* ── Divisor ── */}
+            <div className="h-px bg-border mx-4" />
+
+            {/* ── Previsão 5 dias ── */}
+            <div className="flex px-3 py-3">
+              {previsao.map(d => {
+                const dayAbbr = new Date(d.date + 'T12:00:00')
+                  .toLocaleDateString('pt-BR', { weekday: 'short' })
+                return (
+                  <div key={d.date} className="flex-1 flex flex-col items-center gap-1">
+                    <p className="text-xs font-semibold text-muted-foreground capitalize">{dayAbbr}</p>
+                    {climaIcon(d.precipitationProbability, d.tempMin, 'sm')}
+                    <p className="text-base font-bold tabular-nums">{Math.round(d.tempMax)}°</p>
+                    <p className="text-xs text-muted-foreground tabular-nums">{Math.round(d.tempMin)}°</p>
+                    <div className="flex items-center gap-0.5 mt-0.5">
+                      <Droplets className="h-3 w-3 text-blue-400 shrink-0" />
+                      <span className="text-xs text-muted-foreground">{d.precipitationProbability}%</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* ── Fonte ── */}
+            <div className="flex justify-end px-4 pb-2.5">
+              <a
+                href="https://open-meteo.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+              >
+                Dados: Open-Meteo ↗
+              </a>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ─── Card Cotações ──────────────────────────────────────────
+const COMMODITY_LABELS: Record<string, string> = {
+  soja:  'Soja',
+  milho: 'Milho',
+  trigo: 'Trigo',
+}
+
+function CotacoesCard({ cotacaoMap }: { cotacaoMap: Record<string, Cotacao> }) {
+  const commodities = ['soja', 'milho', 'trigo']
+  const temDados = commodities.some(c => !!cotacaoMap[c])
+
+  const hoje = new Date().toISOString().slice(0, 10)
+  const desatualizados = temDados && commodities.some(c => cotacaoMap[c] && cotacaoMap[c].data < hoje)
+
+  return (
+    <Card className="border-0 shadow-sm">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+          Cotações CEPEA
+          {desatualizados && (
+            <span className="text-xs text-amber-600 normal-case font-medium">desatualizado</span>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {!temDados ? (
+          <div className="h-20 flex items-center justify-center text-sm text-muted-foreground">
+            Aguardando primeira cotação (job às 06:30).
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-3">
+            {commodities.map(c => {
+              const cot = cotacaoMap[c]
+              return (
+                <div key={c} className="bg-muted/40 rounded-lg p-3 text-center">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    {COMMODITY_LABELS[c]}
+                  </p>
+                  {cot ? (
+                    <>
+                      <p className="text-lg font-bold mt-1 flex items-center justify-center gap-0.5">
+                        <TrendingUp className="h-3.5 w-3.5 text-green-600 shrink-0" />
+                        {cot.preco_rs.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </p>
+                      <p className="text-xs text-muted-foreground">R$/sc · {cot.data.split('-').reverse().join('/')}</p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground mt-2">—</p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
 
 function FonteLabel({ fonte }: { fonte: string }) {
   const map: Record<string, string> = { whatsapp: '💬', manual: '✏️', jd: '🚜', nfe: '📄' }

@@ -100,3 +100,18 @@ export interface Alerta {
   enviado_whatsapp: boolean
   created_at: string
 }
+
+export interface Cotacao {
+  commodity: string
+  preco_rs: number
+  data: string
+}
+
+export interface ClimaDay {
+  date: string
+  tempMin: number
+  tempMax: number
+  precipitation: number
+  precipitationProbability: number
+  windspeed: number
+}
