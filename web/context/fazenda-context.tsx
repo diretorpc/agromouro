@@ -11,6 +11,7 @@ interface Fazenda {
   nome: string
   codigo: string
   estado: string
+  municipio?: string | null
 }
 
 interface FazendaContextType {
@@ -37,7 +38,7 @@ export function FazendaProvider({ children }: { children: ReactNode }) {
 
       const { data } = await supabase
         .from('fazendas')
-        .select('id, nome, codigo, estado')
+        .select('id, nome, codigo, estado, municipio')
         .order('estado')
 
       if (!data || data.length === 0) { setLoading(false); return }
