@@ -40,7 +40,7 @@
 **Files:**
 - Create: `supabase/migrations/002_cartoes.sql`
 
-- [ ] **Step 1: Criar o arquivo de migration**
+- [x] **Step 1: Criar o arquivo de migration**
 
 ```sql
 -- ============================================================
@@ -84,7 +84,7 @@ CREATE POLICY "cartoes_tenant" ON cartoes
   WITH CHECK (auth.uid() IS NOT NULL AND fazenda_id = get_fazenda_ativa_id());
 ```
 
-- [ ] **Step 2: Executar no Supabase SQL Editor**
+- [x] **Step 2: Executar no Supabase SQL Editor**
 
 Acesse o Supabase → SQL Editor → cole o conteúdo acima → Run.
 
@@ -96,7 +96,7 @@ AND column_name IN ('cartao_id', 'origem', 'dedup_hash');
 -- Deve retornar 3 linhas
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add supabase/migrations/002_cartoes.sql
@@ -116,7 +116,7 @@ O arquivo XLSX real do BB tem esta estrutura (confirmada na análise):
 - `Valor` já é `number` — sem parsing de formato brasileiro
 - `Dia`, `Mês`, `Ano` são `number` — reconstrução: `new Date(Ano, Mês-1, Dia)`
 
-- [ ] **Step 1: Criar o serviço xlsxParser.ts**
+- [x] **Step 1: Criar o serviço xlsxParser.ts**
 
 ```typescript
 import * as XLSX from 'xlsx'
@@ -173,7 +173,7 @@ export function parseXLSX(buffer: Buffer): TransacaoExtrato[] {
 }
 ```
 
-- [ ] **Step 2: Verificar que compila sem erro**
+- [x] **Step 2: Verificar que compila sem erro**
 
 ```bash
 cd api
@@ -201,7 +201,7 @@ Primeira: {
 Titulares: [ 'CC Matheus', 'CC Alexandre', 'CC Marcia', 'CC Ivan' ]
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add api/src/services/xlsxParser.ts
@@ -215,7 +215,7 @@ git commit -m "feat(cartoes): serviço xlsxParser para formato BB real"
 **Files:**
 - Create: `api/src/routes/cartoes.ts`
 
-- [ ] **Step 1: Criar o arquivo de routes com CRUD**
+- [x] **Step 1: Criar o arquivo de routes com CRUD**
 
 ```typescript
 import { Router } from 'express'
@@ -327,7 +327,7 @@ cartaoRoutes.delete('/:id', async (req, res, next) => {
 
 > ⚠️ **Ainda não fechar o arquivo** — as tasks 4 e 5 adicionam mais routes no mesmo arquivo.
 
-- [ ] **Step 2: Commit parcial**
+- [x] **Step 2: Commit parcial**
 
 ```bash
 git add api/src/routes/cartoes.ts
@@ -341,7 +341,7 @@ git commit -m "feat(cartoes): routes CRUD (GET, POST, PUT, DELETE)"
 **Files:**
 - Modify: `api/src/routes/cartoes.ts` (continuar o mesmo arquivo)
 
-- [ ] **Step 1: Adicionar route `POST /importar-preview` ao arquivo cartoes.ts**
+- [x] **Step 1: Adicionar route `POST /importar-preview` ao arquivo cartoes.ts**
 
 Append no final do arquivo (antes do `export`):
 
@@ -430,7 +430,7 @@ cartaoRoutes.post('/importar-preview', async (req, res, next) => {
 })
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add api/src/routes/cartoes.ts
@@ -444,7 +444,7 @@ git commit -m "feat(cartoes): route importar-preview (parse XLSX + dedup check)"
 **Files:**
 - Modify: `api/src/routes/cartoes.ts` (continuar o mesmo arquivo)
 
-- [ ] **Step 1: Adicionar as 2 routes finais ao arquivo cartoes.ts**
+- [x] **Step 1: Adicionar as 2 routes finais ao arquivo cartoes.ts**
 
 Append no final:
 
@@ -539,7 +539,7 @@ cartaoRoutes.post('/lancamento', async (req, res, next) => {
 })
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add api/src/routes/cartoes.ts
@@ -553,7 +553,7 @@ git commit -m "feat(cartoes): routes confirmar-importacao + lancamento manual"
 **Files:**
 - Modify: `api/src/index.ts`
 
-- [ ] **Step 1: Adicionar o import no topo do index.ts**
+- [x] **Step 1: Adicionar o import no topo do index.ts**
 
 Após a linha `import { alertaRoutes } from './routes/alertas'`, adicionar:
 
@@ -561,7 +561,7 @@ Após a linha `import { alertaRoutes } from './routes/alertas'`, adicionar:
 import { cartaoRoutes }  from './routes/cartoes'
 ```
 
-- [ ] **Step 2: Registrar a rota após as outras rotas protegidas**
+- [x] **Step 2: Registrar a rota após as outras rotas protegidas**
 
 Após a linha `app.use('/alertas',   requireAuth, alertaRoutes)`, adicionar:
 
@@ -569,7 +569,7 @@ Após a linha `app.use('/alertas',   requireAuth, alertaRoutes)`, adicionar:
 app.use('/cartoes',   requireAuth, cartaoRoutes)
 ```
 
-- [ ] **Step 3: Ajustar limite do JSON para uploads base64 (XLSX ~80KB)**
+- [x] **Step 3: Ajustar limite do JSON para uploads base64 (XLSX ~80KB)**
 
 Localizar a linha:
 ```typescript
@@ -583,7 +583,7 @@ app.use(express.json({ limit: '2mb' }))
 
 > Justificativa: upload base64 de XLSX com 458 linhas fica em ~80KB. O limite de 100KB seria insuficiente. 2MB é seguro e cobre arquivos maiores no futuro sem exagero.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add api/src/index.ts
@@ -672,8 +672,8 @@ git push origin HEAD
 
 ## Checklist de conclusão do Milestone 1
 
-- [ ] Migration executada no Supabase sem erros — tabela `cartoes` existe + 3 colunas em `lancamentos_financeiros`
-- [ ] `parseXLSX` retorna 458 transações com dados corretos para o arquivo real
+- [x] Migration executada no Supabase sem erros — tabela `cartoes` existe + 3 colunas em `lancamentos_financeiros`
+- [x] `parseXLSX` retorna 458 transações com dados corretos para o arquivo real
 - [ ] `GET /cartoes` retorna lista vazia (sem cartões cadastrados ainda)
 - [ ] `POST /cartoes` cria cartão com `fazenda_id` correto
 - [ ] `POST /cartoes/importar-preview` retorna 458 transações agrupadas por 4 titulares
