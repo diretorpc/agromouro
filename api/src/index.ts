@@ -8,6 +8,7 @@ import { talhaoRoutes }   from './routes/talhoes'
 import { estoqueRoutes }  from './routes/estoque'
 import { operacaoRoutes } from './routes/operacoes'
 import { alertaRoutes }   from './routes/alertas'
+import { cartaoRoutes }   from './routes/cartoes'
 import { whatsappWebhook }   from './webhooks/whatsapp'
 import { nfeWebhook }        from './webhooks/nfe'
 import { nfeEmailWebhook }   from './webhooks/nfeEmailWebhook'
@@ -96,7 +97,7 @@ app.use(requestLogger)
 // ─── Body parsing — limite alto SOMENTE para webhooks (NF-e XMLs são grandes) ─
 app.use('/webhook/nfe-email', express.raw({ type: '*/*', limit: '5mb' }))
 app.use('/webhook', express.json({ limit: '5mb' }))
-app.use(express.json({ limit: '100kb' }))
+app.use(express.json({ limit: '2mb' }))
 
 // ─── Health check — público, sem auth ────────────────────────────────────────
 app.get('/health', (_req, res) => {
@@ -108,6 +109,7 @@ app.use('/talhoes',   requireAuth, talhaoRoutes)
 app.use('/estoque',   requireAuth, estoqueRoutes)
 app.use('/operacoes', requireAuth, operacaoRoutes)
 app.use('/alertas',   requireAuth, alertaRoutes)
+app.use('/cartoes',   requireAuth, cartaoRoutes)
 
 // ─── Admin — trigger manual de jobs (requer autenticação) ────────────────────
 const adminLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 3, standardHeaders: true, legacyHeaders: false })
