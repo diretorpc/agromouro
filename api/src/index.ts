@@ -16,6 +16,7 @@ import { requestLogger }   from './middleware/requestLogger'
 import { requireAuth }          from './middleware/auth'
 import { validateNfeWebhook, validateZapiWebhook, validateN8nWebhook } from './middleware/validateWebhook'
 import { iniciarJobs }     from './jobs'
+import { buscarCotacoes }  from './jobs/cotacoes'
 
 const app  = express()
 const PORT = process.env.PORT || 3001
@@ -107,6 +108,24 @@ app.use('/talhoes',   requireAuth, talhaoRoutes)
 app.use('/estoque',   requireAuth, estoqueRoutes)
 app.use('/operacoes', requireAuth, operacaoRoutes)
 app.use('/alertas',   requireAuth, alertaRoutes)
+
+// ─── Admin — trigger manual de jobs (requer autenticação) ────────────────────
+const adminLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 3, standardHeaders: true, legacyHeaders: false })
+let cotacoesInFlight = false
+
+app.post('/admin/run-cotacoes', requireAuth, adminLimiter, async (_req, res) => {
+  if (cotacoesInFlight) {
+    res.status(429).json({ ok: false, message: 'Job já está em execução, aguarde.' })
+    return
+  }
+  cotacoesInFlight = true
+  res.json({ ok: true, message: 'Job iniciado.' })
+  try {
+    await buscarCotacoes()
+  } finally {
+    cotacoesInFlight = false
+  }
+})
 
 // ─── Webhooks externos — rate limit próprio, validação de origem no handler ───
 app.use('/webhook/whatsapp',   webhookLimiter, validateZapiWebhook, whatsappWebhook)

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { TrendingDown, DollarSign, Package, Sprout, Tractor, BarChart2, CloudRain, Sun, Cloud, TrendingUp, AlertTriangle, Wind, Droplets, CloudDrizzle, MapPin } from 'lucide-react'
+import { TrendingDown, DollarSign, Package, Sprout, Tractor, BarChart2, CloudRain, Sun, Cloud, TrendingUp, AlertTriangle, Wind, Droplets, CloudDrizzle, MapPin, RefreshCw } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Label,
@@ -189,7 +189,14 @@ export default function DashboardPage() {
       {/* Cards de clima + cotações */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ClimaCard clima={clima} fazenda={fazendaAtiva} />
-        <CotacoesCard cotacaoMap={cotacaoMap} />
+        <CotacoesCard cotacaoMap={cotacaoMap} onCotacoesAtualizadas={() => {
+          const twoDaysAgo = new Date()
+          twoDaysAgo.setDate(twoDaysAgo.getDate() - 2)
+          supabase.from('cotacoes_commodities').select('commodity, preco_rs, data')
+            .gte('data', twoDaysAgo.toISOString().slice(0, 10))
+            .order('data', { ascending: false })
+            .then(r => setCotacoes((r.data ?? []) as Cotacao[]))
+        }} />
       </div>
 
       {/* KPIs principais — 4 cards em fileira única */}
@@ -539,27 +546,74 @@ const COMMODITY_LABELS: Record<string, string> = {
   trigo: 'Trigo',
 }
 
-function CotacoesCard({ cotacaoMap }: { cotacaoMap: Record<string, Cotacao> }) {
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
+
+function CotacoesCard({ cotacaoMap, onCotacoesAtualizadas }: {
+  cotacaoMap: Record<string, Cotacao>
+  onCotacoesAtualizadas: () => void
+}) {
   const commodities = ['soja', 'milho', 'trigo']
   const temDados = commodities.some(c => !!cotacaoMap[c])
+  const [rodando, setRodando] = useState(false)
+  const [feedback, setFeedback] = useState<{ tipo: 'ok' | 'erro'; msg: string } | null>(null)
 
   const hoje = new Date().toISOString().slice(0, 10)
   const desatualizados = temDados && commodities.some(c => cotacaoMap[c] && cotacaoMap[c].data < hoje)
 
+  async function rodarJob() {
+    setRodando(true)
+    setFeedback(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(`${API_URL}/admin/run-cotacoes`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session?.access_token ?? ''}` },
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        setFeedback({ tipo: 'erro', msg: json.message ?? `Erro ${res.status}` })
+        return
+      }
+      setFeedback({ tipo: 'ok', msg: 'Job concluído! Atualizando…' })
+      // aguarda 2s para o Supabase persistir e recarrega
+      setTimeout(() => { onCotacoesAtualizadas(); setFeedback(null) }, 2000)
+    } catch (e) {
+      setFeedback({ tipo: 'erro', msg: e instanceof Error ? e.message : 'Erro de rede' })
+    } finally {
+      setRodando(false)
+    }
+  }
+
   return (
     <Card className="border-0 shadow-sm">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-          Cotações CEPEA
-          {desatualizados && (
-            <span className="text-xs text-amber-600 normal-case font-medium">desatualizado</span>
-          )}
-        </CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+            Cotações CEPEA
+            {desatualizados && (
+              <span className="text-xs text-amber-600 normal-case font-medium">desatualizado</span>
+            )}
+          </CardTitle>
+          <button
+            onClick={rodarJob}
+            disabled={rodando}
+            title="Buscar cotações agora"
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40 transition-colors"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${rodando ? 'animate-spin' : ''}`} />
+            {rodando ? 'Buscando…' : 'Atualizar'}
+          </button>
+        </div>
       </CardHeader>
       <CardContent>
+        {feedback && (
+          <p className={`text-xs mb-3 px-2 py-1.5 rounded ${feedback.tipo === 'ok' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+            {feedback.msg}
+          </p>
+        )}
         {!temDados ? (
           <div className="h-20 flex items-center justify-center text-sm text-muted-foreground">
-            Aguardando primeira cotação (job às 06:30).
+            {rodando ? 'Buscando cotações na CEPEA…' : 'Aguardando primeira cotação — clique em Atualizar.'}
           </div>
         ) : (
           <div className="grid grid-cols-3 gap-3">
