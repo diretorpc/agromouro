@@ -1,12 +1,12 @@
-import http from 'http'
+import https from 'https'
 import { supabase } from '../services/supabase'
 
 const SCRAPERAPI_KEY = process.env.SCRAPERAPI_KEY ?? ''
 
 function scraperGet(targetUrl: string): Promise<string> {
-  const apiUrl = `http://api.scraperapi.com?api_key=${SCRAPERAPI_KEY}&url=${encodeURIComponent(targetUrl)}&render=true&country_code=br`
+  const apiUrl = `https://api.scraperapi.com?api_key=${SCRAPERAPI_KEY}&url=${encodeURIComponent(targetUrl)}&render=true&country_code=br`
   return new Promise((resolve, reject) => {
-    const req = http.get(apiUrl, { timeout: 60_000 }, res => {
+    const req = https.get(apiUrl, { timeout: 60_000 }, res => {
       const chunks: Buffer[] = []
       res.on('data', (chunk: Buffer) => chunks.push(chunk))
       res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')))
