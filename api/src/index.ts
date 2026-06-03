@@ -16,6 +16,7 @@ import { requestLogger }   from './middleware/requestLogger'
 import { requireAuth }          from './middleware/auth'
 import { validateNfeWebhook, validateZapiWebhook, validateN8nWebhook } from './middleware/validateWebhook'
 import { iniciarJobs }     from './jobs'
+import { buscarCotacoes }  from './jobs/cotacoes'
 
 const app  = express()
 const PORT = process.env.PORT || 3001
@@ -107,6 +108,12 @@ app.use('/talhoes',   requireAuth, talhaoRoutes)
 app.use('/estoque',   requireAuth, estoqueRoutes)
 app.use('/operacoes', requireAuth, operacaoRoutes)
 app.use('/alertas',   requireAuth, alertaRoutes)
+
+// ─── Admin — trigger manual de jobs (requer autenticação) ────────────────────
+app.post('/admin/run-cotacoes', requireAuth, async (_req, res) => {
+  res.json({ ok: true, message: 'Job iniciado em background' })
+  await buscarCotacoes()
+})
 
 // ─── Webhooks externos — rate limit próprio, validação de origem no handler ───
 app.use('/webhook/whatsapp',   webhookLimiter, validateZapiWebhook, whatsappWebhook)
