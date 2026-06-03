@@ -210,6 +210,18 @@ cartaoRoutes.post('/confirmar-importacao', async (req, res, next) => {
       return res.status(400).json({ error: 'Nenhuma transação selecionada para importar' })
     }
 
+    // Validar que todos os cartao_ids pertencem à fazenda do caller (previne IDOR)
+    const cartaoIdsSolicitados = [...new Set(selecionados.map(i => i.cartao_id))]
+    const { data: cartoesValidos } = await supabase
+      .from('cartoes')
+      .select('id')
+      .eq('fazenda_id', fazendaId)
+      .in('id', cartaoIdsSolicitados)
+    const validSet = new Set((cartoesValidos ?? []).map(c => c.id))
+    if (selecionados.some(i => !validSet.has(i.cartao_id))) {
+      return res.status(403).json({ error: 'cartao_id inválido ou não pertence à fazenda' })
+    }
+
     const registros = selecionados.map(i => ({
       data:       i.data,
       descricao:  i.descricao,
@@ -252,6 +264,17 @@ cartaoRoutes.post('/lancamento', async (req, res, next) => {
     if (!fazendaId) return res.status(400).json({ error: 'Fazenda não identificada' })
 
     const body = lancamentoManualSchema.parse(req.body)
+
+    // Validar que o cartao_id pertence à fazenda do caller (previne IDOR)
+    const { data: cartaoValido } = await supabase
+      .from('cartoes')
+      .select('id')
+      .eq('id', body.cartao_id)
+      .eq('fazenda_id', fazendaId)
+      .single()
+    if (!cartaoValido) {
+      return res.status(403).json({ error: 'cartao_id inválido ou não pertence à fazenda' })
+    }
 
     const { data, error } = await supabase
       .from('lancamentos_financeiros')
