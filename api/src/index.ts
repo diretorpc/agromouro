@@ -110,9 +110,21 @@ app.use('/operacoes', requireAuth, operacaoRoutes)
 app.use('/alertas',   requireAuth, alertaRoutes)
 
 // ─── Admin — trigger manual de jobs (requer autenticação) ────────────────────
-app.post('/admin/run-cotacoes', requireAuth, async (_req, res) => {
-  res.json({ ok: true, message: 'Job iniciado em background' })
-  await buscarCotacoes()
+const adminLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 3, standardHeaders: true, legacyHeaders: false })
+let cotacoesInFlight = false
+
+app.post('/admin/run-cotacoes', requireAuth, adminLimiter, async (_req, res) => {
+  if (cotacoesInFlight) {
+    res.status(429).json({ ok: false, message: 'Job já está em execução, aguarde.' })
+    return
+  }
+  cotacoesInFlight = true
+  res.json({ ok: true, message: 'Job iniciado.' })
+  try {
+    await buscarCotacoes()
+  } finally {
+    cotacoesInFlight = false
+  }
 })
 
 // ─── Webhooks externos — rate limit próprio, validação de origem no handler ───
