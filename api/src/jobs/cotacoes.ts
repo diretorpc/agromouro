@@ -1,30 +1,18 @@
-import https from 'https'
-import { IncomingMessage } from 'http'
+import http from 'http'
 import { supabase } from '../services/supabase'
 
-function httpsGet(url: string): Promise<string> {
+const SCRAPERAPI_KEY = process.env.SCRAPERAPI_KEY ?? ''
+
+function scraperGet(targetUrl: string): Promise<string> {
+  const apiUrl = `http://api.scraperapi.com?api_key=${SCRAPERAPI_KEY}&url=${encodeURIComponent(targetUrl)}&render=true&country_code=br`
   return new Promise((resolve, reject) => {
-    const doGet = (targetUrl: string) => {
-      const req = https.get(targetUrl, {
-        timeout: 15_000,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Accept': 'text/html,application/xhtml+xml',
-          'Accept-Language': 'pt-BR,pt;q=0.9',
-        },
-      }, (res: IncomingMessage) => {
-        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          doGet(res.headers.location)
-          return
-        }
-        const chunks: Buffer[] = []
-        res.on('data', (chunk: Buffer) => chunks.push(chunk))
-        res.on('end', () => resolve(Buffer.concat(chunks).toString('latin1')))
-      })
-      req.on('error', reject)
-      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')) })
-    }
-    doGet(url)
+    const req = http.get(apiUrl, { timeout: 60_000 }, res => {
+      const chunks: Buffer[] = []
+      res.on('data', (chunk: Buffer) => chunks.push(chunk))
+      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')))
+    })
+    req.on('error', reject)
+    req.on('timeout', () => { req.destroy(); reject(new Error('ScraperAPI timeout')) })
   })
 }
 
@@ -62,7 +50,7 @@ export async function buscarCotacoes(): Promise<void> {
 
   for (const commodity of COMMODITIES) {
     try {
-      const html = await httpsGet(commodity.url)
+      const html = await scraperGet(commodity.url)
       const preco = extrairPreco(html)
 
       if (preco === null) {
