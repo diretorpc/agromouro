@@ -30,6 +30,7 @@ import { supabase } from '@/lib/supabase'
 
 type ItemFinanceiro = {
   id: string
+  source_table: 'itens_nfe' | 'lancamentos_financeiros'
   descricao: string
   quantidade: number
   unidade: string
@@ -37,10 +38,12 @@ type ItemFinanceiro = {
   valor_total: number
   centro_custo: string
   insumo_id: string | null
-  nota_numero: string
+  nota_numero: string | null
   emitente_nome: string
   data_emissao: string
   is_manual: boolean
+  origem: 'nfe' | 'cartao' | 'manual' | null
+  cartao_apelido: string | null
 }
 
 type FormData = {
@@ -75,8 +78,11 @@ const TIPOS = [
   { value: 'servico', label: 'Serviço' },
   { value: 'frete', label: 'Frete' },
   { value: 'operacional', label: 'Operacional' },
-  { value: 'rh', label: 'Mão de Obra (RH)' },
-  { value: 'outro', label: 'Outro' },
+  { value: 'rh',          label: 'Mão de Obra (RH)' },
+  { value: 'outro',       label: 'Outro' },
+  { value: 'manutencao',  label: 'Manutenção' },
+  { value: 'alimentacao', label: 'Alimentação' },
+  { value: 'outros',      label: 'Outros (cartão)' },
 ]
 
 const CENTRO_CUSTO_STYLE: Record<string, string> = {
@@ -212,6 +218,7 @@ export default function FinanceiroPage() {
   const [loading, setLoading] = useState(true)
   const [filtroCentro, setFiltroCentro] = useState('todos')
   const [filtroMes, setFiltroMes] = useState('todos')
+  const [filtroOrigem, setFiltroOrigem] = useState<'todos' | 'nfe' | 'cartao' | 'manual'>('todos')
   const [sortData, setSortData] = useState<'desc' | 'asc'>('desc')
 
   const [addDialog, setAddDialog] = useState(false)
@@ -222,23 +229,21 @@ export default function FinanceiroPage() {
   const [form, setForm] = useState<FormData>(FORM_VAZIO)
 
   async function load() {
-    const { data } = await supabase
-      .from('itens_nfe')
-      .select(`
-        id,
-        descricao,
-        quantidade,
-        unidade,
-        valor_unitario,
-        valor_total,
-        insumo_id,
-        insumos(tipo),
-        notas_fiscais(numero, emitente_nome, data_emissao)
-      `)
-      .order('id', { ascending: false })
+    const [nfeResult, lancResult] = await Promise.all([
+      supabase
+        .from('itens_nfe')
+        .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, insumo_id, insumos(tipo), notas_fiscais(numero, emitente_nome, data_emissao)')
+        .order('id', { ascending: false }),
+      supabase
+        .from('lancamentos_financeiros')
+        .select('id, data, descricao, valor, categoria, origem, cartao_id, cartoes(apelido)')
+        .in('origem', ['cartao', 'manual'])
+        .order('data', { ascending: false }),
+    ])
 
-    const mapped: ItemFinanceiro[] = (data ?? []).map((row: any) => ({
+    const nfeItems: ItemFinanceiro[] = (nfeResult.data ?? []).map((row: any) => ({
       id: row.id,
+      source_table: 'itens_nfe' as const,
       descricao: row.descricao,
       quantidade: row.quantidade,
       unidade: row.unidade,
@@ -250,9 +255,29 @@ export default function FinanceiroPage() {
       emitente_nome: row.notas_fiscais?.emitente_nome ?? '',
       data_emissao: row.notas_fiscais?.data_emissao ?? '',
       is_manual: !row.notas_fiscais,
+      origem: 'nfe' as const,
+      cartao_apelido: null,
     }))
 
-    setItens(mapped)
+    const lancItems: ItemFinanceiro[] = (lancResult.data ?? []).map((row: any) => ({
+      id: row.id,
+      source_table: 'lancamentos_financeiros' as const,
+      descricao: row.descricao,
+      quantidade: 1,
+      unidade: '',
+      valor_unitario: row.valor,
+      valor_total: row.valor,
+      centro_custo: row.categoria ?? 'outros',
+      insumo_id: null,
+      nota_numero: null,
+      emitente_nome: '',
+      data_emissao: row.data ?? '',
+      is_manual: row.origem === 'manual',
+      origem: row.origem as 'cartao' | 'manual',
+      cartao_apelido: row.cartoes?.apelido ?? null,
+    }))
+
+    setItens([...nfeItems, ...lancItems])
     setLoading(false)
   }
 
@@ -262,8 +287,10 @@ export default function FinanceiroPage() {
     const params = new URLSearchParams(window.location.search)
     const mes = params.get('mes')
     const centro = params.get('centro')
+    const origem = params.get('origem') as 'todos' | 'nfe' | 'cartao' | 'manual' | null
     if (mes !== null) setFiltroMes(mes)
     if (centro !== null) setFiltroCentro(centro)
+    if (origem && ['todos', 'nfe', 'cartao', 'manual'].includes(origem)) setFiltroOrigem(origem)
   }, [])
 
   async function handleAdd() {
@@ -319,7 +346,7 @@ export default function FinanceiroPage() {
   }
 
   async function handleEdit() {
-    if (!editItem) return
+    if (!editItem || editItem.source_table !== 'itens_nfe') return
     setSalvando(true)
     const qtd = parseFloat(form.quantidade) || 1
     const vUnit = parseFloat(form.valor_unitario) || 0
@@ -348,7 +375,7 @@ export default function FinanceiroPage() {
     setDeleteErro(null)
 
     const { data: deleted, error } = await supabase
-      .from('itens_nfe')
+      .from(deleteItem.source_table)
       .delete()
       .eq('id', deleteItem.id)
       .select('id')
@@ -378,8 +405,9 @@ export default function FinanceiroPage() {
   const itensFiltrados = itens
     .filter(i => {
       const okCentro = filtroCentro === 'todos' || i.centro_custo === filtroCentro
-      const okMes = filtroMes === 'todos' || i.data_emissao.startsWith(filtroMes)
-      return okCentro && okMes
+      const okMes    = filtroMes === 'todos' || i.data_emissao.startsWith(filtroMes)
+      const okOrigem = filtroOrigem === 'todos' || i.origem === filtroOrigem || (filtroOrigem === 'nfe' && (i.origem === 'nfe' || i.origem === null))
+      return okCentro && okMes && okOrigem
     })
     .sort((a, b) => {
       const da = a.data_emissao ?? ''
@@ -400,7 +428,7 @@ export default function FinanceiroPage() {
 
   if (loading) return <PageSkeleton />
 
-  const filtroAtivo = filtroMes !== 'todos' || filtroCentro !== 'todos'
+  const filtroAtivo = filtroMes !== 'todos' || filtroCentro !== 'todos' || filtroOrigem !== 'todos'
   const filtroMesLabel = filtroMes === 'todos'
     ? 'Todos os meses'
     : new Date(filtroMes + '-01').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
@@ -520,6 +548,25 @@ export default function FinanceiroPage() {
             </CardTitle>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center rounded-md border border-input overflow-hidden text-xs">
+              {(['todos', 'nfe', 'cartao', 'manual'] as const).map((o, i) => (
+                <button
+                  key={o}
+                  onClick={() => { setFiltroOrigem(o); setUrlParam('origem', o) }}
+                  className={[
+                    'px-3 py-1.5 font-medium transition-colors',
+                    i > 0 ? 'border-l border-input' : '',
+                    filtroOrigem === o
+                      ? 'bg-foreground text-background'
+                      : 'bg-background text-muted-foreground hover:text-foreground',
+                  ].join(' ')}
+                >
+                  {{ todos: 'Todos', nfe: 'NF-e', cartao: 'Cartão', manual: 'Manual' }[o]}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
             <Filter className="h-4 w-4 text-muted-foreground" />
             <Select value={filtroMes} onValueChange={v => { const val = v ?? 'todos'; setFiltroMes(val); setUrlParam('mes', val) }}>
               <SelectTrigger className="w-44 h-9 text-sm"><SelectValue>{filtroMesLabel}</SelectValue></SelectTrigger>
@@ -544,7 +591,7 @@ export default function FinanceiroPage() {
                 variant="ghost"
                 size="sm"
                 className="h-9 text-muted-foreground"
-                onClick={() => { setFiltroMes('todos'); setFiltroCentro('todos'); window.history.replaceState(null, '', window.location.pathname) }}
+                onClick={() => { setFiltroMes('todos'); setFiltroCentro('todos'); setFiltroOrigem('todos'); window.history.replaceState(null, '', window.location.pathname) }}
               >
                 Limpar
               </Button>
@@ -602,7 +649,13 @@ export default function FinanceiroPage() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-sm w-[160px]">
-                    {item.is_manual ? (
+                    {item.origem === 'cartao' ? (
+                      <Badge variant="secondary" className="text-xs">
+                        {item.cartao_apelido ?? 'Cartão'}
+                      </Badge>
+                    ) : item.origem === 'manual' ? (
+                      <span className="text-xs text-muted-foreground italic">Manual</span>
+                    ) : item.is_manual ? (
                       <span className="text-xs text-muted-foreground italic">Manual</span>
                     ) : (
                       <div>
@@ -623,15 +676,17 @@ export default function FinanceiroPage() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-0.5">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label="Editar lançamento"
-                        className="hover:bg-blue-50 hover:text-blue-600"
-                        onClick={() => abrirEdicao(item)}
-                      >
-                        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                      </Button>
+                      {item.source_table === 'itens_nfe' && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label="Editar lançamento"
+                          className="hover:bg-blue-50 hover:text-blue-600"
+                          onClick={() => abrirEdicao(item)}
+                        >
+                          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="ghost"
