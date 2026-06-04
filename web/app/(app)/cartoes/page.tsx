@@ -69,6 +69,13 @@ const CATEGORIAS = [
   { value: 'alimentacao',  label: 'Alimentação' },
   { value: 'combustivel',  label: 'Combustível' },
   { value: 'servico',      label: 'Serviço' },
+  { value: 'mercado',      label: 'Mercado' },
+  { value: 'veterinario',  label: 'Veterinário' },
+  { value: 'farmacia',     label: 'Farmácia' },
+  { value: 'predial',      label: 'Predial' },
+  { value: 'ferragens',    label: 'Ferragens' },
+  { value: 'tejuco_gado',  label: 'Tejuco Gado' },
+  { value: 'pedagio',      label: 'Pedágio' },
   { value: 'outros',       label: 'Outros' },
 ]
 
@@ -80,6 +87,13 @@ const CAT_STYLE: Record<string, string> = {
   alimentacao:  'bg-orange-100 text-orange-700 border-orange-200',
   combustivel:  'bg-blue-100 text-blue-700 border-blue-200',
   servico:      'bg-purple-100 text-purple-700 border-purple-200',
+  mercado:      'bg-green-100 text-green-700 border-green-200',
+  veterinario:  'bg-teal-100 text-teal-700 border-teal-200',
+  farmacia:     'bg-red-100 text-red-700 border-red-200',
+  predial:      'bg-yellow-100 text-yellow-700 border-yellow-200',
+  ferragens:    'bg-amber-100 text-amber-700 border-amber-200',
+  tejuco_gado:  'bg-lime-100 text-lime-700 border-lime-200',
+  pedagio:      'bg-cyan-100 text-cyan-700 border-cyan-200',
   outros:       'bg-gray-100 text-gray-700 border-gray-200',
 }
 

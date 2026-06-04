@@ -45,7 +45,7 @@ export async function parseXLSX(buffer: Buffer): Promise<TransacaoExtrato[]> {
     const data = date.toISOString().split('T')[0]
 
     const dedupHash = createHash('sha256')
-      .update(`${titular}|${data}|${valor}|${descricao.toLowerCase()}`)
+      .update(`${titular}|${data}|${valor}|${descricao.toLowerCase()}|row${rowNumber}`)
       .digest('hex')
 
     resultado.push({ titular, data, descricao, valor: Math.abs(valor), dedupHash })

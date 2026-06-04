@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { supabase } from '../services/supabase'
 import { parseXLSX } from '../services/xlsxParser'
+import { classificar } from '../services/categorizador'
 
 export const cartaoRoutes = Router()
 
@@ -179,7 +180,7 @@ cartaoRoutes.post('/importar-preview', async (req, res, next) => {
         data:         t.data,
         descricao:    t.descricao,
         valor:        t.valor,
-        categoria:    'outros',
+        categoria:    classificar(t.descricao),
         incluir:      !hashesImportados.has(chave),
         ja_importado: hashesImportados.has(chave),
       })
@@ -262,7 +263,7 @@ const lancamentoManualSchema = z.object({
   data:      z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   descricao: z.string().min(1),
   valor:     z.number().positive(),
-  categoria: z.enum(['peca_maquina', 'manutencao', 'alimentacao', 'combustivel', 'servico', 'outros']),
+  categoria: z.enum(['peca_maquina', 'manutencao', 'alimentacao', 'combustivel', 'servico', 'mercado', 'veterinario', 'farmacia', 'predial', 'ferragens', 'tejuco_gado', 'pedagio', 'outros']),
   cartao_id: z.string().uuid(),
 })
 
