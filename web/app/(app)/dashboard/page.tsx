@@ -589,7 +589,7 @@ function CotacoesCard({ cotacaoMap, onCotacoesAtualizadas }: {
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-            Cotações CEPEA
+            Cotações CBOT
             {desatualizados && (
               <span className="text-xs text-amber-600 normal-case font-medium">desatualizado</span>
             )}
@@ -613,7 +613,7 @@ function CotacoesCard({ cotacaoMap, onCotacoesAtualizadas }: {
         )}
         {!temDados ? (
           <div className="h-20 flex items-center justify-center text-sm text-muted-foreground">
-            {rodando ? 'Buscando cotações na CEPEA…' : 'Aguardando primeira cotação — clique em Atualizar.'}
+            {rodando ? 'Buscando cotações…' : 'Aguardando primeira cotação — clique em Atualizar.'}
           </div>
         ) : (
           <div className="grid grid-cols-3 gap-3">

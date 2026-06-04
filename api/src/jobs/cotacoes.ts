@@ -1,74 +1,72 @@
 import https from 'https'
 import { supabase } from '../services/supabase'
 
-const SCRAPERAPI_KEY = process.env.SCRAPERAPI_KEY ?? ''
-
-function scraperGet(targetUrl: string): Promise<string> {
-  const apiUrl = `https://api.scraperapi.com?api_key=${SCRAPERAPI_KEY}&url=${encodeURIComponent(targetUrl)}&render=true&country_code=br`
+function httpsGetJson(url: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const req = https.get(apiUrl, { timeout: 60_000 }, res => {
+    const req = https.get(url, {
+      timeout: 15_000,
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
+    }, res => {
       const chunks: Buffer[] = []
-      res.on('data', (chunk: Buffer) => chunks.push(chunk))
-      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')))
+      res.on('data', (c: Buffer) => chunks.push(c))
+      res.on('end', () => {
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf-8'))) }
+        catch (e) { reject(e) }
+      })
     })
     req.on('error', reject)
-    req.on('timeout', () => { req.destroy(); reject(new Error('ScraperAPI timeout')) })
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')) })
   })
 }
 
-// Extrai o preço à vista em R$/saca da página CEPEA
-function extrairPreco(html: string): number | null {
-  // CEPEA tabelas: linha com data + preço à vista
-  // Tenta capturar o primeiro número decimal no formato brasileiro após "À Vista"
-  const patterns = [
-    // Padrão principal: coluna "À Vista (R$)" na tabela
-    /vista[^<]{0,200}?<td[^>]*>\s*([\d]+[.,][\d]{2})\s*<\/td>/is,
-    // Alternativa: qualquer célula com número de preço típico de grãos (R$30-R$300/saca)
-    /id="[^"]*table[^"]*"[^>]*>.*?<td[^>]*>\s*(\d{2,3},\d{2})\s*<\/td>/is,
-    // Last resort: primeiro número entre 30 e 500 com 2 casas decimais
-    />\s*((?:[1-4]\d{2}|[3-9]\d),\d{2})\s*</,
-  ]
-
-  for (const pattern of patterns) {
-    const match = html.match(pattern)
-    if (match?.[1]) {
-      const preco = parseFloat(match[1].replace(/\./g, '').replace(',', '.'))
-      if (!isNaN(preco) && preco > 10 && preco < 2000) return preco
-    }
-  }
-  return null
-}
-
+// Futuros CBOT: preços em USX (centavos de dólar) por bushel
+// Soja ZS=F | Milho ZC=F | Trigo ZW=F
 const COMMODITIES = [
-  { nome: 'soja',  url: 'https://www.cepea.esalq.usp.br/br/cotacoes/soja.aspx' },
-  { nome: 'milho', url: 'https://www.cepea.esalq.usp.br/br/cotacoes/milho.aspx' },
-  { nome: 'trigo', url: 'https://www.cepea.esalq.usp.br/br/cotacoes/trigo.aspx' },
+  { nome: 'soja',  ticker: 'ZS%3DF', kgPerBushel: 27.215 },
+  { nome: 'milho', ticker: 'ZC%3DF', kgPerBushel: 25.401 },
+  { nome: 'trigo', ticker: 'ZW%3DF', kgPerBushel: 27.215 },
 ]
 
 export async function buscarCotacoes(): Promise<void> {
   const hoje = new Date().toISOString().slice(0, 10)
 
+  // Busca taxa USD/BRL e futuros CBOT em paralelo
+  let usdBrl: number
+  try {
+    const cambio = await httpsGetJson('https://economia.awesomeapi.com.br/json/last/USD-BRL') as Record<string, { bid: string }>
+    usdBrl = parseFloat(cambio.USDBRL.bid)
+    if (isNaN(usdBrl) || usdBrl <= 0) throw new Error('Taxa USD/BRL inválida')
+  } catch (err) {
+    console.error('[Cotações] Erro ao buscar USD/BRL:', err instanceof Error ? err.message : err)
+    return
+  }
+
   for (const commodity of COMMODITIES) {
     try {
-      const html = await scraperGet(commodity.url)
-      const preco = extrairPreco(html)
+      const data = await httpsGetJson(
+        `https://query2.finance.yahoo.com/v8/finance/chart/${commodity.ticker}?range=1d&interval=1d`
+      ) as { chart: { result: { meta: { regularMarketPrice: number } }[] } }
 
-      if (preco === null) {
-        console.warn(`[Cotações] Preço não encontrado para ${commodity.nome} — verifique o HTML da CEPEA.`)
+      const priceUSX = data?.chart?.result?.[0]?.meta?.regularMarketPrice
+      if (!priceUSX || priceUSX <= 0) {
+        console.warn(`[Cotações] Preço não encontrado para ${commodity.nome}`)
         continue
       }
+
+      // Converter USX/bushel → BRL/saca (saca = 60 kg)
+      const precoBrl = (priceUSX / 100) * (60 / commodity.kgPerBushel) * usdBrl
 
       const { error } = await supabase
         .from('cotacoes_commodities')
         .upsert(
-          { commodity: commodity.nome, preco_rs: preco, data: hoje },
+          { commodity: commodity.nome, preco_rs: parseFloat(precoBrl.toFixed(2)), data: hoje },
           { onConflict: 'commodity,data' }
         )
 
       if (error) {
         console.error(`[Cotações] Erro ao salvar ${commodity.nome}:`, error.message)
       } else {
-        console.log(`[Cotações] ${commodity.nome}: R$ ${preco.toFixed(2)}/sc (${hoje})`)
+        console.log(`[Cotações] ${commodity.nome}: R$ ${precoBrl.toFixed(2)}/sc (CBOT ref · ${hoje})`)
       }
     } catch (err) {
       console.error(`[Cotações] Erro ao buscar ${commodity.nome}:`, err instanceof Error ? err.message : err)

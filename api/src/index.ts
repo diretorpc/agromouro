@@ -8,6 +8,7 @@ import { talhaoRoutes }   from './routes/talhoes'
 import { estoqueRoutes }  from './routes/estoque'
 import { operacaoRoutes } from './routes/operacoes'
 import { alertaRoutes }   from './routes/alertas'
+import { cartaoRoutes }   from './routes/cartoes'
 import { whatsappWebhook }   from './webhooks/whatsapp'
 import { nfeWebhook }        from './webhooks/nfe'
 import { nfeEmailWebhook }   from './webhooks/nfeEmailWebhook'
@@ -60,7 +61,7 @@ const corsHandler = cors({
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true)
     callback(new Error(`CORS: origem não permitida — ${origin}`))
   },
-  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
 })
@@ -93,10 +94,12 @@ const webhookLimiter = rateLimit({
 app.use(globalLimiter)
 app.use(requestLogger)
 
-// ─── Body parsing — limite alto SOMENTE para webhooks (NF-e XMLs são grandes) ─
+// ─── Body parsing — limites por rota ─────────────────────────────────────────
 app.use('/webhook/nfe-email', express.raw({ type: '*/*', limit: '5mb' }))
 app.use('/webhook', express.json({ limit: '5mb' }))
-app.use(express.json({ limit: '100kb' }))
+// XLSX de extrato bancário chega como base64: 1 MB de arquivo → ~1.37 MB encoded
+app.use('/cartoes/importar-preview', express.json({ limit: '10mb' }))
+app.use(express.json({ limit: '2mb' }))
 
 // ─── Health check — público, sem auth ────────────────────────────────────────
 app.get('/health', (_req, res) => {
@@ -108,6 +111,7 @@ app.use('/talhoes',   requireAuth, talhaoRoutes)
 app.use('/estoque',   requireAuth, estoqueRoutes)
 app.use('/operacoes', requireAuth, operacaoRoutes)
 app.use('/alertas',   requireAuth, alertaRoutes)
+app.use('/cartoes',   requireAuth, cartaoRoutes)
 
 // ─── Admin — trigger manual de jobs (requer autenticação) ────────────────────
 const adminLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 3, standardHeaders: true, legacyHeaders: false })

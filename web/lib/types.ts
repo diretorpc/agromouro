@@ -115,3 +115,13 @@ export interface ClimaDay {
   precipitationProbability: number
   windspeed: number
 }
+
+export interface Cartao {
+  id: string
+  apelido: string
+  ultimos_digitos: string | null
+  banco: string
+  responsavel: string | null
+  ativo: boolean
+  created_at: string
+}
