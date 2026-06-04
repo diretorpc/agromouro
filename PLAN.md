@@ -438,29 +438,29 @@ registra tudo — e o que não precisar de mensagem, entra sozinho via NF-e.
 > Arquivo real analisado: `Cartões BB - Matheus, Alexandre, Marcia, Ivan.xlsx` (458 transações, 4 titulares)
 
 ### Milestone 1 — Fundação: DB + Backend
-> **Status:** pendente — próxima sessão
+> **Status:** ✅ completo
 > Entrega: API funcionando, testável via curl/Postman
 
-- [ ] `supabase/migrations/002_cartoes.sql` — tabela `cartoes` + colunas `cartao_id`, `origem`, `dedup_hash` em `lancamentos_financeiros`
-- [ ] `npm install xlsx` na pasta `api/`
-- [ ] `api/src/services/xlsxParser.ts` — parser SheetJS para o formato BB real (Titular | Bandeira | Dia | Mês | Ano | Descrição | Moeda | Valor)
-- [ ] `api/src/routes/cartoes.ts` — CRUD cartões + `POST /cartoes/importar-preview` + `POST /cartoes/confirmar-importacao` + `POST /lancamentos/cartao`
-- [ ] `api/src/index.ts` — registrar rotas `/cartoes` e `/lancamentos/cartao`
+- [x] `supabase/migrations/002_cartoes.sql` — tabela `cartoes` + colunas `cartao_id`, `origem`, `dedup_hash` em `lancamentos_financeiros`
+- [x] `npm install xlsx` na pasta `api/`
+- [x] `api/src/services/xlsxParser.ts` — parser SheetJS para o formato BB real (Titular | Bandeira | Dia | Mês | Ano | Descrição | Moeda | Valor)
+- [x] `api/src/routes/cartoes.ts` — CRUD cartões + `POST /cartoes/importar-preview` + `POST /cartoes/confirmar-importacao` + `POST /lancamentos/cartao`
+- [x] `api/src/index.ts` — registrar rotas `/cartoes` e `/lancamentos/cartao`
 
 ### Milestone 2 — Frontend: Página /cartoes
-> **Status:** pendente — aguarda Milestone 1
+> **Status:** ✅ completo
 > Entrega: página funcional com cadastro, importação XLSX e lançamento manual
 
-- [ ] `web/lib/types.ts` — adicionar tipo `Cartao`
-- [ ] `web/app/(app)/cartoes/page.tsx` — grid de cartões, dialog de importação com prévia editável por linha, dialog de lançamento manual
-- [ ] `web/components/sidebar.tsx` — item nav "Cartões" entre Financeiro e NF-e
-- [ ] `web/components/mobile-nav.tsx` — item nav "Cartões"
+- [x] `web/lib/types.ts` — adicionar tipo `Cartao`
+- [x] `web/app/(app)/cartoes/page.tsx` — grid de cartões, dialog de importação com prévia editável por linha, dialog de lançamento manual
+- [x] `web/components/sidebar.tsx` — item nav "Cartões" entre Financeiro e NF-e
+- [x] `web/components/mobile-nav.tsx` — item nav "Cartões" (via Sidebar reutilizado no drawer)
 
 ### Milestone 3 — Integração: Filtros no /financeiro
-> **Status:** pendente — aguarda Milestone 2
+> **Status:** ✅ completo
 > Entrega: /financeiro mostra todos os lançamentos com filtro por origem e badge do cartão
 
-- [ ] `web/app/(app)/financeiro/page.tsx` — filtro `[Todos] [NF-e] [Cartão] [Manual]` + badge com apelido do cartão
+- [x] `web/app/(app)/financeiro/page.tsx` — filtro `[Todos] [NF-e] [Cartão] [Manual]` + badge com apelido do cartão
 
 ---
 

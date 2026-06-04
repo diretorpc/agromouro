@@ -115,7 +115,7 @@ cartaoRoutes.post('/importar-preview', async (req, res, next) => {
     if (!arquivo) return res.status(400).json({ error: 'Campo arquivo (base64) obrigatório' })
 
     const buffer = Buffer.from(arquivo, 'base64')
-    const transacoes = parseXLSX(buffer)
+    const transacoes = await parseXLSX(buffer)
 
     if (transacoes.length === 0) {
       return res.status(400).json({ error: 'Nenhuma transação encontrada no arquivo' })
@@ -134,15 +134,21 @@ cartaoRoutes.post('/importar-preview', async (req, res, next) => {
       (cartoes ?? []).map(c => [c.apelido.toLowerCase(), c.id])
     )
 
-    // Buscar hashes já importados para detectar duplicatas
+    // Buscar hashes já importados — escopo por cartao_id para evitar falso-positivo
+    // quando dois cartões distintos tiverem transação idêntica (mesmo hash)
     const hashesDoArquivo = transacoes.map(t => t.dedupHash)
+    const cartaoIds = [...cartaoMap.values()]
     const { data: jaImportados } = await supabase
       .from('lancamentos_financeiros')
-      .select('dedup_hash')
+      .select('dedup_hash, cartao_id')
       .in('dedup_hash', hashesDoArquivo)
+      .in('cartao_id', cartaoIds.length > 0 ? cartaoIds : ['__none__'])
       .eq('fazenda_id', fazendaId)
 
-    const hashesImportados = new Set((jaImportados ?? []).map(r => r.dedup_hash))
+    // Chave composta cartao_id:dedup_hash para correspondência precisa
+    const hashesImportados = new Set(
+      (jaImportados ?? []).map(r => `${r.cartao_id}:${r.dedup_hash}`)
+    )
 
     // Montar resposta agrupada por titular
     const grupos: Record<string, {
@@ -166,14 +172,16 @@ cartaoRoutes.post('/importar-preview', async (req, res, next) => {
           transacoes: [],
         }
       }
+      const cartaoId = grupos[titular].cartao_id
+      const chave = `${cartaoId}:${t.dedupHash}`
       grupos[titular].transacoes.push({
         dedupHash:    t.dedupHash,
         data:         t.data,
         descricao:    t.descricao,
         valor:        t.valor,
         categoria:    'outros',
-        incluir:      !hashesImportados.has(t.dedupHash),
-        ja_importado: hashesImportados.has(t.dedupHash),
+        incluir:      !hashesImportados.has(chave),
+        ja_importado: hashesImportados.has(chave),
       })
     }
 

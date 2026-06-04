@@ -137,18 +137,24 @@ export default function CartoesPage() {
   // ─── Data loading ───────────────────────────────────────────────────────────
 
   async function load() {
-    const [cartoesData, lancResult] = await Promise.all([
-      api.get<Cartao[]>('/cartoes').catch(() => [] as Cartao[]),
-      supabase
-        .from('lancamentos_financeiros')
-        .select('id, data, descricao, valor, categoria, origem, cartao_id, cartoes(apelido)')
-        .in('origem', ['cartao', 'manual'])
-        .order('data', { ascending: false })
-        .limit(200),
-    ])
-    setCartoes(cartoesData)
-    setLancamentos((lancResult.data ?? []) as unknown as LancamentoCartao[])
-    setLoading(false)
+    try {
+      const [cartoesData, lancResult] = await Promise.all([
+        api.get<Cartao[]>('/cartoes'),
+        supabase
+          .from('lancamentos_financeiros')
+          .select('id, data, descricao, valor, categoria, origem, cartao_id, cartoes(apelido)')
+          .in('origem', ['cartao', 'manual'])
+          .order('data', { ascending: false })
+          .limit(200),
+      ])
+      if (lancResult.error) throw lancResult.error
+      setCartoes(cartoesData)
+      setLancamentos((lancResult.data ?? []) as unknown as LancamentoCartao[])
+    } catch {
+      setErroGeral('Erro ao carregar dados. Recarregue a página.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { load() }, [])
@@ -165,7 +171,14 @@ export default function CartoesPage() {
     const reader = new FileReader()
     reader.onload = async (e) => {
       try {
-        const base64 = (e.target?.result as string).split(',')[1]
+        const result = e.target?.result as string
+        const commaIdx = result?.indexOf(',') ?? -1
+        if (commaIdx === -1) {
+          setErroGeral('Falha ao ler o arquivo. Tente novamente.')
+          setUploadando(false)
+          return
+        }
+        const base64 = result.slice(commaIdx + 1)
         const data = await api.post<PreviewData>('/cartoes/importar-preview', { arquivo: base64 })
         const grupos: Record<string, GrupoPreview> = {}
         for (const [titular, grupo] of Object.entries(data.grupos)) {

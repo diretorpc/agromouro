@@ -241,6 +241,12 @@ export default function FinanceiroPage() {
         .order('data', { ascending: false }),
     ])
 
+    if (nfeResult.error || lancResult.error) {
+      console.error('[Financeiro] Erro ao carregar:', nfeResult.error ?? lancResult.error)
+      setLoading(false)
+      return
+    }
+
     const nfeItems: ItemFinanceiro[] = (nfeResult.data ?? []).map((row: any) => ({
       id: row.id,
       source_table: 'itens_nfe' as const,
@@ -298,39 +304,46 @@ export default function FinanceiroPage() {
     const qtd = parseFloat(form.quantidade) || 1
     const vUnit = parseFloat(form.valor_unitario) || 0
 
-    let insumoId: string | null = null
-    const { data: existente } = await supabase
-      .from('insumos')
-      .select('id')
-      .ilike('nome', form.descricao.trim())
-      .maybeSingle()
-
-    if (existente) {
-      insumoId = existente.id
-    } else {
-      const { data: novo } = await supabase
+    try {
+      let insumoId: string | null = null
+      const { data: existente } = await supabase
         .from('insumos')
-        .insert({ nome: form.descricao.trim(), tipo: form.centro_custo, unidade: form.unidade })
         .select('id')
-        .single()
-      insumoId = novo?.id ?? null
+        .ilike('nome', form.descricao.trim())
+        .maybeSingle()
+
+      if (existente) {
+        insumoId = existente.id
+      } else {
+        const { data: novo, error: errInsumo } = await supabase
+          .from('insumos')
+          .insert({ nome: form.descricao.trim(), tipo: form.centro_custo, unidade: form.unidade })
+          .select('id')
+          .single()
+        if (errInsumo) throw errInsumo
+        insumoId = novo?.id ?? null
+      }
+
+      const { error: errItem } = await supabase.from('itens_nfe').insert({
+        nota_fiscal_id: null,
+        descricao: form.descricao.trim(),
+        quantidade: qtd,
+        unidade: form.unidade,
+        valor_unitario: vUnit,
+        valor_total: qtd * vUnit,
+        insumo_id: insumoId,
+        data_manual: form.data,
+      })
+      if (errItem) throw errItem
+
+      setAddDialog(false)
+      setForm(FORM_VAZIO)
+      load()
+    } catch (err) {
+      console.error('[Financeiro] Erro ao adicionar lançamento:', err)
+    } finally {
+      setSalvando(false)
     }
-
-    await supabase.from('itens_nfe').insert({
-      nota_fiscal_id: null,
-      descricao: form.descricao.trim(),
-      quantidade: qtd,
-      unidade: form.unidade,
-      valor_unitario: vUnit,
-      valor_total: qtd * vUnit,
-      insumo_id: insumoId,
-      data_manual: form.data,
-    })
-
-    setSalvando(false)
-    setAddDialog(false)
-    setForm(FORM_VAZIO)
-    load()
   }
 
   function abrirEdicao(item: ItemFinanceiro) {

@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 import { createHash } from 'crypto'
 
 export interface TransacaoExtrato {
@@ -12,32 +12,35 @@ export interface TransacaoExtrato {
 /**
  * Parseia o relatório XLSX do Banco do Brasil.
  * Formato esperado: Titular|Bandeira|Dia|Mês|Ano|Descrição|Moeda|Valor
- * Linha 0 é cabeçalho, dados começam na linha 1.
+ * Linha 1 é cabeçalho (ExcelJS é 1-indexed); dados começam na linha 2.
  */
-export function parseXLSX(buffer: Buffer): TransacaoExtrato[] {
-  const wb = XLSX.read(buffer, { type: 'buffer' })
-  const ws = wb.Sheets[wb.SheetNames[0]]
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' })
+export async function parseXLSX(buffer: Buffer): Promise<TransacaoExtrato[]> {
+  const wb = new ExcelJS.Workbook()
+  // Cast necessário: @types/node define Buffer<ArrayBufferLike> mas ExcelJS espera Buffer sem generic
+  await wb.xlsx.load(buffer as unknown as Parameters<typeof wb.xlsx.load>[0])
+
+  const ws = wb.worksheets[0]
+  if (!ws) return []
 
   const resultado: TransacaoExtrato[] = []
 
-  // Linha 0 é cabeçalho — pular
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i] as unknown[]
+  ws.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return // pular cabeçalho
 
-    const titular   = String(row[0] ?? '').trim()
-    const dia       = Number(row[2])
-    const mes       = Number(row[3])
-    const ano       = Number(row[4])
-    const descricao = String(row[5] ?? '').trim()
-    const valor     = Number(row[7])
+    // ExcelJS row.values é 1-indexed; posição 0 é sempre undefined
+    const vals = row.values as (string | number | null | undefined)[]
+
+    const titular   = String(vals[1] ?? '').trim()
+    const dia       = Number(vals[3])
+    const mes       = Number(vals[4])
+    const ano       = Number(vals[5])
+    const descricao = String(vals[6] ?? '').trim()
+    const valor     = Number(vals[8])
 
     // Pular linhas inválidas ou totalizadoras
-    if (!titular || !descricao || isNaN(valor) || isNaN(dia) || isNaN(mes) || isNaN(ano)) {
-      continue
-    }
+    if (!titular || !descricao || isNaN(valor) || isNaN(dia) || isNaN(mes) || isNaN(ano)) return
+    if (dia < 1 || dia > 31 || mes < 1 || mes > 12 || ano < 2000 || ano > 2100) return
 
-    // Reconstruir data ISO a partir das 3 colunas numéricas
     const date = new Date(ano, mes - 1, dia)
     const data = date.toISOString().split('T')[0]
 
@@ -46,7 +49,7 @@ export function parseXLSX(buffer: Buffer): TransacaoExtrato[] {
       .digest('hex')
 
     resultado.push({ titular, data, descricao, valor: Math.abs(valor), dedupHash })
-  }
+  })
 
   return resultado
 }

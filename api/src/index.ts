@@ -61,7 +61,7 @@ const corsHandler = cors({
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true)
     callback(new Error(`CORS: origem não permitida — ${origin}`))
   },
-  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
 })
@@ -94,9 +94,11 @@ const webhookLimiter = rateLimit({
 app.use(globalLimiter)
 app.use(requestLogger)
 
-// ─── Body parsing — limite alto SOMENTE para webhooks (NF-e XMLs são grandes) ─
+// ─── Body parsing — limites por rota ─────────────────────────────────────────
 app.use('/webhook/nfe-email', express.raw({ type: '*/*', limit: '5mb' }))
 app.use('/webhook', express.json({ limit: '5mb' }))
+// XLSX de extrato bancário chega como base64: 1 MB de arquivo → ~1.37 MB encoded
+app.use('/cartoes/importar-preview', express.json({ limit: '10mb' }))
 app.use(express.json({ limit: '2mb' }))
 
 // ─── Health check — público, sem auth ────────────────────────────────────────
