@@ -3,11 +3,12 @@
 ## LEITURA OBRIGATÓRIA AO INICIAR QUALQUER SESSÃO
 
 Antes de qualquer resposta, leia sempre estes arquivos:
-1. Todos os arquivos em `C:/Users/Dib/.claude/projects/c--Agromouro-base/memory/` (começando pelo MEMORY.md)
-2. `PLAN.md` na raiz do projeto
-3. Este arquivo (CLAUDE.md)
+1. `C:/Users/Dib/.claude/projects/c--Agromouro-base/memory/MEMORY.md` — índice de memórias ativas
+2. Cada arquivo listado no MEMORY.md (não ler a pasta inteira — só os listados)
+3. `PLAN.md` na raiz do projeto
+4. Este arquivo (CLAUDE.md)
 
-Isso garante contexto completo sobre decisões tomadas, estado atual e o que está pendente.
+Isso garante contexto completo sem carregar histórico obsoleto.
 
 ## NF-e — informação crítica
 NF-e é processada **automaticamente** via Make (make.com), que monitora dois emails Outlook
