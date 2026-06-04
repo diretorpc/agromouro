@@ -119,7 +119,7 @@ export interface ClimaDay {
 export interface Cartao {
   id: string
   apelido: string
-  ultimos_digitos: string | null
+  bandeira: string | null
   banco: string
   responsavel: string | null
   ativo: boolean
