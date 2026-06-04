@@ -58,7 +58,7 @@ type PreviewData = {
   }>
 }
 
-type CartaoForm = { apelido: string; ultimos_digitos: string; responsavel: string }
+type CartaoForm = { apelido: string; bandeira: string; responsavel: string }
 type ManualForm = { data: string; descricao: string; valor: string; categoria: string; cartao_id: string }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -83,7 +83,7 @@ const CAT_STYLE: Record<string, string> = {
   outros:       'bg-gray-100 text-gray-700 border-gray-200',
 }
 
-const FORM_CARTAO_VAZIO: CartaoForm = { apelido: '', ultimos_digitos: '', responsavel: '' }
+const FORM_CARTAO_VAZIO: CartaoForm = { apelido: '', bandeira: '', responsavel: '' }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -267,7 +267,7 @@ export default function CartoesPage() {
     try {
       await api.post('/cartoes', {
         apelido:         cartaoForm.apelido.trim(),
-        ultimos_digitos: cartaoForm.ultimos_digitos.trim() || undefined,
+        bandeira: cartaoForm.bandeira || undefined,
         responsavel:     cartaoForm.responsavel.trim() || undefined,
       })
       setAddCartaoDialog(false)
@@ -281,7 +281,7 @@ export default function CartoesPage() {
   }
 
   function abrirEdit(c: Cartao) {
-    setCartaoForm({ apelido: c.apelido, ultimos_digitos: c.ultimos_digitos ?? '', responsavel: c.responsavel ?? '' })
+    setCartaoForm({ apelido: c.apelido, bandeira: c.bandeira ?? '', responsavel: c.responsavel ?? '' })
     setEditCartao(c)
   }
 
@@ -291,7 +291,7 @@ export default function CartoesPage() {
     try {
       await api.put(`/cartoes/${editCartao.id}`, {
         apelido:         cartaoForm.apelido.trim(),
-        ultimos_digitos: cartaoForm.ultimos_digitos.trim() || undefined,
+        bandeira: cartaoForm.bandeira || undefined,
         responsavel:     cartaoForm.responsavel.trim() || undefined,
       })
       setEditCartao(null)
@@ -470,9 +470,9 @@ export default function CartoesPage() {
                 <CardHeader className="pb-3 flex flex-row items-start justify-between space-y-0">
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold text-base truncate">{cartao.apelido}</p>
-                    {cartao.ultimos_digitos && (
+                    {cartao.bandeira && (
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        •••• {cartao.ultimos_digitos}
+                        {cartao.bandeira}
                       </p>
                     )}
                   </div>
@@ -876,13 +876,18 @@ function CartaoFormFields({
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
-          <Label>Últimos 4 dígitos</Label>
-          <Input
-            placeholder="1234"
-            maxLength={4}
-            value={form.ultimos_digitos}
-            onChange={e => setForm(f => ({ ...f, ultimos_digitos: e.target.value.replace(/\D/g, '') }))}
-          />
+          <Label>Bandeira</Label>
+          <Select value={form.bandeira} onValueChange={v => setForm(f => ({ ...f, bandeira: v ?? '' }))}>
+            <SelectTrigger><SelectValue placeholder="Selecionar…" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Visa">Visa</SelectItem>
+              <SelectItem value="Mastercard">Mastercard</SelectItem>
+              <SelectItem value="Elo">Elo</SelectItem>
+              <SelectItem value="American Express">American Express</SelectItem>
+              <SelectItem value="Hipercard">Hipercard</SelectItem>
+              <SelectItem value="Outra">Outra</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <div className="space-y-1.5">
           <Label>Responsável</Label>

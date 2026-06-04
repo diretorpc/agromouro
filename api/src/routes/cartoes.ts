@@ -9,7 +9,7 @@ export const cartaoRoutes = Router()
 
 const cartaoSchema = z.object({
   apelido:         z.string().min(1),
-  ultimos_digitos: z.string().length(4).regex(/^\d{4}$/).optional(),
+  bandeira: z.string().optional(),
   banco:           z.string().default('Banco do Brasil'),
   responsavel:     z.string().optional(),
 })
