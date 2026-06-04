@@ -159,7 +159,7 @@ export default function CartoesPage() {
           .select('id, data, descricao, valor, categoria, origem, cartao_id, cartoes(apelido)')
           .in('origem', ['cartao', 'manual'])
           .order('data', { ascending: false })
-          .limit(200),
+          .limit(1000),
       ])
       if (lancResult.error) throw lancResult.error
       setCartoes(cartoesData)
