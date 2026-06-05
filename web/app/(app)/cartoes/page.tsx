@@ -119,6 +119,84 @@ const CAT_COLOR: Record<string, string> = {
 
 const FORM_CARTAO_VAZIO: CartaoForm = { apelido: '', bandeira: '', responsavel: '' }
 
+// ─── Categoria Chart ──────────────────────────────────────────────────────────
+
+function CategoriaChart({ porCategoria, gastoFiltrado }: {
+  porCategoria: Record<string, number>
+  gastoFiltrado: number
+}) {
+  const chartData = Object.entries(porCategoria)
+    .sort((a, b) => b[1] - a[1])
+    .map(([cat, total]) => ({ cat, label: CAT_LABEL[cat] ?? cat, value: total }))
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base">Gastos por Categoria</CardTitle>
+          <span className="text-sm text-muted-foreground tabular-nums">
+            {gastoFiltrado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+          </span>
+        </div>
+      </CardHeader>
+      <CardContent className="overflow-x-auto pt-2">
+        <div style={{ minWidth: 360 }}>
+          <ResponsiveContainer width="100%" height={chartData.length * 52 + 16}>
+            <BarChart
+              data={chartData}
+              layout="vertical"
+              margin={{ top: 0, right: 110, bottom: 0, left: 8 }}
+              barSize={22}
+            >
+              <XAxis type="number" hide />
+              <YAxis
+                type="category"
+                dataKey="label"
+                width={130}
+                tick={{ fontSize: 13, fill: '#374151' }}
+                tickLine={false}
+                axisLine={false}
+              />
+              <RechartsTooltip
+                cursor={{ fill: 'rgba(0,0,0,0.04)' }}
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) return null
+                  const entry = payload[0].payload as { label: string; value: number }
+                  const pct = gastoFiltrado > 0 ? (entry.value / gastoFiltrado * 100).toFixed(1) : '0.0'
+                  return (
+                    <div className="rounded-lg border bg-background px-3 py-2 shadow-md text-sm">
+                      <p className="font-medium text-foreground mb-1">{entry.label}</p>
+                      <p className="tabular-nums text-foreground">
+                        {entry.value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      </p>
+                      <p className="text-muted-foreground">{pct}% do total</p>
+                    </div>
+                  )
+                }}
+              />
+              <Bar dataKey="value" radius={[0, 5, 5, 0]}>
+                {chartData.map(entry => (
+                  <Cell key={entry.cat} fill={CAT_COLOR[entry.cat] ?? '#94a3b8'} />
+                ))}
+                <LabelList
+                  dataKey="value"
+                  position="right"
+                  formatter={(v: unknown) => {
+                    const val = Number(v ?? 0)
+                    const pct = gastoFiltrado > 0 ? (val / gastoFiltrado * 100).toFixed(1) : '0.0'
+                    return `${val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} · ${pct}%`
+                  }}
+                  style={{ fontSize: 12, fill: '#6b7280' }}
+                />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
 function fmtBRL(v: number) {
@@ -676,54 +754,12 @@ export default function CartoesPage() {
       </div>
 
       {/* ── Gastos por Categoria ── */}
-      {lancFiltrados.length > 0 && (() => {
-        const chartData = Object.entries(porCategoria)
-          .sort((a, b) => b[1] - a[1])
-          .map(([cat, total]) => ({ cat, label: CAT_LABEL[cat] ?? cat, value: total }))
-        return (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Gastos por Categoria</CardTitle>
-            </CardHeader>
-            <CardContent className="overflow-x-auto">
-              <div style={{ minWidth: 360 }}>
-                <ResponsiveContainer width="100%" height={chartData.length * 48 + 16}>
-                  <BarChart
-                    data={chartData}
-                    layout="vertical"
-                    margin={{ top: 0, right: 90, bottom: 0, left: 8 }}
-                  >
-                    <XAxis type="number" hide />
-                    <YAxis
-                      type="category"
-                      dataKey="label"
-                      width={130}
-                      tick={{ fontSize: 13 }}
-                      tickLine={false}
-                      axisLine={false}
-                    />
-                    <RechartsTooltip
-                      formatter={(value: unknown) => [fmtBRL(Number(value ?? 0)), 'Total']}
-                      cursor={{ fill: 'rgba(0,0,0,0.04)' }}
-                    />
-                    <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                      {chartData.map(entry => (
-                        <Cell key={entry.cat} fill={CAT_COLOR[entry.cat] ?? '#9ca3af'} />
-                      ))}
-                      <LabelList
-                        dataKey="value"
-                        position="right"
-                        formatter={(v: unknown) => fmtBRL(Number(v ?? 0))}
-                        style={{ fontSize: 13, fill: '#6b7280' }}
-                      />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </CardContent>
-          </Card>
-        )
-      })()}
+      {lancFiltrados.length > 0 && Object.keys(porCategoria).length > 0 && (
+        <CategoriaChart
+          porCategoria={porCategoria}
+          gastoFiltrado={gastoFiltrado}
+        />
+      )}
 
       {/* ── Lançamentos recentes ── */}
       <Card>

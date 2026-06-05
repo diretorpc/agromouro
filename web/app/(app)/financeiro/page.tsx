@@ -569,22 +569,12 @@ export default function FinanceiroPage() {
                     <LabelList
                       dataKey="value"
                       position="right"
-                      content={({ x, y, width, height, value: v }) => {
+                      formatter={(v: unknown) => {
                         const val = Number(v ?? 0)
                         const pct = totalGeral > 0 ? (val / totalGeral * 100).toFixed(1) : '0.0'
-                        return (
-                          <text
-                            x={Number(x ?? 0) + Number(width ?? 0) + 8}
-                            y={Number(y ?? 0) + Number(height ?? 0) / 2}
-                            dy={5}
-                            fontSize={12}
-                            fill="#6b7280"
-                            textAnchor="start"
-                          >
-                            {fmtBRL(val)} · {pct}%
-                          </text>
-                        )
+                        return `${fmtBRL(val)} · ${pct}%`
                       }}
+                      style={{ fontSize: 12, fill: '#6b7280' }}
                     />
                   </Bar>
                 </BarChart>
