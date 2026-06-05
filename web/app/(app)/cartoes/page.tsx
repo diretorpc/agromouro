@@ -110,7 +110,8 @@ function fmtDate(s: string) {
 }
 
 function mesLabel(iso: string) {
-  return new Date(iso + '-01').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+  const [y, mo] = iso.split('-')
+  return new Date(+y, +mo - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
