@@ -137,6 +137,17 @@ export default function CartoesPage() {
   const [deleteErro, setDeleteErro]           = useState<string | null>(null)
   const [manualDialog, setManualDialog]       = useState(false)
 
+  // Filter state
+  const [filtroMes, setFiltroMes]       = useState('todos')
+  const [filtroCartao, setFiltroCartao] = useState('todos')
+
+  // Edit/delete lançamento state
+  const [editLanc, setEditLanc]         = useState<LancamentoCartao | null>(null)
+  const [editLancForm, setEditLancForm] = useState<ManualForm>({
+    data: '', descricao: '', valor: '', categoria: 'outros', cartao_id: '',
+  })
+  const [deleteLanc, setDeleteLanc]     = useState<LancamentoCartao | null>(null)
+
   // Form states
   const [cartaoForm, setCartaoForm] = useState<CartaoForm>(FORM_CARTAO_VAZIO)
   const [manualForm, setManualForm] = useState<ManualForm>({
@@ -367,17 +378,88 @@ export default function CartoesPage() {
     }
   }
 
+  // ─── Edit/delete lançamento ─────────────────────────────────────────────────
+
+  function abrirEditLanc(l: LancamentoCartao) {
+    setEditLancForm({
+      data:      l.data,
+      descricao: l.descricao,
+      valor:     String(l.valor),
+      categoria: l.categoria ?? 'outros',
+      cartao_id: l.cartao_id ?? '',
+    })
+    setEditLanc(l)
+  }
+
+  async function handleEditLanc() {
+    if (!editLanc) return
+    const valorNum = parseFloat(editLancForm.valor)
+    if (!editLancForm.descricao.trim() || isNaN(valorNum) || valorNum <= 0) return
+    setSalvando(true)
+    try {
+      await api.put(`/cartoes/lancamento/${editLanc.id}`, {
+        data:      editLancForm.data,
+        descricao: editLancForm.descricao.trim(),
+        valor:     valorNum,
+        categoria: editLancForm.categoria,
+        cartao_id: editLancForm.cartao_id || undefined,
+      })
+      setEditLanc(null)
+      load()
+    } catch {
+      setErroGeral('Erro ao atualizar lançamento. Tente novamente.')
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  async function handleDeleteLanc() {
+    if (!deleteLanc) return
+    setSalvando(true)
+    try {
+      await api.del(`/cartoes/lancamento/${deleteLanc.id}`)
+      setDeleteLanc(null)
+      load()
+    } catch {
+      setErroGeral('Erro ao excluir lançamento. Tente novamente.')
+    } finally {
+      setSalvando(false)
+    }
+  }
+
   // ─── Derived values ─────────────────────────────────────────────────────────
 
   const mesAtual = new Date().toISOString().slice(0, 7)
-  const gastoMes = lancamentos
-    .filter(l => l.data?.startsWith(mesAtual))
-    .reduce((s, l) => s + l.valor, 0)
 
-  const allTransacoes = Object.values(previewGrupos).flatMap(g => g.transacoes)
-  const selecionadas  = allTransacoes.filter(t => t.incluir && !t.ja_importado)
+  const meses = Array.from(
+    new Set([
+      mesAtual,
+      ...lancamentos.filter(l => l.data).map(l => l.data.slice(0, 7)),
+    ])
+  ).sort((a, b) => b.localeCompare(a))
+
+  const lancFiltrados = lancamentos.filter(l => {
+    const okMes    = filtroMes === 'todos' || l.data?.startsWith(filtroMes)
+    const okCartao = filtroCartao === 'todos' || l.cartao_id === filtroCartao
+    return okMes && okCartao
+  })
+
+  const gastoFiltrado = lancFiltrados.reduce((s, l) => s + l.valor, 0)
+
+  const kpiMesLabel = filtroMes === 'todos'
+    ? `Gasto em ${mesLabel(mesAtual)}`
+    : `Gasto em ${mesLabel(filtroMes)}`
+
+  const porCategoria = lancFiltrados.reduce<Record<string, number>>((acc, l) => {
+    const cat = l.categoria ?? 'outros'
+    acc[cat] = (acc[cat] ?? 0) + l.valor
+    return acc
+  }, {})
+
+  const allTransacoes    = Object.values(previewGrupos).flatMap(g => g.transacoes)
+  const selecionadas     = allTransacoes.filter(t => t.incluir && !t.ja_importado)
   const totalSelecionado = selecionadas.reduce((s, t) => s + t.valor, 0)
-  const podeConfirmar = selecionadas.length > 0 && selecionadas.every(t => t.cartao_id !== null)
+  const podeConfirmar    = selecionadas.length > 0 && selecionadas.every(t => t.cartao_id !== null)
 
   if (loading) return <PageSkeleton />
 
@@ -438,9 +520,9 @@ export default function CartoesPage() {
           iconColor="#6366f1"
         />
         <KpiCard
-          label={`Gasto em ${mesLabel(mesAtual)}`}
-          value={fmtBRL(gastoMes)}
-          sub={`${lancamentos.filter(l => l.data?.startsWith(mesAtual)).length} transações no mês`}
+          label={kpiMesLabel}
+          value={fmtBRL(gastoFiltrado)}
+          sub={`${lancFiltrados.length} transações no período`}
           icon={<CreditCard className="h-5 w-5" />}
           iconBg="rgba(239,68,68,0.1)"
           iconColor="#ef4444"
