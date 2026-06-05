@@ -701,7 +701,11 @@ export default function CartoesPage() {
       {/* ── Lançamentos recentes ── */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Lançamentos Recentes</CardTitle>
+          <CardTitle className="text-base">
+            {filtroMes === 'todos' && filtroCartao === 'todos'
+              ? 'Lançamentos Recentes'
+              : 'Lançamentos Filtrados'}
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
@@ -713,12 +717,13 @@ export default function CartoesPage() {
                 <TableHead className="w-[130px]">Cartão</TableHead>
                 <TableHead className="w-[80px]">Tipo</TableHead>
                 <TableHead className="w-[110px] text-right">Valor</TableHead>
+                <TableHead className="w-[80px]" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {lancFiltrados.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center text-muted-foreground text-sm">
+                  <TableCell colSpan={7} className="py-10 text-center text-muted-foreground text-sm">
                     {lancamentos.length === 0
                       ? 'Nenhum lançamento ainda. Importe um extrato ou adicione um lançamento manual.'
                       : 'Nenhum lançamento para os filtros selecionados.'}
@@ -758,6 +763,28 @@ export default function CartoesPage() {
                   </TableCell>
                   <TableCell className="text-right text-sm font-semibold tabular-nums">
                     {fmtBRL(l.valor)}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => abrirEditLanc(l)}
+                        aria-label="Editar lançamento"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-destructive hover:text-destructive"
+                        onClick={() => setDeleteLanc(l)}
+                        aria-label="Excluir lançamento"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -912,6 +939,109 @@ export default function CartoesPage() {
               }
             >
               {salvando ? 'Salvando…' : 'Salvar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog: Editar lançamento ── */}
+      <Dialog open={!!editLanc} onOpenChange={open => { if (!open) setEditLanc(null) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar Lançamento</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Data</Label>
+                <Input
+                  type="date"
+                  value={editLancForm.data}
+                  onChange={e => setEditLancForm(f => ({ ...f, data: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Valor (R$)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editLancForm.valor}
+                  onChange={e => setEditLancForm(f => ({ ...f, valor: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Estabelecimento</Label>
+              <Input
+                value={editLancForm.descricao}
+                onChange={e => setEditLancForm(f => ({ ...f, descricao: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Categoria</Label>
+                <Select
+                  value={editLancForm.categoria}
+                  onValueChange={v => setEditLancForm(f => ({ ...f, categoria: v ?? 'outros' }))}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {CATEGORIAS.map(c => (
+                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Cartão</Label>
+                <Select
+                  value={editLancForm.cartao_id}
+                  onValueChange={v => setEditLancForm(f => ({ ...f, cartao_id: v ?? '' }))}
+                >
+                  <SelectTrigger><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                  <SelectContent>
+                    {cartoes.map(c => (
+                      <SelectItem key={c.id} value={c.id}>{c.apelido}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditLanc(null)}>Cancelar</Button>
+            <Button
+              onClick={handleEditLanc}
+              disabled={
+                salvando ||
+                !editLancForm.descricao.trim() ||
+                !editLancForm.valor ||
+                parseFloat(editLancForm.valor) <= 0
+              }
+            >
+              {salvando ? 'Salvando…' : 'Salvar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog: Excluir lançamento ── */}
+      <Dialog open={!!deleteLanc} onOpenChange={open => { if (!open) setDeleteLanc(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Excluir lançamento?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">{deleteLanc?.descricao}</span>{' '}
+            de <span className="font-medium text-foreground">
+              {deleteLanc ? fmtBRL(deleteLanc.valor) : ''}
+            </span> será excluído permanentemente. Esta ação não pode ser desfeita.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteLanc(null)}>Cancelar</Button>
+            <Button variant="destructive" onClick={handleDeleteLanc} disabled={salvando}>
+              {salvando ? 'Excluindo…' : 'Excluir'}
             </Button>
           </DialogFooter>
         </DialogContent>
