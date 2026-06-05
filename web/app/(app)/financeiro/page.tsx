@@ -535,15 +535,15 @@ export default function FinanceiroPage() {
                 <BarChart
                   data={chartData}
                   layout="vertical"
-                  margin={{ top: 0, right: 110, bottom: 0, left: 8 }}
+                  margin={{ top: 0, right: 180, bottom: 0, left: 8 }}
                   barSize={22}
                 >
                   <XAxis type="number" hide />
                   <YAxis
                     type="category"
                     dataKey="label"
-                    width={145}
-                    tick={{ fontSize: 13, fill: '#374151' }}
+                    width={150}
+                    tick={{ fontSize: 15, fill: '#374151' }}
                     tickLine={false}
                     axisLine={false}
                   />
@@ -569,12 +569,19 @@ export default function FinanceiroPage() {
                     <LabelList
                       dataKey="value"
                       position="right"
-                      formatter={(v: unknown) => {
-                        const val = Number(v ?? 0)
+                      content={(props) => {
+                        const { x, y, width, height, value } = props as { x: number; y: number; width: number; height: number; value: unknown }
+                        const val = Number(value ?? 0)
                         const pct = totalGeral > 0 ? (val / totalGeral * 100).toFixed(1) : '0.0'
-                        return `${fmtBRL(val)} · ${pct}%`
+                        const cx = x + width + 8
+                        const cy = y + height / 2 + 5
+                        return (
+                          <text x={cx} y={cy} fill="#6b7280" fontSize={14}>
+                            <tspan>{fmtBRL(val)}</tspan>
+                            <tspan dx={32}>{pct}%</tspan>
+                          </text>
+                        )
                       }}
-                      style={{ fontSize: 12, fill: '#6b7280' }}
                     />
                   </Bar>
                 </BarChart>

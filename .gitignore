@@ -36,3 +36,8 @@ Thumbs.db
 
 # Railway / Vercel
 .vercel
+
+# Ferramentas locais (não versionar)
+.playwright-mcp/
+.agents/
+skills-lock.json

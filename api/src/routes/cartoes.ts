@@ -258,6 +258,74 @@ cartaoRoutes.post('/confirmar-importacao', async (req, res, next) => {
   }
 })
 
+// ─── PUT /cartoes/lancamento/:id — editar lançamento ────────────────────────
+const lancamentoEditSchema = z.object({
+  data:      z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  descricao: z.string().min(1).optional(),
+  valor:     z.number().positive().optional(),
+  categoria: z.enum(['peca_maquina', 'manutencao', 'alimentacao', 'combustivel', 'servico', 'mercado', 'veterinario', 'farmacia', 'predial', 'ferragens', 'tejuco_gado', 'pedagio', 'outros']).optional(),
+  cartao_id: z.string().uuid().optional(),
+})
+
+cartaoRoutes.put('/lancamento/:id', async (req, res, next) => {
+  try {
+    const fazendaId = req.user?.app_metadata?.fazenda_ativa_id as string | undefined
+    if (!fazendaId) return res.status(400).json({ error: 'Fazenda não identificada' })
+
+    const body = lancamentoEditSchema.parse(req.body)
+
+    // Se cartao_id for alterado, validar que pertence à fazenda (previne IDOR)
+    if (body.cartao_id) {
+      const { data: cartaoValido } = await supabase
+        .from('cartoes')
+        .select('id')
+        .eq('id', body.cartao_id)
+        .eq('fazenda_id', fazendaId)
+        .single()
+      if (!cartaoValido) {
+        return res.status(403).json({ error: 'cartao_id inválido ou não pertence à fazenda' })
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('lancamentos_financeiros')
+      .update(body)
+      .eq('id', req.params.id)
+      .eq('fazenda_id', fazendaId)
+      .select()
+      .single()
+
+    if (error) throw error
+    if (!data) return res.status(404).json({ error: 'Lançamento não encontrado' })
+    res.json(data)
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Dados inválidos', detalhes: err.errors })
+    }
+    next(err)
+  }
+})
+
+// ─── DELETE /cartoes/lancamento/:id — excluir lançamento ────────────────────
+cartaoRoutes.delete('/lancamento/:id', async (req, res, next) => {
+  try {
+    const fazendaId = req.user?.app_metadata?.fazenda_ativa_id as string | undefined
+    if (!fazendaId) return res.status(400).json({ error: 'Fazenda não identificada' })
+
+    const { error, count } = await supabase
+      .from('lancamentos_financeiros')
+      .delete({ count: 'exact' })
+      .eq('id', req.params.id)
+      .eq('fazenda_id', fazendaId)
+
+    if (error) throw error
+    if (count === 0) return res.status(404).json({ error: 'Lançamento não encontrado' })
+    res.status(204).send()
+  } catch (err) {
+    next(err)
+  }
+})
+
 // ─── POST /cartoes/lancamento — lançamento manual avulso ─────────────────────
 const lancamentoManualSchema = z.object({
   data:      z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
