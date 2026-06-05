@@ -18,6 +18,10 @@ import { KpiCard } from '@/components/ui/kpi-card'
 import { ActionMenu } from '@/components/ui/action-menu'
 import { supabase } from '@/lib/supabase'
 import { api } from '@/lib/api'
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip,
+  Cell, LabelList, ResponsiveContainer,
+} from 'recharts'
 import type { Cartao } from '@/lib/types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -95,6 +99,22 @@ const CAT_STYLE: Record<string, string> = {
   tejuco_gado:  'bg-lime-100 text-lime-700 border-lime-200',
   pedagio:      'bg-cyan-100 text-cyan-700 border-cyan-200',
   outros:       'bg-gray-100 text-gray-700 border-gray-200',
+}
+
+const CAT_COLOR: Record<string, string> = {
+  peca_maquina: '#6366f1',
+  manutencao:   '#ec4899',
+  alimentacao:  '#f97316',
+  combustivel:  '#3b82f6',
+  servico:      '#a855f7',
+  mercado:      '#22c55e',
+  veterinario:  '#14b8a6',
+  farmacia:     '#ef4444',
+  predial:      '#eab308',
+  ferragens:    '#f59e0b',
+  tejuco_gado:  '#84cc16',
+  pedagio:      '#06b6d4',
+  outros:       '#9ca3af',
 }
 
 const FORM_CARTAO_VAZIO: CartaoForm = { apelido: '', bandeira: '', responsavel: '' }
@@ -656,49 +676,54 @@ export default function CartoesPage() {
       </div>
 
       {/* ── Gastos por Categoria ── */}
-      {lancFiltrados.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Gastos por Categoria</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Categoria</TableHead>
-                  <TableHead className="text-right w-[130px]">Total</TableHead>
-                  <TableHead className="text-right w-[70px]">%</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {Object.entries(porCategoria)
-                  .sort((a, b) => b[1] - a[1])
-                  .map(([cat, total]) => {
-                    const pct = gastoFiltrado > 0 ? (total / gastoFiltrado * 100).toFixed(1) : '0.0'
-                    return (
-                      <TableRow key={cat}>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            className={`text-xs ${CAT_STYLE[cat] ?? CAT_STYLE.outros}`}
-                          >
-                            {CAT_LABEL[cat] ?? cat}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right font-semibold tabular-nums text-sm">
-                          {fmtBRL(total)}
-                        </TableCell>
-                        <TableCell className="text-right text-sm text-muted-foreground">
-                          {pct}%
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
+      {lancFiltrados.length > 0 && (() => {
+        const chartData = Object.entries(porCategoria)
+          .sort((a, b) => b[1] - a[1])
+          .map(([cat, total]) => ({ cat, label: CAT_LABEL[cat] ?? cat, value: total }))
+        return (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Gastos por Categoria</CardTitle>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              <div style={{ minWidth: 360 }}>
+                <ResponsiveContainer width="100%" height={chartData.length * 48 + 16}>
+                  <BarChart
+                    data={chartData}
+                    layout="vertical"
+                    margin={{ top: 0, right: 90, bottom: 0, left: 8 }}
+                  >
+                    <XAxis type="number" hide />
+                    <YAxis
+                      type="category"
+                      dataKey="label"
+                      width={130}
+                      tick={{ fontSize: 13 }}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <RechartsTooltip
+                      formatter={(value: unknown) => [fmtBRL(Number(value ?? 0)), 'Total']}
+                      cursor={{ fill: 'rgba(0,0,0,0.04)' }}
+                    />
+                    <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                      {chartData.map(entry => (
+                        <Cell key={entry.cat} fill={CAT_COLOR[entry.cat] ?? '#9ca3af'} />
+                      ))}
+                      <LabelList
+                        dataKey="value"
+                        position="right"
+                        formatter={(v: unknown) => fmtBRL(Number(v ?? 0))}
+                        style={{ fontSize: 13, fill: '#6b7280' }}
+                      />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+        )
+      })()}
 
       {/* ── Lançamentos recentes ── */}
       <Card>
