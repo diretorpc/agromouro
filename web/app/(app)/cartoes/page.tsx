@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { CreditCard, Upload, Plus, Pencil, Trash2 } from 'lucide-react'
+import { CreditCard, Upload, Plus, Pencil, Trash2, Filter } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -18,6 +18,10 @@ import { KpiCard } from '@/components/ui/kpi-card'
 import { ActionMenu } from '@/components/ui/action-menu'
 import { supabase } from '@/lib/supabase'
 import { api } from '@/lib/api'
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip,
+  Cell, LabelList, ResponsiveContainer,
+} from 'recharts'
 import type { Cartao } from '@/lib/types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -97,6 +101,22 @@ const CAT_STYLE: Record<string, string> = {
   outros:       'bg-gray-100 text-gray-700 border-gray-200',
 }
 
+const CAT_COLOR: Record<string, string> = {
+  peca_maquina: '#6366f1',
+  manutencao:   '#ec4899',
+  alimentacao:  '#f97316',
+  combustivel:  '#3b82f6',
+  servico:      '#a855f7',
+  mercado:      '#22c55e',
+  veterinario:  '#14b8a6',
+  farmacia:     '#ef4444',
+  predial:      '#eab308',
+  ferragens:    '#f59e0b',
+  tejuco_gado:  '#84cc16',
+  pedagio:      '#06b6d4',
+  outros:       '#9ca3af',
+}
+
 const FORM_CARTAO_VAZIO: CartaoForm = { apelido: '', bandeira: '', responsavel: '' }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -110,7 +130,8 @@ function fmtDate(s: string) {
 }
 
 function mesLabel(iso: string) {
-  return new Date(iso + '-01').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+  const [y, mo] = iso.split('-')
+  return new Date(+y, +mo - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -135,6 +156,18 @@ export default function CartoesPage() {
   const [deleteCartao, setDeleteCartao]       = useState<Cartao | null>(null)
   const [deleteErro, setDeleteErro]           = useState<string | null>(null)
   const [manualDialog, setManualDialog]       = useState(false)
+
+  // Filter state
+  const [filtroMes, setFiltroMes]       = useState('todos')
+  const [filtroCartao, setFiltroCartao] = useState('todos')
+
+  // Edit/delete lançamento state
+  const [editLanc, setEditLanc]         = useState<LancamentoCartao | null>(null)
+  const [editLancForm, setEditLancForm] = useState<ManualForm>({
+    data: '', descricao: '', valor: '', categoria: 'outros', cartao_id: '',
+  })
+  const [deleteLanc, setDeleteLanc]     = useState<LancamentoCartao | null>(null)
+  const [deleteLancErro, setDeleteLancErro] = useState<string | null>(null)
 
   // Form states
   const [cartaoForm, setCartaoForm] = useState<CartaoForm>(FORM_CARTAO_VAZIO)
@@ -366,17 +399,89 @@ export default function CartoesPage() {
     }
   }
 
+  // ─── Edit/delete lançamento ─────────────────────────────────────────────────
+
+  function abrirEditLanc(l: LancamentoCartao) {
+    setEditLancForm({
+      data:      l.data,
+      descricao: l.descricao,
+      valor:     String(l.valor),
+      categoria: l.categoria ?? 'outros',
+      cartao_id: l.cartao_id ?? '',
+    })
+    setEditLanc(l)
+  }
+
+  async function handleEditLanc() {
+    if (!editLanc) return
+    const valorNum = parseFloat(editLancForm.valor)
+    if (!editLancForm.descricao.trim() || isNaN(valorNum) || valorNum <= 0) return
+    setSalvando(true)
+    try {
+      await api.put(`/cartoes/lancamento/${editLanc.id}`, {
+        data:      editLancForm.data,
+        descricao: editLancForm.descricao.trim(),
+        valor:     valorNum,
+        categoria: editLancForm.categoria,
+        cartao_id: editLancForm.cartao_id || undefined,
+      })
+      setEditLanc(null)
+      load()
+    } catch {
+      setErroGeral('Erro ao atualizar lançamento. Tente novamente.')
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  async function handleDeleteLanc() {
+    if (!deleteLanc) return
+    setSalvando(true)
+    setDeleteLancErro(null)
+    try {
+      await api.del(`/cartoes/lancamento/${deleteLanc.id}`)
+      setDeleteLanc(null)
+      load()
+    } catch {
+      setDeleteLancErro('Erro ao excluir lançamento. Tente novamente.')
+    } finally {
+      setSalvando(false)
+    }
+  }
+
   // ─── Derived values ─────────────────────────────────────────────────────────
 
   const mesAtual = new Date().toISOString().slice(0, 7)
-  const gastoMes = lancamentos
-    .filter(l => l.data?.startsWith(mesAtual))
-    .reduce((s, l) => s + l.valor, 0)
 
-  const allTransacoes = Object.values(previewGrupos).flatMap(g => g.transacoes)
-  const selecionadas  = allTransacoes.filter(t => t.incluir && !t.ja_importado)
+  const meses = Array.from(
+    new Set([
+      mesAtual,
+      ...lancamentos.filter(l => l.data).map(l => l.data.slice(0, 7)),
+    ])
+  ).sort((a, b) => b.localeCompare(a))
+
+  const lancFiltrados = lancamentos.filter(l => {
+    const okMes    = filtroMes === 'todos' || l.data?.startsWith(filtroMes)
+    const okCartao = filtroCartao === 'todos' || l.cartao_id === filtroCartao
+    return okMes && okCartao
+  })
+
+  const gastoFiltrado = lancFiltrados.reduce((s, l) => s + l.valor, 0)
+
+  const kpiMesLabel = filtroMes === 'todos'
+    ? 'Gasto total (todos os meses)'
+    : `Gasto em ${mesLabel(filtroMes)}`
+
+  const porCategoria = lancFiltrados.reduce<Record<string, number>>((acc, l) => {
+    const cat = l.categoria ?? 'outros'
+    acc[cat] = (acc[cat] ?? 0) + l.valor
+    return acc
+  }, {})
+
+  const allTransacoes    = Object.values(previewGrupos).flatMap(g => g.transacoes)
+  const selecionadas     = allTransacoes.filter(t => t.incluir && !t.ja_importado)
   const totalSelecionado = selecionadas.reduce((s, t) => s + t.valor, 0)
-  const podeConfirmar = selecionadas.length > 0 && selecionadas.every(t => t.cartao_id !== null)
+  const podeConfirmar    = selecionadas.length > 0 && selecionadas.every(t => t.cartao_id !== null)
 
   if (loading) return <PageSkeleton />
 
@@ -437,17 +542,17 @@ export default function CartoesPage() {
           iconColor="#6366f1"
         />
         <KpiCard
-          label={`Gasto em ${mesLabel(mesAtual)}`}
-          value={fmtBRL(gastoMes)}
-          sub={`${lancamentos.filter(l => l.data?.startsWith(mesAtual)).length} transações no mês`}
+          label={kpiMesLabel}
+          value={fmtBRL(gastoFiltrado)}
+          sub={`${lancFiltrados.length} transações no período`}
           icon={<CreditCard className="h-5 w-5" />}
           iconBg="rgba(239,68,68,0.1)"
           iconColor="#ef4444"
         />
         <KpiCard
-          label="Total de Transações"
-          value={String(lancamentos.length)}
-          sub="Importadas + manuais"
+          label={filtroMes === 'todos' && filtroCartao === 'todos' ? 'Total de Transações' : 'Transações Filtradas'}
+          value={String(lancFiltrados.length)}
+          sub={filtroMes === 'todos' && filtroCartao === 'todos' ? 'Importadas + manuais' : `de ${lancamentos.length} no total`}
           icon={<CreditCard className="h-5 w-5" />}
           iconBg="rgba(34,197,94,0.1)"
           iconColor="#16a34a"
@@ -527,10 +632,107 @@ export default function CartoesPage() {
         </div>
       )}
 
+      {/* ── Filtros ── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Filter className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+        <Select value={filtroMes} onValueChange={v => setFiltroMes(v ?? 'todos')}>
+          <SelectTrigger className="w-44 h-9 text-sm">
+            <SelectValue>
+              {filtroMes === 'todos' ? 'Todos os meses' : mesLabel(filtroMes)}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todos os meses</SelectItem>
+            {meses.map(m => (
+              <SelectItem key={m} value={m}>{mesLabel(m)}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={filtroCartao} onValueChange={v => setFiltroCartao(v ?? 'todos')}>
+          <SelectTrigger className="w-44 h-9 text-sm">
+            <SelectValue>
+              {filtroCartao === 'todos'
+                ? 'Todos os cartões'
+                : (cartoes.find(c => c.id === filtroCartao)?.apelido ?? 'Todos os cartões')}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todos os cartões</SelectItem>
+            {cartoes.map(c => (
+              <SelectItem key={c.id} value={c.id}>{c.apelido}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {(filtroMes !== 'todos' || filtroCartao !== 'todos') && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-9 text-muted-foreground"
+            onClick={() => { setFiltroMes('todos'); setFiltroCartao('todos') }}
+          >
+            Limpar
+          </Button>
+        )}
+      </div>
+
+      {/* ── Gastos por Categoria ── */}
+      {lancFiltrados.length > 0 && (() => {
+        const chartData = Object.entries(porCategoria)
+          .sort((a, b) => b[1] - a[1])
+          .map(([cat, total]) => ({ cat, label: CAT_LABEL[cat] ?? cat, value: total }))
+        return (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Gastos por Categoria</CardTitle>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              <div style={{ minWidth: 360 }}>
+                <ResponsiveContainer width="100%" height={chartData.length * 48 + 16}>
+                  <BarChart
+                    data={chartData}
+                    layout="vertical"
+                    margin={{ top: 0, right: 90, bottom: 0, left: 8 }}
+                  >
+                    <XAxis type="number" hide />
+                    <YAxis
+                      type="category"
+                      dataKey="label"
+                      width={130}
+                      tick={{ fontSize: 13 }}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <RechartsTooltip
+                      formatter={(value: unknown) => [fmtBRL(Number(value ?? 0)), 'Total']}
+                      cursor={{ fill: 'rgba(0,0,0,0.04)' }}
+                    />
+                    <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                      {chartData.map(entry => (
+                        <Cell key={entry.cat} fill={CAT_COLOR[entry.cat] ?? '#9ca3af'} />
+                      ))}
+                      <LabelList
+                        dataKey="value"
+                        position="right"
+                        formatter={(v: unknown) => fmtBRL(Number(v ?? 0))}
+                        style={{ fontSize: 13, fill: '#6b7280' }}
+                      />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+        )
+      })()}
+
       {/* ── Lançamentos recentes ── */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Lançamentos Recentes</CardTitle>
+          <CardTitle className="text-base">
+            {filtroMes === 'todos' && filtroCartao === 'todos'
+              ? 'Lançamentos Recentes'
+              : 'Lançamentos Filtrados'}
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
@@ -542,16 +744,19 @@ export default function CartoesPage() {
                 <TableHead className="w-[130px]">Cartão</TableHead>
                 <TableHead className="w-[80px]">Tipo</TableHead>
                 <TableHead className="w-[110px] text-right">Valor</TableHead>
+                <TableHead className="w-[80px]" />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {lancamentos.length === 0 ? (
+              {lancFiltrados.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center text-muted-foreground text-sm">
-                    Nenhum lançamento ainda. Importe um extrato ou adicione um lançamento manual.
+                  <TableCell colSpan={7} className="py-10 text-center text-muted-foreground text-sm">
+                    {lancamentos.length === 0
+                      ? 'Nenhum lançamento ainda. Importe um extrato ou adicione um lançamento manual.'
+                      : 'Nenhum lançamento para os filtros selecionados.'}
                   </TableCell>
                 </TableRow>
-              ) : lancamentos.map(l => (
+              ) : lancFiltrados.map(l => (
                 <TableRow key={l.id}>
                   <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                     {l.data ? fmtDate(l.data) : '—'}
@@ -585,6 +790,28 @@ export default function CartoesPage() {
                   </TableCell>
                   <TableCell className="text-right text-sm font-semibold tabular-nums">
                     {fmtBRL(l.valor)}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => abrirEditLanc(l)}
+                        aria-label="Editar lançamento"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-destructive hover:text-destructive"
+                        onClick={() => setDeleteLanc(l)}
+                        aria-label="Excluir lançamento"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -739,6 +966,115 @@ export default function CartoesPage() {
               }
             >
               {salvando ? 'Salvando…' : 'Salvar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog: Editar lançamento ── */}
+      <Dialog open={!!editLanc} onOpenChange={open => { if (!open) setEditLanc(null) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar Lançamento</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Data</Label>
+                <Input
+                  type="date"
+                  value={editLancForm.data}
+                  onChange={e => setEditLancForm(f => ({ ...f, data: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Valor (R$)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editLancForm.valor}
+                  onChange={e => setEditLancForm(f => ({ ...f, valor: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Estabelecimento</Label>
+              <Input
+                value={editLancForm.descricao}
+                onChange={e => setEditLancForm(f => ({ ...f, descricao: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Categoria</Label>
+                <Select
+                  value={editLancForm.categoria}
+                  onValueChange={v => setEditLancForm(f => ({ ...f, categoria: v ?? 'outros' }))}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {CATEGORIAS.map(c => (
+                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Cartão</Label>
+                <Select
+                  value={editLancForm.cartao_id}
+                  onValueChange={v => setEditLancForm(f => ({ ...f, cartao_id: v ?? '' }))}
+                >
+                  <SelectTrigger><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                  <SelectContent>
+                    {cartoes.map(c => (
+                      <SelectItem key={c.id} value={c.id}>{c.apelido}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditLanc(null)}>Cancelar</Button>
+            <Button
+              onClick={handleEditLanc}
+              disabled={
+                salvando ||
+                !editLancForm.descricao.trim() ||
+                !editLancForm.valor ||
+                parseFloat(editLancForm.valor) <= 0 ||
+                !editLancForm.cartao_id
+              }
+            >
+              {salvando ? 'Salvando…' : 'Salvar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog: Excluir lançamento ── */}
+      <Dialog open={!!deleteLanc} onOpenChange={open => { if (!open) { setDeleteLanc(null); setDeleteLancErro(null) } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Excluir lançamento?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">{deleteLanc?.descricao}</span>{' '}
+            de <span className="font-medium text-foreground">
+              {deleteLanc ? fmtBRL(deleteLanc.valor) : ''}
+            </span> será excluído permanentemente. Esta ação não pode ser desfeita.
+          </p>
+          {deleteLancErro && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              {deleteLancErro}
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setDeleteLanc(null); setDeleteLancErro(null) }}>Cancelar</Button>
+            <Button variant="destructive" onClick={handleDeleteLanc} disabled={salvando}>
+              {salvando ? 'Excluindo…' : 'Excluir'}
             </Button>
           </DialogFooter>
         </DialogContent>
