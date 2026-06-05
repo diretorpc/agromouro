@@ -108,25 +108,38 @@ const CENTRO_CUSTO_STYLE: Record<string, string> = {
 }
 
 const CENTRO_CUSTO_COLOR: Record<string, string> = {
-  herbicida:          '#C05621',  // terracota — queimado, não alarme
-  fungicida:          '#6B21A8',  // roxo escuro
-  inseticida:         '#B91C1C',  // vermelho escuro
-  adjuvante:          '#0E7490',  // cyan profundo
-  biologico:          '#059669',  // verde esmeralda
-  fertilizante_n:     '#15803D',  // verde app
-  fertilizante_p:     '#166534',  // verde mais escuro
-  fertilizante_k:     '#14532D',  // verde floresta
-  fertilizante_outro: '#1A3D2B',  // verde bem escuro
-  calcario:           '#78716C',  // stone/mineral — perfeito
-  semente:            '#CA8A04',  // âmbar escuro
-  combustivel:        '#1D4ED8',  // azul cobalto
-  lubrificante:       '#1E3A5F',  // azul petróleo
-  peca_maquina:       '#374151',  // cinza grafite
-  servico:            '#9D174D',  // rosa escuro
-  frete:              '#475569',  // slate médio
-  operacional:        '#6B7280',  // cinza neutro
-  rh:                 '#9F1239',  // vermelho escuro
-  outro:              '#9CA3AF',  // cinza claro
+  // ── Insumos agrícolas ─────────────────────────────────────
+  herbicida:          '#C2410C',  // laranja-terra (orange-700)
+  fungicida:          '#7C3AED',  // violeta (violet-600)
+  inseticida:         '#DC2626',  // vermelho (red-600)
+  adjuvante:          '#0891B2',  // ciano (cyan-600)
+  biologico:          '#059669',  // esmeralda (emerald-600)
+  fertilizante_n:     '#15803D',  // verde (green-700)
+  fertilizante_p:     '#4D7C0F',  // lima escuro (lime-700)
+  fertilizante_k:     '#B45309',  // âmbar (amber-700)
+  fertilizante_outro: '#713F12',  // marrom (amber-900)
+  calcario:           '#57534E',  // pedra (stone-600)
+  semente:            '#CA8A04',  // mostarda (yellow-600)
+  // ── Operacional ───────────────────────────────────────────
+  combustivel:        '#2563EB',  // azul (blue-600)
+  lubrificante:       '#0F766E',  // verde-petróleo (teal-700)
+  peca_maquina:       '#4338CA',  // índigo (indigo-700)
+  servico:            '#C026D3',  // fúcsia (fuchsia-600)
+  frete:              '#0284C7',  // azul-céu (sky-600)
+  operacional:        '#D97706',  // laranja-queimado (amber-600)
+  rh:                 '#E11D48',  // rosa-carmim (rose-600)
+  outro:              '#94A3B8',  // slate suave
+  // ── Categorias de cartão ──────────────────────────────────
+  manutencao:         '#DB2777',  // pink (pink-600)
+  alimentacao:        '#EA580C',  // laranja (orange-600)
+  mercado:            '#16A34A',  // verde (green-600)
+  veterinario:        '#0D9488',  // teal (teal-600)
+  farmacia:           '#EF4444',  // vermelho (red-500)
+  predial:            '#EAB308',  // amarelo (yellow-500)
+  ferragens:          '#6366F1',  // índigo-claro (indigo-500)
+  tejuco_gado:        '#84CC16',  // lima (lime-500)
+  pedagio:            '#06B6D4',  // ciano (cyan-500)
+  outros:             '#94A3B8',  // slate suave
 }
 
 function fmtBRL(value: number) {
@@ -411,8 +424,12 @@ export default function FinanceiroPage() {
     load()
   }
 
+  const mesAtual = new Date().toISOString().slice(0, 7) // 'YYYY-MM'
   const meses = Array.from(
-    new Set(itens.filter(i => i.data_emissao).map(i => i.data_emissao.slice(0, 7)))
+    new Set([
+      mesAtual, // garante que o mês corrente aparece sempre, mesmo sem dados
+      ...itens.filter(i => i.data_emissao).map(i => i.data_emissao.slice(0, 7)),
+    ])
   ).sort((a, b) => b.localeCompare(a))
 
   const itensFiltrados = itens
@@ -506,43 +523,72 @@ export default function FinanceiroPage() {
 
       {chartData.length > 0 && (
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Gastos por Categoria</CardTitle>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Gastos por Categoria</CardTitle>
+              <span className="text-sm text-muted-foreground tabular-nums">{fmtBRL(totalGeral)}</span>
+            </div>
           </CardHeader>
-          <CardContent className="overflow-x-auto">
+          <CardContent className="overflow-x-auto pt-2">
             <div style={{ minWidth: 360 }}>
-            <ResponsiveContainer width="100%" height={chartData.length * 48 + 16}>
-              <BarChart
-                data={chartData}
-                layout="vertical"
-                margin={{ top: 0, right: 80, bottom: 0, left: 8 }}
-              >
-                <XAxis type="number" hide />
-                <YAxis
-                  type="category"
-                  dataKey="label"
-                  width={140}
-                  tick={{ fontSize: 15 }}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <RechartsTooltip
-                  formatter={(value: unknown) => [fmtBRL(Number(value ?? 0)), 'Total']}
-                  cursor={{ fill: 'rgba(0,0,0,0.04)' }}
-                />
-                <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                  {chartData.map(entry => (
-                    <Cell key={entry.key} fill={CENTRO_CUSTO_COLOR[entry.key] ?? '#9ca3af'} />
-                  ))}
-                  <LabelList
-                    dataKey="value"
-                    position="right"
-                    formatter={(v: unknown) => fmtBRL(Number(v ?? 0))}
-                    style={{ fontSize: 14, fill: '#6b7280' }}
+              <ResponsiveContainer width="100%" height={chartData.length * 52 + 16}>
+                <BarChart
+                  data={chartData}
+                  layout="vertical"
+                  margin={{ top: 0, right: 110, bottom: 0, left: 8 }}
+                  barSize={22}
+                >
+                  <XAxis type="number" hide />
+                  <YAxis
+                    type="category"
+                    dataKey="label"
+                    width={145}
+                    tick={{ fontSize: 13, fill: '#374151' }}
+                    tickLine={false}
+                    axisLine={false}
                   />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+                  <RechartsTooltip
+                    cursor={{ fill: 'rgba(0,0,0,0.04)' }}
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null
+                      const { label, value } = payload[0].payload as { label: string; value: number }
+                      const pct = totalGeral > 0 ? (value / totalGeral * 100).toFixed(1) : '0.0'
+                      return (
+                        <div className="rounded-lg border bg-background px-3 py-2 shadow-md text-sm">
+                          <p className="font-medium text-foreground mb-1">{label}</p>
+                          <p className="tabular-nums text-foreground">{fmtBRL(value)}</p>
+                          <p className="text-muted-foreground">{pct}% do total</p>
+                        </div>
+                      )
+                    }}
+                  />
+                  <Bar dataKey="value" radius={[0, 5, 5, 0]}>
+                    {chartData.map(entry => (
+                      <Cell key={entry.key} fill={CENTRO_CUSTO_COLOR[entry.key] ?? '#94a3b8'} />
+                    ))}
+                    <LabelList
+                      dataKey="value"
+                      position="right"
+                      content={({ x, y, width, height, value: v }) => {
+                        const val = Number(v ?? 0)
+                        const pct = totalGeral > 0 ? (val / totalGeral * 100).toFixed(1) : '0.0'
+                        return (
+                          <text
+                            x={Number(x ?? 0) + Number(width ?? 0) + 8}
+                            y={Number(y ?? 0) + Number(height ?? 0) / 2}
+                            dy={5}
+                            fontSize={12}
+                            fill="#6b7280"
+                            textAnchor="start"
+                          >
+                            {fmtBRL(val)} · {pct}%
+                          </text>
+                        )
+                      }}
+                    />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           </CardContent>
         </Card>
@@ -587,7 +633,7 @@ export default function FinanceiroPage() {
                 <SelectItem value="todos">Todos os meses</SelectItem>
                 {meses.map(m => (
                   <SelectItem key={m} value={m}>
-                    {new Date(m + '-01').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+                    {(() => { const [y, mo] = m.split('-'); return new Date(+y, +mo - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) })()}
                   </SelectItem>
                 ))}
               </SelectContent>
