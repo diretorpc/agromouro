@@ -147,6 +147,7 @@ export default function CartoesPage() {
     data: '', descricao: '', valor: '', categoria: 'outros', cartao_id: '',
   })
   const [deleteLanc, setDeleteLanc]     = useState<LancamentoCartao | null>(null)
+  const [deleteLancErro, setDeleteLancErro] = useState<string | null>(null)
 
   // Form states
   const [cartaoForm, setCartaoForm] = useState<CartaoForm>(FORM_CARTAO_VAZIO)
@@ -416,12 +417,13 @@ export default function CartoesPage() {
   async function handleDeleteLanc() {
     if (!deleteLanc) return
     setSalvando(true)
+    setDeleteLancErro(null)
     try {
       await api.del(`/cartoes/lancamento/${deleteLanc.id}`)
       setDeleteLanc(null)
       load()
     } catch {
-      setErroGeral('Erro ao excluir lançamento. Tente novamente.')
+      setDeleteLancErro('Erro ao excluir lançamento. Tente novamente.')
     } finally {
       setSalvando(false)
     }
@@ -447,7 +449,7 @@ export default function CartoesPage() {
   const gastoFiltrado = lancFiltrados.reduce((s, l) => s + l.valor, 0)
 
   const kpiMesLabel = filtroMes === 'todos'
-    ? `Gasto em ${mesLabel(mesAtual)}`
+    ? 'Gasto total (todos os meses)'
     : `Gasto em ${mesLabel(filtroMes)}`
 
   const porCategoria = lancFiltrados.reduce<Record<string, number>>((acc, l) => {
@@ -1017,7 +1019,8 @@ export default function CartoesPage() {
                 salvando ||
                 !editLancForm.descricao.trim() ||
                 !editLancForm.valor ||
-                parseFloat(editLancForm.valor) <= 0
+                parseFloat(editLancForm.valor) <= 0 ||
+                !editLancForm.cartao_id
               }
             >
               {salvando ? 'Salvando…' : 'Salvar'}
@@ -1027,7 +1030,7 @@ export default function CartoesPage() {
       </Dialog>
 
       {/* ── Dialog: Excluir lançamento ── */}
-      <Dialog open={!!deleteLanc} onOpenChange={open => { if (!open) setDeleteLanc(null) }}>
+      <Dialog open={!!deleteLanc} onOpenChange={open => { if (!open) { setDeleteLanc(null); setDeleteLancErro(null) } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Excluir lançamento?</DialogTitle>
@@ -1038,8 +1041,13 @@ export default function CartoesPage() {
               {deleteLanc ? fmtBRL(deleteLanc.valor) : ''}
             </span> será excluído permanentemente. Esta ação não pode ser desfeita.
           </p>
+          {deleteLancErro && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              {deleteLancErro}
+            </p>
+          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteLanc(null)}>Cancelar</Button>
+            <Button variant="outline" onClick={() => { setDeleteLanc(null); setDeleteLancErro(null) }}>Cancelar</Button>
             <Button variant="destructive" onClick={handleDeleteLanc} disabled={salvando}>
               {salvando ? 'Excluindo…' : 'Excluir'}
             </Button>
