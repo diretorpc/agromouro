@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { CreditCard, Upload, Plus, Pencil, Trash2 } from 'lucide-react'
+import { CreditCard, Upload, Plus, Pencil, Trash2, Filter } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -528,9 +528,9 @@ export default function CartoesPage() {
           iconColor="#ef4444"
         />
         <KpiCard
-          label="Total de Transações"
-          value={String(lancamentos.length)}
-          sub="Importadas + manuais"
+          label={filtroMes === 'todos' && filtroCartao === 'todos' ? 'Total de Transações' : 'Transações Filtradas'}
+          value={String(lancFiltrados.length)}
+          sub={filtroMes === 'todos' && filtroCartao === 'todos' ? 'Importadas + manuais' : `de ${lancamentos.length} no total`}
           icon={<CreditCard className="h-5 w-5" />}
           iconBg="rgba(34,197,94,0.1)"
           iconColor="#16a34a"
@@ -610,6 +610,94 @@ export default function CartoesPage() {
         </div>
       )}
 
+      {/* ── Filtros ── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Filter className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+        <Select value={filtroMes} onValueChange={v => setFiltroMes(v ?? 'todos')}>
+          <SelectTrigger className="w-44 h-9 text-sm">
+            <SelectValue>
+              {filtroMes === 'todos' ? 'Todos os meses' : mesLabel(filtroMes)}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todos os meses</SelectItem>
+            {meses.map(m => (
+              <SelectItem key={m} value={m}>{mesLabel(m)}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={filtroCartao} onValueChange={v => setFiltroCartao(v ?? 'todos')}>
+          <SelectTrigger className="w-44 h-9 text-sm">
+            <SelectValue>
+              {filtroCartao === 'todos'
+                ? 'Todos os cartões'
+                : (cartoes.find(c => c.id === filtroCartao)?.apelido ?? 'Todos os cartões')}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todos os cartões</SelectItem>
+            {cartoes.map(c => (
+              <SelectItem key={c.id} value={c.id}>{c.apelido}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {(filtroMes !== 'todos' || filtroCartao !== 'todos') && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-9 text-muted-foreground"
+            onClick={() => { setFiltroMes('todos'); setFiltroCartao('todos') }}
+          >
+            Limpar
+          </Button>
+        )}
+      </div>
+
+      {/* ── Gastos por Categoria ── */}
+      {lancFiltrados.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Gastos por Categoria</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Categoria</TableHead>
+                  <TableHead className="text-right w-[130px]">Total</TableHead>
+                  <TableHead className="text-right w-[70px]">%</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {Object.entries(porCategoria)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([cat, total]) => {
+                    const pct = gastoFiltrado > 0 ? (total / gastoFiltrado * 100).toFixed(1) : '0.0'
+                    return (
+                      <TableRow key={cat}>
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className={`text-xs ${CAT_STYLE[cat] ?? CAT_STYLE.outros}`}
+                          >
+                            {CAT_LABEL[cat] ?? cat}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right font-semibold tabular-nums text-sm">
+                          {fmtBRL(total)}
+                        </TableCell>
+                        <TableCell className="text-right text-sm text-muted-foreground">
+                          {pct}%
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
       {/* ── Lançamentos recentes ── */}
       <Card>
         <CardHeader>
@@ -628,13 +716,15 @@ export default function CartoesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {lancamentos.length === 0 ? (
+              {lancFiltrados.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="py-10 text-center text-muted-foreground text-sm">
-                    Nenhum lançamento ainda. Importe um extrato ou adicione um lançamento manual.
+                    {lancamentos.length === 0
+                      ? 'Nenhum lançamento ainda. Importe um extrato ou adicione um lançamento manual.'
+                      : 'Nenhum lançamento para os filtros selecionados.'}
                   </TableCell>
                 </TableRow>
-              ) : lancamentos.map(l => (
+              ) : lancFiltrados.map(l => (
                 <TableRow key={l.id}>
                   <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                     {l.data ? fmtDate(l.data) : '—'}
