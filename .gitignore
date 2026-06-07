@@ -41,3 +41,9 @@ Thumbs.db
 .playwright-mcp/
 .agents/
 skills-lock.json
+
+# Resumo para a família — gerado/local, contém dados reais (mantido só no computador)
+docs/features-agromouro.md
+docs/features-agromouro.pdf
+docs/features-agromouro.html
+docs/screenshots/

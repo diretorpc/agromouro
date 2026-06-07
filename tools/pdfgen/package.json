@@ -1,0 +1,9 @@
+{
+  "name": "pdfgen",
+  "private": true,
+  "type": "module",
+  "description": "Converte um markdown (com imagens) em PDF usando o Chromium do Playwright.",
+  "dependencies": {
+    "marked": "^12.0.0"
+  }
+}
