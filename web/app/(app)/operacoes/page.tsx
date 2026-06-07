@@ -25,6 +25,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { supabase } from '@/lib/supabase'
+import { useFazenda } from '@/context/fazenda-context'
 import type { Talhao } from '@/lib/types'
 
 type ItemOperacao = {
@@ -81,6 +82,7 @@ export default function OperacoesPage() {
   const [talhoes, setTalhoes] = useState<Talhao[]>([])
   const [insumos, setInsumos] = useState<InsumoEstoque[]>([])
   const [loading, setLoading] = useState(true)
+  const { fazendaAtiva } = useFazenda()
   const [modalOpen, setModalOpen] = useState(false)
   const [salvando, setSalvando] = useState(false)
   const [erroSalvar, setErroSalvar] = useState<string | null>(null)
@@ -157,6 +159,7 @@ export default function OperacoesPage() {
           quantidade: item.quantidade,
           data: new Date().toISOString().split('T')[0],
           origem: 'manual',
+          ...(fazendaAtiva ? { fazenda_id: fazendaAtiva.id } : {}),
         })
         // busca saldo fresco do banco para evitar usar state desatualizado
         const { data: estRow } = await supabase
@@ -207,6 +210,7 @@ export default function OperacoesPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!form.talhao_id || !form.tipo) return
+    if (!fazendaAtiva) { setErroSalvar('Nenhuma fazenda ativa selecionada'); return }
     setSalvando(true)
     setErroSalvar(null)
 
@@ -253,7 +257,7 @@ export default function OperacoesPage() {
     } else {
       const { data: op, error: opError } = await supabase
         .from('operacoes')
-        .insert({ talhao_id: form.talhao_id, tipo: form.tipo, data: form.data, descricao: form.descricao || '', fonte: 'manual' })
+        .insert({ talhao_id: form.talhao_id, tipo: form.tipo, data: form.data, descricao: form.descricao || '', fonte: 'manual', fazenda_id: fazendaAtiva.id })
         .select()
         .single()
 
@@ -285,7 +289,7 @@ export default function OperacoesPage() {
         })
 
         await supabase.from('movimentacoes_estoque').insert({
-          insumo_id: prod.insumo_id, tipo: 'saida', quantidade, data: form.data, origem: 'operacao', operacao_id: opId,
+          insumo_id: prod.insumo_id, tipo: 'saida', quantidade, data: form.data, origem: 'operacao', operacao_id: opId, fazenda_id: fazendaAtiva.id,
         })
 
         if (estoqueItem) {
