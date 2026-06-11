@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { TrendingDown, DollarSign, Package, Sprout, Tractor, BarChart2, CloudRain, Sun, Cloud, TrendingUp, AlertTriangle, Wind, Droplets, CloudDrizzle, MapPin, RefreshCw, Wheat } from 'lucide-react'
+import { TrendingDown, DollarSign, Package, Sprout, Tractor, BarChart2, CloudRain, Sun, Cloud, TrendingUp, AlertTriangle, Wind, Droplets, CloudDrizzle, MapPin, RefreshCw, Wheat, Bean } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Label,
@@ -557,33 +557,20 @@ const COMMODITY_LABELS: Record<string, string> = {
   trigo: 'Trigo',
 }
 
-// Ícones de grão no estilo de linha do lucide (stroke currentColor).
-function IconeSoja({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
-      <path d="M11 4c1.6-1 3.2-1 4.6.2" />
-      <path d="M6.2 18.6C4.2 14.4 5.6 6.6 10.8 4.2c3 4.6 2.4 12-2 15-1 .7-2 .5-2.6-.6Z" />
-      <circle cx="8.4" cy="9" r="1" fill="currentColor" stroke="none" />
-      <circle cx="9" cy="12.6" r="1" fill="currentColor" stroke="none" />
-      <circle cx="8.6" cy="16.2" r="1" fill="currentColor" stroke="none" />
-    </svg>
-  )
-}
-
+// Milho não existe no lucide → ícone custom (espiga + palha) no mesmo estilo de
+// linha. Soja usa lucide Bean (grão) e trigo usa lucide Wheat.
 function IconeMilho({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
-      <path d="M12 3c-3 0-5 3.2-5 8.2S9 21 12 21s5-4.8 5-9.8S15 3 12 3Z" />
-      <path d="M12 4.5v15" />
-      <path d="M9.2 6.5v11M14.8 6.5v11" />
-      <path d="M8 9h8M8 12h8M8 15h8" />
-      <path d="M12 21c-2.3 0-4-1.4-4-3.4" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M12 2.5C10 5 9 8 9 11.5c0 4 1.2 7.5 3 9.5 1.8-2 3-5.5 3-9.5C15 8 14 5 12 2.5Z" />
+      <path d="M10 8h4M9.6 11.5h4.8M10 15h4" />
+      <path d="M10.5 18.5c-1.5 1.8-3.5 2.4-5.2 1.8.3-1.9 1.6-3.6 3.4-4.1" />
     </svg>
   )
 }
 
 const COMMODITY_ICONS: Record<string, { Icon: React.ComponentType<{ className?: string }>; cor: string }> = {
-  soja:  { Icon: IconeSoja,  cor: 'text-emerald-600' },
+  soja:  { Icon: Bean,       cor: 'text-emerald-600' },
   milho: { Icon: IconeMilho, cor: 'text-amber-500' },
   trigo: { Icon: Wheat,      cor: 'text-yellow-700' },
 }
