@@ -546,6 +546,12 @@ export default function CartoesPage() {
 
   const gastoFiltrado = lancFiltrados.reduce((s, l) => s + l.valor, 0)
 
+  // Lançamentos do mês selecionado (sem filtro de cartão) — usado nos cards dos
+  // proprietários, que devem refletir o mês escolhido, não o total geral.
+  const lancDoMes = filtroMes === 'todos'
+    ? lancamentos
+    : lancamentos.filter(l => l.data?.startsWith(filtroMes))
+
   const kpiMesLabel = filtroMes === 'todos'
     ? 'Gasto total (todos os meses)'
     : `Gasto em ${mesLabel(filtroMes)}`
@@ -658,10 +664,9 @@ export default function CartoesPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {cartoes.map(cartao => {
-            const gastoCartao = lancamentos
-              .filter(l => l.cartao_id === cartao.id)
-              .reduce((s, l) => s + l.valor, 0)
-            const nTransacoes = lancamentos.filter(l => l.cartao_id === cartao.id).length
+            const lancsCartao = lancDoMes.filter(l => l.cartao_id === cartao.id)
+            const gastoCartao = lancsCartao.reduce((s, l) => s + l.valor, 0)
+            const nTransacoes = lancsCartao.length
             return (
               <Card key={cartao.id}>
                 <CardHeader className="pb-3 flex flex-row items-start justify-between space-y-0">
