@@ -318,6 +318,41 @@ export default function EstoquePage() {
 
   if (loading) return <PageSkeleton />
 
+  // Helpers compartilhados entre a tabela (desktop) e os cards (mobile)
+  const situacaoBadge = (negativo: boolean, critico: boolean) =>
+    negativo ? <Badge variant="destructive" className="font-bold">Negativo</Badge>
+    : critico ? <Badge variant="destructive">Crítico</Badge>
+    : <Badge variant="outline" className="text-green-700 border-green-200">OK</Badge>
+
+  const acoesInsumo = (item: Estoque) => (
+    <>
+      {!UNIDADES_BASE.has(item.insumos.unidade) && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="text-xs"
+          onClick={() => { setCorrigirItem(item); setCorrigirForm({ novaUnidade: 'L', fator: '' }) }}
+        >
+          Converter
+        </Button>
+      )}
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => {
+          setSelectedItem(item)
+          setAjuste(String(item.quantidade_atual))
+          setAjustePreco(item.preco_medio_unitario > 0 ? String(item.preco_medio_unitario) : '')
+        }}
+      >
+        Ajustar
+      </Button>
+      <Button size="sm" variant="ghost" aria-label="Excluir insumo" onClick={() => setDeleteInsumo(item)}>
+        <Trash2 className="h-3.5 w-3.5 text-red-400" aria-hidden="true" />
+      </Button>
+    </>
+  )
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -427,135 +462,131 @@ export default function EstoquePage() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Produto</TableHead>
-                <TableHead>Tipo</TableHead>
-                <TableHead className="text-right">Qtd. Atual</TableHead>
-                <TableHead className="text-right">Preço Médio</TableHead>
-                <TableHead className="text-right">Situação</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {estoque.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="py-10">
-                    <div className="flex flex-col items-center gap-3 text-center">
-                      <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
-                        <Package className="h-5 w-5 text-muted-foreground" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold">Nenhum insumo cadastrado</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          Cadastre seu primeiro insumo ou importe via NF-e.
-                        </p>
-                      </div>
-                      <Button size="sm" onClick={() => setNovoDialog(true)}>
-                        <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
-                        Cadastrar insumo
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : estoqueFiltrado.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="py-10">
-                    <div className="flex flex-col items-center gap-2 text-center">
-                      <p className="text-sm text-muted-foreground">Nenhum insumo corresponde aos filtros aplicados.</p>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => { setBusca(''); setFiltroTipo('todos'); setFiltroStatus('todos') }}
-                      >
-                        Limpar filtros
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : estoqueFiltrado.map(item => {
-                const negativo = item.quantidade_atual < 0
-                const critico  = !negativo && item.quantidade_atual <= item.quantidade_minima_alerta
-                const linhaBg  = negativo ? 'bg-red-100' : critico ? 'bg-red-50/50' : ''
-                const qtdClass = negativo
-                  ? 'text-right font-bold text-red-700'
-                  : critico
-                    ? 'text-right font-semibold text-red-600'
-                    : 'text-right font-semibold'
-                return (
-                  <TableRow key={item.id} className={linhaBg}>
-                    <TableCell className={`font-medium max-w-[180px] ${negativo ? 'font-bold' : ''}`}>
-                      <Tooltip>
-                        <TooltipTrigger className="truncate block w-full text-left cursor-default bg-transparent border-0 p-0 font-[inherit]">
-                          {item.insumos.nome}
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="max-w-xs text-xs">
-                          {item.insumos.nome}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-xs text-muted-foreground">{formatTipoInsumo(item.insumos.tipo)}</span>
-                    </TableCell>
-                    <TableCell className={qtdClass}>
-                      {item.quantidade_atual} {item.insumos.unidade}
-                    </TableCell>
-                    <TableCell className="text-right text-sm tabular-nums">
-                      {item.preco_medio_unitario > 0
-                        ? `R$ ${item.preco_medio_unitario.toFixed(2)}`
-                        : '—'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {negativo ? (
-                        <Badge variant="destructive" className="font-bold">Negativo</Badge>
-                      ) : critico ? (
-                        <Badge variant="destructive">Crítico</Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-green-700 border-green-200">OK</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        {!UNIDADES_BASE.has(item.insumos.unidade) && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-xs"
-                            onClick={() => {
-                              setCorrigirItem(item)
-                              setCorrigirForm({ novaUnidade: 'L', fator: '' })
-                            }}
-                          >
-                            Converter
-                          </Button>
-                        )}
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            setSelectedItem(item)
-                            setAjuste(String(item.quantidade_atual))
-                            setAjustePreco(item.preco_medio_unitario > 0 ? String(item.preco_medio_unitario) : '')
-                          }}
-                        >
-                          Ajustar
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          aria-label="Excluir insumo"
-                          onClick={() => setDeleteInsumo(item)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5 text-red-400" aria-hidden="true" />
-                        </Button>
-                      </div>
-                    </TableCell>
+          {estoque.length === 0 ? (
+            <div className="py-10">
+              <div className="flex flex-col items-center gap-3 text-center">
+                <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
+                  <Package className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">Nenhum insumo cadastrado</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Cadastre seu primeiro insumo ou importe via NF-e.
+                  </p>
+                </div>
+                <Button size="sm" onClick={() => setNovoDialog(true)}>
+                  <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
+                  Cadastrar insumo
+                </Button>
+              </div>
+            </div>
+          ) : estoqueFiltrado.length === 0 ? (
+            <div className="py-10">
+              <div className="flex flex-col items-center gap-2 text-center">
+                <p className="text-sm text-muted-foreground">Nenhum insumo corresponde aos filtros aplicados.</p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { setBusca(''); setFiltroTipo('todos'); setFiltroStatus('todos') }}
+                >
+                  Limpar filtros
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Desktop: tabela */}
+              <Table className="hidden md:table">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Produto</TableHead>
+                    <TableHead>Tipo</TableHead>
+                    <TableHead className="text-right">Qtd. Atual</TableHead>
+                    <TableHead className="text-right">Preço Médio</TableHead>
+                    <TableHead className="text-right">Situação</TableHead>
+                    <TableHead />
                   </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
+                </TableHeader>
+                <TableBody>
+                  {estoqueFiltrado.map(item => {
+                    const negativo = item.quantidade_atual < 0
+                    const critico  = !negativo && item.quantidade_atual <= item.quantidade_minima_alerta
+                    const linhaBg  = negativo ? 'bg-red-100' : critico ? 'bg-red-50/50' : ''
+                    const qtdClass = negativo
+                      ? 'text-right font-bold text-red-700'
+                      : critico
+                        ? 'text-right font-semibold text-red-600'
+                        : 'text-right font-semibold'
+                    return (
+                      <TableRow key={item.id} className={linhaBg}>
+                        <TableCell className={`font-medium max-w-[180px] ${negativo ? 'font-bold' : ''}`}>
+                          <Tooltip>
+                            <TooltipTrigger className="truncate block w-full text-left cursor-default bg-transparent border-0 p-0 font-[inherit]">
+                              {item.insumos.nome}
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-xs text-xs">
+                              {item.insumos.nome}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-xs text-muted-foreground">{formatTipoInsumo(item.insumos.tipo)}</span>
+                        </TableCell>
+                        <TableCell className={qtdClass}>
+                          {item.quantidade_atual} {item.insumos.unidade}
+                        </TableCell>
+                        <TableCell className="text-right text-sm tabular-nums">
+                          {item.preco_medio_unitario > 0
+                            ? `R$ ${item.preco_medio_unitario.toFixed(2)}`
+                            : '—'}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {situacaoBadge(negativo, critico)}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            {acoesInsumo(item)}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+
+              {/* Mobile: cards */}
+              <ul className="md:hidden divide-y">
+                {estoqueFiltrado.map(item => {
+                  const negativo = item.quantidade_atual < 0
+                  const critico  = !negativo && item.quantidade_atual <= item.quantidade_minima_alerta
+                  const linhaBg  = negativo ? 'bg-red-100' : critico ? 'bg-red-50/50' : ''
+                  const qtdColor = negativo ? 'font-bold text-red-700' : critico ? 'font-semibold text-red-600' : 'font-semibold'
+                  return (
+                    <li key={item.id} className={`px-4 py-3 ${linhaBg}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className={`font-medium truncate ${negativo ? 'font-bold' : ''}`}>{item.insumos.nome}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{formatTipoInsumo(item.insumos.tipo)}</p>
+                        </div>
+                        {situacaoBadge(negativo, critico)}
+                      </div>
+                      <div className="flex items-end justify-between gap-2 mt-2">
+                        <p className="text-sm tabular-nums">
+                          <span className={qtdColor}>{item.quantidade_atual} {item.insumos.unidade}</span>
+                          <span className="text-muted-foreground">
+                            {' · '}{item.preco_medio_unitario > 0 ? `R$ ${item.preco_medio_unitario.toFixed(2)}` : '—'}
+                          </span>
+                        </p>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {acoesInsumo(item)}
+                        </div>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            </>
+          )}
         </CardContent>
       </Card>
 

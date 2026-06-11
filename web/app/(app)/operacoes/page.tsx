@@ -337,6 +337,68 @@ export default function OperacoesPage() {
 
   if (loading) return <PageSkeleton />
 
+  // Helpers compartilhados entre a tabela (desktop) e os cards (mobile)
+  const produtosOperacao = (op: (typeof operacoesFiltradas)[number]) =>
+    op.itens_operacao && op.itens_operacao.length > 0 ? (
+      <div className="space-y-1">
+        {op.itens_operacao.map(item => {
+          const nome = item.insumos?.nome ?? item.descricao ?? '—'
+          const unid = item.unidade ?? item.insumos?.unidade ?? ''
+          const areaHa = talhoes.find(t => t.id === op.talhao_id)?.area_ha ?? 0
+          const totalQtd = item.dose_por_ha != null && areaHa > 0
+            ? (item.dose_por_ha * areaHa).toFixed(1)
+            : null
+          return (
+            <div key={item.id} className="flex items-baseline gap-2 flex-wrap">
+              <span className="text-xs font-medium">{nome}</span>
+              {item.dose_por_ha != null ? (
+                <>
+                  <span className="text-sm text-foreground">
+                    {item.dose_por_ha} {unid}/ha
+                  </span>
+                  {totalQtd && (
+                    <span className="text-xs font-medium">
+                      total {totalQtd} {unid}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="text-sm text-muted-foreground">
+                  {item.quantidade} {unid}
+                </span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    ) : (
+      <span className="text-muted-foreground text-xs">—</span>
+    )
+
+  const acoesOperacao = (op: (typeof operacoesFiltradas)[number]) => (
+    <>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 w-7 p-0"
+        aria-label="Editar operação"
+        onClick={() => openEdit(op)}
+      >
+        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 w-7 p-0 text-red-400 hover:text-red-600"
+        aria-label="Excluir operação"
+        onClick={() => handleDelete(op)}
+        disabled={deletando === op.id}
+      >
+        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+      </Button>
+    </>
+  )
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -404,127 +466,98 @@ export default function OperacoesPage() {
 
       <Card>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Data</TableHead>
-                <TableHead>Tipo</TableHead>
-                <TableHead>Talhão</TableHead>
-                <TableHead>Produtos Utilizados</TableHead>
-                <TableHead>Descrição</TableHead>
-                <TableHead>Fonte</TableHead>
-                <TableHead className="w-20"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {operacoesFiltradas.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={7} className="py-10">
-                    <div className="flex flex-col items-center gap-3 text-center">
-                      <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
-                        <Tractor className="h-5 w-5 text-muted-foreground" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold">
-                          {operacoes.length === 0 ? 'Nenhuma operação registrada' : 'Nenhuma operação nesse talhão'}
+          {operacoesFiltradas.length === 0 ? (
+            <div className="py-10">
+              <div className="flex flex-col items-center gap-3 text-center">
+                <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
+                  <Tractor className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">
+                    {operacoes.length === 0 ? 'Nenhuma operação registrada' : 'Nenhuma operação nesse talhão'}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5 max-w-sm">
+                    {operacoes.length === 0
+                      ? 'Operações chegam via WhatsApp ou você pode registrar manualmente aqui.'
+                      : 'Mude o filtro de talhão ou registre uma nova operação.'}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  {operacoes.length > 0 && filtroTalhao !== 'todos' && (
+                    <Button variant="ghost" size="sm" onClick={() => setFiltroTalhao('todos')}>
+                      Ver todos os talhões
+                    </Button>
+                  )}
+                  <Button size="sm" onClick={abrirNovaOperacao}>
+                    <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
+                    Nova Operação
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Desktop: tabela */}
+              <Table className="hidden md:table">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Data</TableHead>
+                    <TableHead>Tipo</TableHead>
+                    <TableHead>Talhão</TableHead>
+                    <TableHead>Produtos Utilizados</TableHead>
+                    <TableHead>Descrição</TableHead>
+                    <TableHead>Fonte</TableHead>
+                    <TableHead className="w-20"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {operacoesFiltradas.map(op => (
+                    <TableRow key={op.id}>
+                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                        {op.data.slice(0, 10).split('-').reverse().join('/')}
+                      </TableCell>
+                      <TableCell className="font-medium">{tipoLabel(op.tipo)}</TableCell>
+                      <TableCell>{op.talhoes?.nome ?? '—'}</TableCell>
+                      <TableCell>{produtosOperacao(op)}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
+                        {op.descricao || '—'}
+                      </TableCell>
+                      <TableCell>
+                        <FonteLabel fonte={op.fonte} />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1 justify-end">{acoesOperacao(op)}</div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+
+              {/* Mobile: cards */}
+              <ul className="md:hidden divide-y">
+                {operacoesFiltradas.map(op => (
+                  <li key={op.id} className="px-4 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-medium">{tipoLabel(op.tipo)}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {op.data.slice(0, 10).split('-').reverse().join('/')} · {op.talhoes?.nome ?? '—'}
                         </p>
-                        <p className="text-xs text-muted-foreground mt-0.5 max-w-sm">
-                          {operacoes.length === 0
-                            ? 'Operações chegam via WhatsApp ou você pode registrar manualmente aqui.'
-                            : 'Mude o filtro de talhão ou registre uma nova operação.'}
-                        </p>
                       </div>
-                      <div className="flex gap-2">
-                        {operacoes.length > 0 && filtroTalhao !== 'todos' && (
-                          <Button variant="ghost" size="sm" onClick={() => setFiltroTalhao('todos')}>
-                            Ver todos os talhões
-                          </Button>
-                        )}
-                        <Button size="sm" onClick={abrirNovaOperacao}>
-                          <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
-                          Nova Operação
-                        </Button>
-                      </div>
+                      <div className="flex items-center gap-1 shrink-0">{acoesOperacao(op)}</div>
                     </div>
-                  </TableCell>
-                </TableRow>
-              ) : operacoesFiltradas.map(op => (
-                <TableRow key={op.id}>
-                  <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                    {op.data.slice(0, 10).split('-').reverse().join('/')}
-                  </TableCell>
-                  <TableCell className="font-medium">{tipoLabel(op.tipo)}</TableCell>
-                  <TableCell>{op.talhoes?.nome ?? '—'}</TableCell>
-                  <TableCell>
-                    {op.itens_operacao && op.itens_operacao.length > 0 ? (
-                      <div className="space-y-1">
-                        {op.itens_operacao.map(item => {
-                          const nome = item.insumos?.nome ?? item.descricao ?? '—'
-                          const unid = item.unidade ?? item.insumos?.unidade ?? ''
-                          const areaHa = talhoes.find(t => t.id === op.talhao_id)?.area_ha ?? 0
-                          const totalQtd = item.dose_por_ha != null && areaHa > 0
-                            ? (item.dose_por_ha * areaHa).toFixed(1)
-                            : null
-                          return (
-                            <div key={item.id} className="flex items-baseline gap-2 flex-wrap">
-                              <span className="text-xs font-medium">{nome}</span>
-                              {item.dose_por_ha != null ? (
-                                <>
-                                  <span className="text-sm text-foreground">
-                                    {item.dose_por_ha} {unid}/ha
-                                  </span>
-                                  {totalQtd && (
-                                    <span className="text-xs font-medium">
-                                      total {totalQtd} {unid}
-                                    </span>
-                                  )}
-                                </>
-                              ) : (
-                                <span className="text-sm text-muted-foreground">
-                                  {item.quantidade} {unid}
-                                </span>
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground text-xs">—</span>
+                    <div className="mt-2">{produtosOperacao(op)}</div>
+                    {op.descricao && (
+                      <p className="text-sm text-muted-foreground mt-1.5">{op.descricao}</p>
                     )}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
-                    {op.descricao || '—'}
-                  </TableCell>
-                  <TableCell>
-                    <FonteLabel fonte={op.fonte} />
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1 justify-end">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 w-7 p-0"
-                        aria-label="Editar operação"
-                        onClick={() => openEdit(op)}
-                      >
-                        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 w-7 p-0 text-red-400 hover:text-red-600"
-                        aria-label="Excluir operação"
-                        onClick={() => handleDelete(op)}
-                        disabled={deletando === op.id}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                      </Button>
+                    <div className="mt-1.5">
+                      <FonteLabel fonte={op.fonte} />
                     </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </CardContent>
       </Card>
 

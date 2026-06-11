@@ -309,6 +309,37 @@ export default function NfePage() {
 
   if (loading) return <PageSkeleton />
 
+  // Ações da nota — compartilhado entre a tabela (desktop) e os cards (mobile)
+  const acoesNota = (nota: (typeof notasFiltradas)[number]) => {
+    const menuItems = [
+      { label: 'Baixar XML', icon: <Download className="h-3.5 w-3.5" />, onClick: () => exportarXML(nota) },
+      ...(nota.status === 'processada' ? [{
+        label: 'Ver no Financeiro',
+        icon: <CircleDollarSign className="h-3.5 w-3.5 text-green-600" />,
+        onClick: () => router.push('/financeiro'),
+      }] : []),
+      ...(nota.status === 'erro' ? [{
+        label: 'Reprocessar',
+        icon: <RefreshCw className="h-3.5 w-3.5" />,
+        onClick: () => reprocessar(nota),
+      }] : []),
+      {
+        label: 'Excluir',
+        icon: <Trash2 className="h-3.5 w-3.5" />,
+        onClick: () => { setDeleteNota(nota); setDeleteNotaErro(null) },
+        destructive: true,
+      },
+    ]
+    return (
+      <div className="flex items-center justify-end gap-1">
+        <Button size="sm" variant="ghost" onClick={() => openNota(nota)}>
+          Ver itens
+        </Button>
+        <ActionMenu items={menuItems} />
+      </div>
+    )
+  }
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -409,109 +440,110 @@ export default function NfePage() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Número</TableHead>
-                <TableHead>Emitente</TableHead>
-                <TableHead>Data Emissão</TableHead>
-                <TableHead className="text-right">Valor Total</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {notas.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="py-10">
-                    <div className="flex flex-col items-center gap-3 text-center">
-                      <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
-                        <FileText className="h-5 w-5 text-muted-foreground" />
+          {notas.length === 0 ? (
+            <div className="py-10">
+              <div className="flex flex-col items-center gap-3 text-center">
+                <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
+                  <FileText className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">Nenhuma nota fiscal recebida</p>
+                  <p className="text-xs text-muted-foreground mt-0.5 max-w-sm">
+                    NF-es chegam automaticamente pelo email via Make. Você também pode adicionar manualmente.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => { setAddDialog(true); setAddMode('xml'); setXmlPreview(null); setXmlError(''); setAddErro('') }}
+                >
+                  <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
+                  Adicionar NF
+                </Button>
+              </div>
+            </div>
+          ) : notasFiltradas.length === 0 ? (
+            <div className="py-10">
+              <div className="flex flex-col items-center gap-2 text-center">
+                <p className="text-sm text-muted-foreground">Nenhuma nota fiscal corresponde aos filtros aplicados.</p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { setBusca(''); setFiltroStatus('todos') }}
+                >
+                  Limpar filtros
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Desktop: tabela */}
+              <Table className="hidden md:table">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Número</TableHead>
+                    <TableHead>Emitente</TableHead>
+                    <TableHead>Data Emissão</TableHead>
+                    <TableHead className="text-right">Valor Total</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {notasFiltradas.map(nota => (
+                    <TableRow key={nota.id}>
+                      <TableCell className="font-medium">{nota.numero}</TableCell>
+                      <TableCell>
+                        <div>
+                          <p className="font-medium text-sm">{nota.emitente_nome}</p>
+                          <p className="text-xs text-muted-foreground">{nota.emitente_cnpj}</p>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                        {nota.data_emissao.slice(0, 10).split('-').reverse().join('/')}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">
+                        {nota.valor_total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className={STATUS_STYLE[nota.status] ?? ''}>
+                          {nota.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{acoesNota(nota)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+
+              {/* Mobile: cards */}
+              <ul className="md:hidden divide-y">
+                {notasFiltradas.map(nota => (
+                  <li key={nota.id} className="px-4 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm truncate">{nota.emitente_nome}</p>
+                        <p className="text-xs text-muted-foreground truncate">{nota.emitente_cnpj}</p>
                       </div>
-                      <div>
-                        <p className="text-sm font-semibold">Nenhuma nota fiscal recebida</p>
-                        <p className="text-xs text-muted-foreground mt-0.5 max-w-sm">
-                          NF-es chegam automaticamente pelo email via Make. Você também pode adicionar manualmente.
-                        </p>
-                      </div>
-                      <Button
-                        size="sm"
-                        onClick={() => { setAddDialog(true); setAddMode('xml'); setXmlPreview(null); setXmlError(''); setAddErro('') }}
-                      >
-                        <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
-                        Adicionar NF
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : notasFiltradas.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="py-10">
-                    <div className="flex flex-col items-center gap-2 text-center">
-                      <p className="text-sm text-muted-foreground">Nenhuma nota fiscal corresponde aos filtros aplicados.</p>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => { setBusca(''); setFiltroStatus('todos') }}
-                      >
-                        Limpar filtros
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : notasFiltradas.map(nota => {
-                const menuItems = [
-                  { label: 'Baixar XML', icon: <Download className="h-3.5 w-3.5" />, onClick: () => exportarXML(nota) },
-                  ...(nota.status === 'processada' ? [{
-                    label: 'Ver no Financeiro',
-                    icon: <CircleDollarSign className="h-3.5 w-3.5 text-green-600" />,
-                    onClick: () => router.push('/financeiro'),
-                  }] : []),
-                  ...(nota.status === 'erro' ? [{
-                    label: 'Reprocessar',
-                    icon: <RefreshCw className="h-3.5 w-3.5" />,
-                    onClick: () => reprocessar(nota),
-                  }] : []),
-                  {
-                    label: 'Excluir',
-                    icon: <Trash2 className="h-3.5 w-3.5" />,
-                    onClick: () => { setDeleteNota(nota); setDeleteNotaErro(null) },
-                    destructive: true,
-                  },
-                ]
-                return (
-                  <TableRow key={nota.id}>
-                    <TableCell className="font-medium">{nota.numero}</TableCell>
-                    <TableCell>
-                      <div>
-                        <p className="font-medium text-sm">{nota.emitente_nome}</p>
-                        <p className="text-xs text-muted-foreground">{nota.emitente_cnpj}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                      {nota.data_emissao.slice(0, 10).split('-').reverse().join('/')}
-                    </TableCell>
-                    <TableCell className="text-right font-semibold tabular-nums">
-                      {nota.valor_total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={STATUS_STYLE[nota.status] ?? ''}>
+                      <Badge variant="outline" className={`shrink-0 ${STATUS_STYLE[nota.status] ?? ''}`}>
                         {nota.status}
                       </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center justify-end gap-1">
-                        <Button size="sm" variant="ghost" onClick={() => openNota(nota)}>
-                          Ver itens
-                        </Button>
-                        <ActionMenu items={menuItems} />
+                    </div>
+                    <div className="flex items-end justify-between gap-2 mt-2">
+                      <div className="min-w-0">
+                        <p className="font-semibold tabular-nums">
+                          {nota.valor_total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Nº {nota.numero} · {nota.data_emissao.slice(0, 10).split('-').reverse().join('/')}
+                        </p>
                       </div>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
+                      <div className="shrink-0">{acoesNota(nota)}</div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </CardContent>
       </Card>
 

@@ -270,7 +270,7 @@ export default function DashboardPage() {
                   <YAxis allowDecimals={false} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={24} />
                   <Tooltip contentStyle={{ border: 'none', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: 12 }}
                     cursor={{ fill: 'rgba(91,140,42,0.06)' }} />
-                  <Bar dataKey="total" fill="#5B8C2A" radius={[4, 4, 0, 0]} name="Operações" />
+                  <Bar dataKey="total" fill="#5B8C2A" radius={[4, 4, 0, 0]} name="Operações" maxBarSize={56} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -474,18 +474,18 @@ function ClimaCard({ clima, fazenda }: { clima: ClimaDay[] | null; fazenda: Faze
         ) : (
           <>
             {/* ── Seção principal ── */}
-            <div className="flex items-center justify-between px-5 pt-5 pb-4">
+            <div className="flex items-center justify-between gap-3 px-4 pt-5 pb-4 sm:px-5">
               {/* Esquerda: ícone + condição */}
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3 min-w-0 sm:gap-4">
                 {climaIcon(hoje.precipitationProbability, hoje.tempMin, 'xl')}
-                <div>
-                  <p className="text-3xl font-bold leading-tight">
+                <div className="min-w-0">
+                  <p className="text-2xl font-bold leading-tight sm:text-3xl">
                     {climaLabel(hoje.precipitationProbability, hoje.tempMin)}
                   </p>
-                  <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1">
-                    <MapPin className="h-3.5 w-3.5 shrink-0" />{locLabel}
+                  <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1 min-w-0">
+                    <MapPin className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{locLabel}</span>
                   </p>
-                  <div className="flex items-center gap-4 mt-2">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
                     <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
                       <Droplets className="h-4 w-4 text-blue-500 shrink-0" />
                       {hoje.precipitationProbability}% chuva
@@ -499,11 +499,11 @@ function ClimaCard({ clima, fazenda }: { clima: ClimaDay[] | null; fazenda: Faze
               </div>
 
               {/* Direita: temperatura */}
-              <div className="text-right shrink-0 ml-4">
-                <p className="text-6xl font-bold leading-none tabular-nums">
+              <div className="text-right shrink-0">
+                <p className="text-5xl font-bold leading-none tabular-nums sm:text-6xl">
                   {Math.round(hoje.tempMax)}°
                 </p>
-                <p className="text-sm text-muted-foreground mt-2 tabular-nums">
+                <p className="text-xs text-muted-foreground mt-2 tabular-nums sm:text-sm">
                   {Math.round(hoje.tempMax)}° / {Math.round(hoje.tempMin)}°C
                 </p>
               </div>
