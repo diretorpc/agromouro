@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { TrendingDown, DollarSign, Package, Sprout, Tractor, BarChart2, CloudRain, Sun, Cloud, TrendingUp, AlertTriangle, Wind, Droplets, CloudDrizzle, MapPin, RefreshCw } from 'lucide-react'
+import { TrendingDown, DollarSign, Package, Sprout, Tractor, BarChart2, CloudRain, Sun, Cloud, TrendingUp, AlertTriangle, Wind, Droplets, CloudDrizzle, MapPin, RefreshCw, Wheat, Bean } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Label,
@@ -557,6 +557,24 @@ const COMMODITY_LABELS: Record<string, string> = {
   trigo: 'Trigo',
 }
 
+// Milho não existe no lucide → ícone custom (espiga + palha) no mesmo estilo de
+// linha. Soja usa lucide Bean (grão) e trigo usa lucide Wheat.
+function IconeMilho({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M12 2.5C10 5 9 8 9 11.5c0 4 1.2 7.5 3 9.5 1.8-2 3-5.5 3-9.5C15 8 14 5 12 2.5Z" />
+      <path d="M10 8h4M9.6 11.5h4.8M10 15h4" />
+      <path d="M10.5 18.5c-1.5 1.8-3.5 2.4-5.2 1.8.3-1.9 1.6-3.6 3.4-4.1" />
+    </svg>
+  )
+}
+
+const COMMODITY_ICONS: Record<string, { Icon: React.ComponentType<{ className?: string }>; cor: string }> = {
+  soja:  { Icon: Bean,       cor: 'text-emerald-600' },
+  milho: { Icon: IconeMilho, cor: 'text-amber-500' },
+  trigo: { Icon: Wheat,      cor: 'text-yellow-700' },
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 
 function CotacoesCard({ cotacaoMap, onCotacoesAtualizadas }: {
@@ -605,7 +623,7 @@ function CotacoesCard({ cotacaoMap, onCotacoesAtualizadas }: {
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-            Cotações CBOT
+            Cotações CEPEA
             {desatualizados && (
               <span className="text-xs text-amber-600 normal-case font-medium">desatualizado</span>
             )}
@@ -635,21 +653,23 @@ function CotacoesCard({ cotacaoMap, onCotacoesAtualizadas }: {
           <div className="grid grid-cols-3 gap-3">
             {commodities.map(c => {
               const cot = cotacaoMap[c]
+              const { Icon, cor } = COMMODITY_ICONS[c]
               return (
-                <div key={c} className="bg-muted/40 rounded-lg p-3 text-center">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                <div key={c} className="bg-muted/40 rounded-xl p-4 flex flex-col items-center text-center gap-1.5">
+                  <Icon className={`h-8 w-8 ${cor}`} />
+                  <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
                     {COMMODITY_LABELS[c]}
                   </p>
                   {cot ? (
                     <>
-                      <p className="text-lg font-bold mt-1 flex items-center justify-center gap-0.5">
-                        <TrendingUp className="h-3.5 w-3.5 text-green-600 shrink-0" />
+                      <p className="text-2xl font-bold flex items-center justify-center gap-1 tabular-nums">
+                        <TrendingUp className="h-4 w-4 text-green-600 shrink-0" />
                         {cot.preco_rs.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </p>
                       <p className="text-xs text-muted-foreground">R$/sc · {cot.data.split('-').reverse().join('/')}</p>
                     </>
                   ) : (
-                    <p className="text-sm text-muted-foreground mt-2">—</p>
+                    <p className="text-base text-muted-foreground mt-1">—</p>
                   )}
                 </div>
               )
