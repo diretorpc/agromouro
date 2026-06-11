@@ -59,7 +59,10 @@ const corsHandler = cors({
   origin: (origin, callback) => {
     // Permitir requests sem origin (ex: Postman em dev, Railway health checks)
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true)
-    callback(new Error(`CORS: origem não permitida — ${origin}`))
+    // Origem não permitida: não setar headers CORS (navegador bloqueia) em vez de
+    // lançar Error — lançar vira 500 no errorHandler e vaza config de CORS na resposta.
+    console.warn(`CORS bloqueado — origem não permitida: ${origin}`)
+    callback(null, false)
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
