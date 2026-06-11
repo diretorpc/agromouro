@@ -270,7 +270,7 @@ export default function DashboardPage() {
                   <YAxis allowDecimals={false} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={24} />
                   <Tooltip contentStyle={{ border: 'none', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: 12 }}
                     cursor={{ fill: 'rgba(91,140,42,0.06)' }} />
-                  <Bar dataKey="total" fill="#5B8C2A" radius={[4, 4, 0, 0]} name="Operações" maxBarSize={56} />
+                  <Bar dataKey="total" fill="#5B8C2A" radius={[4, 4, 0, 0]} name="Operações" barSize={44} />
                 </BarChart>
               </ResponsiveContainer>
             )}
