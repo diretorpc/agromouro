@@ -151,7 +151,8 @@ function fmtBRLKpi(value: number) {
 }
 
 function fmtDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString('pt-BR')
+  const [year, month, day] = dateStr.slice(0, 10).split('-').map(Number)
+  return new Date(year, month - 1, day).toLocaleDateString('pt-BR')
 }
 
 function tipoLabel(value: string) {
@@ -307,7 +308,7 @@ export default function FinanceiroPage() {
     const mes = params.get('mes')
     const centro = params.get('centro')
     const origem = params.get('origem') as 'todos' | 'nfe' | 'cartao' | 'manual' | null
-    if (mes !== null) setFiltroMes(mes)
+    if (mes !== null && /^\d{4}-\d{2}$/.test(mes)) setFiltroMes(mes)
     if (centro !== null) setFiltroCentro(centro)
     if (origem && ['todos', 'nfe', 'cartao', 'manual'].includes(origem)) setFiltroOrigem(origem)
   }, [])
@@ -461,7 +462,7 @@ export default function FinanceiroPage() {
   const filtroAtivo = filtroMes !== 'todos' || filtroCentro !== 'todos' || filtroOrigem !== 'todos'
   const filtroMesLabel = filtroMes === 'todos'
     ? 'Todos os meses'
-    : new Date(filtroMes + '-01').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+    : (() => { const [y, mo] = filtroMes.split('-').map(Number); return new Date(y, mo - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) })()
   const filtroCentroLabel = filtroCentro === 'todos' ? 'Todos os tipos' : tipoLabel(filtroCentro)
 
   return (
