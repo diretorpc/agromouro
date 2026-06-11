@@ -51,8 +51,10 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const twoDaysAgo = new Date()
-    twoDaysAgo.setDate(twoDaysAgo.getDate() - 2)
+    // CEPEA publica com ~1 dia útil de defasagem; em segundas pode ser sexta.
+    // Janela de 7 dias garante pegar a última cotação mesmo após fim de semana.
+    const desdeCotacoes = new Date()
+    desdeCotacoes.setDate(desdeCotacoes.getDate() - 7)
 
     Promise.all([
       supabase.from('talhoes').select('id, nome, area_ha, cultura_atual, status').then(r => (r.data ?? []) as Talhao[]),
@@ -63,7 +65,7 @@ export default function DashboardPage() {
       supabase.from('safras').select('*, talhoes(area_ha)').then(r => (r.data ?? []) as Safra[]),
       supabase.from('insumos').select('id, nome, tipo, unidade').then(r => (r.data ?? []) as Insumo[]),
       supabase.from('cotacoes_commodities').select('commodity, preco_rs, data')
-        .gte('data', twoDaysAgo.toISOString().slice(0, 10))
+        .gte('data', desdeCotacoes.toISOString().slice(0, 10))
         .order('data', { ascending: false })
         .then(r => (r.data ?? []) as Cotacao[]),
     ]).then(([t, o, e, a, l, s, ins, cot]) => {
@@ -199,10 +201,10 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ClimaCard clima={clima} fazenda={fazendaAtiva} />
         <CotacoesCard cotacaoMap={cotacaoMap} onCotacoesAtualizadas={() => {
-          const twoDaysAgo = new Date()
-          twoDaysAgo.setDate(twoDaysAgo.getDate() - 2)
+          const desdeCotacoes = new Date()
+          desdeCotacoes.setDate(desdeCotacoes.getDate() - 7)
           supabase.from('cotacoes_commodities').select('commodity, preco_rs, data')
-            .gte('data', twoDaysAgo.toISOString().slice(0, 10))
+            .gte('data', desdeCotacoes.toISOString().slice(0, 10))
             .order('data', { ascending: false })
             .then(r => setCotacoes((r.data ?? []) as Cotacao[]))
         }} />
@@ -566,8 +568,12 @@ function CotacoesCard({ cotacaoMap, onCotacoesAtualizadas }: {
   const [rodando, setRodando] = useState(false)
   const [feedback, setFeedback] = useState<{ tipo: 'ok' | 'erro'; msg: string } | null>(null)
 
-  const hoje = new Date().toISOString().slice(0, 10)
-  const desatualizados = temDados && commodities.some(c => cotacaoMap[c] && cotacaoMap[c].data < hoje)
+  // CEPEA tem defasagem de ~1 dia útil; só marca "desatualizado" se passar de 4
+  // dias (cobre fim de semana + feriado), evitando o selo aparecer sempre.
+  const limiteAtualizacao = new Date()
+  limiteAtualizacao.setDate(limiteAtualizacao.getDate() - 4)
+  const limiteISO = limiteAtualizacao.toISOString().slice(0, 10)
+  const desatualizados = temDados && commodities.some(c => cotacaoMap[c] && cotacaoMap[c].data < limiteISO)
 
   async function rodarJob() {
     setRodando(true)
