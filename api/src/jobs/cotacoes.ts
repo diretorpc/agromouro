@@ -32,6 +32,33 @@ export interface ResultadoCotacoes {
   erros: string[]
 }
 
+// Busca a cotação USD/BRL com fallback entre fontes. A awesomeapi é a melhor
+// (tempo real, BR), mas bloqueia IPs de datacenter (ex: Railway) — daí o
+// fallback para open.er-api.com, que é feita para uso server-side.
+async function buscarUsdBrl(): Promise<number> {
+  // Fonte 1: awesomeapi (tempo real) — parse defensivo, não crasha se vier vazio
+  try {
+    const r = await httpsGetJson('https://economia.awesomeapi.com.br/json/last/USD-BRL') as { USDBRL?: { bid?: string } }
+    const v = parseFloat(r?.USDBRL?.bid ?? '')
+    if (v > 0) return v
+    console.warn('[Cotações] awesomeapi: shape inesperado, tentando fallback')
+  } catch (err) {
+    console.warn('[Cotações] awesomeapi falhou:', err instanceof Error ? err.message : err)
+  }
+
+  // Fonte 2: open.er-api.com (sem key, server-friendly)
+  try {
+    const r = await httpsGetJson('https://open.er-api.com/v6/latest/USD') as { result?: string; rates?: { BRL?: number } }
+    const v = r?.rates?.BRL
+    if (r?.result === 'success' && typeof v === 'number' && v > 0) return v
+    console.warn('[Cotações] open.er-api: shape inesperado')
+  } catch (err) {
+    console.warn('[Cotações] open.er-api falhou:', err instanceof Error ? err.message : err)
+  }
+
+  throw new Error('nenhuma fonte de câmbio USD/BRL respondeu')
+}
+
 export async function buscarCotacoes(): Promise<ResultadoCotacoes> {
   const hoje = new Date().toISOString().slice(0, 10)
   const erros: string[] = []
@@ -40,9 +67,7 @@ export async function buscarCotacoes(): Promise<ResultadoCotacoes> {
   // Busca taxa USD/BRL — sem ela não dá para converter os futuros CBOT
   let usdBrl: number
   try {
-    const cambio = await httpsGetJson('https://economia.awesomeapi.com.br/json/last/USD-BRL') as Record<string, { bid: string }>
-    usdBrl = parseFloat(cambio.USDBRL.bid)
-    if (isNaN(usdBrl) || usdBrl <= 0) throw new Error('Taxa USD/BRL inválida')
+    usdBrl = await buscarUsdBrl()
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[Cotações] Erro ao buscar USD/BRL:', msg)
