@@ -27,18 +27,26 @@ const COMMODITIES = [
   { nome: 'trigo', ticker: 'ZW%3DF', kgPerBushel: 27.215 },
 ]
 
-export async function buscarCotacoes(): Promise<void> {
-  const hoje = new Date().toISOString().slice(0, 10)
+export interface ResultadoCotacoes {
+  salvos: number
+  erros: string[]
+}
 
-  // Busca taxa USD/BRL e futuros CBOT em paralelo
+export async function buscarCotacoes(): Promise<ResultadoCotacoes> {
+  const hoje = new Date().toISOString().slice(0, 10)
+  const erros: string[] = []
+  let salvos = 0
+
+  // Busca taxa USD/BRL — sem ela não dá para converter os futuros CBOT
   let usdBrl: number
   try {
     const cambio = await httpsGetJson('https://economia.awesomeapi.com.br/json/last/USD-BRL') as Record<string, { bid: string }>
     usdBrl = parseFloat(cambio.USDBRL.bid)
     if (isNaN(usdBrl) || usdBrl <= 0) throw new Error('Taxa USD/BRL inválida')
   } catch (err) {
-    console.error('[Cotações] Erro ao buscar USD/BRL:', err instanceof Error ? err.message : err)
-    return
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[Cotações] Erro ao buscar USD/BRL:', msg)
+    return { salvos: 0, erros: [`câmbio USD/BRL: ${msg}`] }
   }
 
   for (const commodity of COMMODITIES) {
@@ -50,6 +58,7 @@ export async function buscarCotacoes(): Promise<void> {
       const priceUSX = data?.chart?.result?.[0]?.meta?.regularMarketPrice
       if (!priceUSX || priceUSX <= 0) {
         console.warn(`[Cotações] Preço não encontrado para ${commodity.nome}`)
+        erros.push(`${commodity.nome}: preço não encontrado`)
         continue
       }
 
@@ -65,11 +74,17 @@ export async function buscarCotacoes(): Promise<void> {
 
       if (error) {
         console.error(`[Cotações] Erro ao salvar ${commodity.nome}:`, error.message)
+        erros.push(`${commodity.nome}: ${error.message}`)
       } else {
+        salvos++
         console.log(`[Cotações] ${commodity.nome}: R$ ${precoBrl.toFixed(2)}/sc (CBOT ref · ${hoje})`)
       }
     } catch (err) {
-      console.error(`[Cotações] Erro ao buscar ${commodity.nome}:`, err instanceof Error ? err.message : err)
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[Cotações] Erro ao buscar ${commodity.nome}:`, msg)
+      erros.push(`${commodity.nome}: ${msg}`)
     }
   }
+
+  return { salvos, erros }
 }
