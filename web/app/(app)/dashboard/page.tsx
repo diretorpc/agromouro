@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { TrendingDown, DollarSign, Package, Sprout, Tractor, BarChart2, CloudRain, Sun, Cloud, TrendingUp, AlertTriangle, Wind, Droplets, CloudDrizzle, MapPin, RefreshCw } from 'lucide-react'
+import { TrendingDown, DollarSign, Package, Sprout, Tractor, BarChart2, CloudRain, Sun, Cloud, TrendingUp, AlertTriangle, Wind, Droplets, CloudDrizzle, MapPin, RefreshCw, Wheat } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Label,
@@ -557,6 +557,37 @@ const COMMODITY_LABELS: Record<string, string> = {
   trigo: 'Trigo',
 }
 
+// Ícones de grão no estilo de linha do lucide (stroke currentColor).
+function IconeSoja({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M11 4c1.6-1 3.2-1 4.6.2" />
+      <path d="M6.2 18.6C4.2 14.4 5.6 6.6 10.8 4.2c3 4.6 2.4 12-2 15-1 .7-2 .5-2.6-.6Z" />
+      <circle cx="8.4" cy="9" r="1" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="12.6" r="1" fill="currentColor" stroke="none" />
+      <circle cx="8.6" cy="16.2" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+function IconeMilho({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M12 3c-3 0-5 3.2-5 8.2S9 21 12 21s5-4.8 5-9.8S15 3 12 3Z" />
+      <path d="M12 4.5v15" />
+      <path d="M9.2 6.5v11M14.8 6.5v11" />
+      <path d="M8 9h8M8 12h8M8 15h8" />
+      <path d="M12 21c-2.3 0-4-1.4-4-3.4" />
+    </svg>
+  )
+}
+
+const COMMODITY_ICONS: Record<string, { Icon: React.ComponentType<{ className?: string }>; cor: string }> = {
+  soja:  { Icon: IconeSoja,  cor: 'text-emerald-600' },
+  milho: { Icon: IconeMilho, cor: 'text-amber-500' },
+  trigo: { Icon: Wheat,      cor: 'text-yellow-700' },
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 
 function CotacoesCard({ cotacaoMap, onCotacoesAtualizadas }: {
@@ -605,7 +636,7 @@ function CotacoesCard({ cotacaoMap, onCotacoesAtualizadas }: {
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-            Cotações CBOT
+            Cotações CEPEA
             {desatualizados && (
               <span className="text-xs text-amber-600 normal-case font-medium">desatualizado</span>
             )}
@@ -635,21 +666,23 @@ function CotacoesCard({ cotacaoMap, onCotacoesAtualizadas }: {
           <div className="grid grid-cols-3 gap-3">
             {commodities.map(c => {
               const cot = cotacaoMap[c]
+              const { Icon, cor } = COMMODITY_ICONS[c]
               return (
-                <div key={c} className="bg-muted/40 rounded-lg p-3 text-center">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                <div key={c} className="bg-muted/40 rounded-xl p-4 flex flex-col items-center text-center gap-1.5">
+                  <Icon className={`h-8 w-8 ${cor}`} />
+                  <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
                     {COMMODITY_LABELS[c]}
                   </p>
                   {cot ? (
                     <>
-                      <p className="text-lg font-bold mt-1 flex items-center justify-center gap-0.5">
-                        <TrendingUp className="h-3.5 w-3.5 text-green-600 shrink-0" />
+                      <p className="text-2xl font-bold flex items-center justify-center gap-1 tabular-nums">
+                        <TrendingUp className="h-4 w-4 text-green-600 shrink-0" />
                         {cot.preco_rs.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </p>
                       <p className="text-xs text-muted-foreground">R$/sc · {cot.data.split('-').reverse().join('/')}</p>
                     </>
                   ) : (
-                    <p className="text-sm text-muted-foreground mt-2">—</p>
+                    <p className="text-base text-muted-foreground mt-1">—</p>
                   )}
                 </div>
               )
