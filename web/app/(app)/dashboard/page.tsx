@@ -78,6 +78,9 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!fazendaAtiva?.id) return
 
+    setClima(null)
+    let cancelado = false
+
     async function carregarClima() {
       const { data: fazenda } = await supabase
         .from('fazendas')
@@ -85,9 +88,11 @@ export default function DashboardPage() {
         .eq('id', fazendaAtiva!.id)
         .single()
 
+      if (cancelado) return
+
       const lat = (fazenda as { lat?: number | null } | null)?.lat
       const lng = (fazenda as { lng?: number | null } | null)?.lng
-      if (!lat || !lng) return
+      if (!lat || !lng) { setClima([]); return }
 
       try {
         const url = [
@@ -98,9 +103,12 @@ export default function DashboardPage() {
         ].join('')
 
         const res = await fetch(url)
+        if (cancelado) return
         if (!res.ok) return
 
         const json = await res.json()
+        if (cancelado) return
+
         const {
           time,
           temperature_2m_min, temperature_2m_max,
@@ -122,6 +130,7 @@ export default function DashboardPage() {
     }
 
     carregarClima()
+    return () => { cancelado = true }
   }, [fazendaAtiva?.id])
 
   // ── Métricas dos 4 KPIs ──
