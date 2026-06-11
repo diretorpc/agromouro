@@ -126,9 +126,25 @@ app.post('/admin/run-cotacoes', requireAuth, adminLimiter, async (_req, res) => 
     return
   }
   cotacoesInFlight = true
-  res.json({ ok: true, message: 'Job iniciado.' })
   try {
-    await buscarCotacoes()
+    // Aguarda o job terminar para responder o resultado real — assim o
+    // frontend só recebe "ok" quando as cotações já estão gravadas no banco.
+    const { salvos, erros } = await buscarCotacoes()
+    if (salvos === 0) {
+      res.status(502).json({
+        ok: false,
+        message: `Nenhuma cotação obtida.${erros.length ? ' ' + erros.join('; ') : ''}`,
+      })
+      return
+    }
+    res.json({
+      ok: true,
+      salvos,
+      message: `${salvos} cotaç${salvos === 1 ? 'ão' : 'ões'} atualizada${salvos === 1 ? '' : 's'}.${erros.length ? ` (${erros.length} com falha)` : ''}`,
+    })
+  } catch (err) {
+    console.error('[Admin] Erro ao rodar cotações:', err instanceof Error ? err.message : err)
+    res.status(500).json({ ok: false, message: 'Erro ao executar o job de cotações.' })
   } finally {
     cotacoesInFlight = false
   }

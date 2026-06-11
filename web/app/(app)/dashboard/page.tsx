@@ -583,9 +583,10 @@ function CotacoesCard({ cotacaoMap, onCotacoesAtualizadas }: {
         setFeedback({ tipo: 'erro', msg: json.message ?? `Erro ${res.status}` })
         return
       }
-      setFeedback({ tipo: 'ok', msg: 'Job concluído! Atualizando…' })
-      // aguarda 2s para o Supabase persistir e recarrega
-      setTimeout(() => { onCotacoesAtualizadas(); setFeedback(null) }, 2000)
+      // Backend só responde ok após gravar — re-consulta imediata, sem race.
+      setFeedback({ tipo: 'ok', msg: json.message ?? 'Cotações atualizadas.' })
+      onCotacoesAtualizadas()
+      setTimeout(() => setFeedback(null), 4000)
     } catch (e) {
       setFeedback({ tipo: 'erro', msg: e instanceof Error ? e.message : 'Erro de rede' })
     } finally {

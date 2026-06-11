@@ -27,18 +27,51 @@ const COMMODITIES = [
   { nome: 'trigo', ticker: 'ZW%3DF', kgPerBushel: 27.215 },
 ]
 
-export async function buscarCotacoes(): Promise<void> {
-  const hoje = new Date().toISOString().slice(0, 10)
+export interface ResultadoCotacoes {
+  salvos: number
+  erros: string[]
+}
 
-  // Busca taxa USD/BRL e futuros CBOT em paralelo
+// Busca a cotação USD/BRL com fallback entre fontes. A awesomeapi é a melhor
+// (tempo real, BR), mas bloqueia IPs de datacenter (ex: Railway) — daí o
+// fallback para open.er-api.com, que é feita para uso server-side.
+async function buscarUsdBrl(): Promise<number> {
+  // Fonte 1: awesomeapi (tempo real) — parse defensivo, não crasha se vier vazio
+  try {
+    const r = await httpsGetJson('https://economia.awesomeapi.com.br/json/last/USD-BRL') as { USDBRL?: { bid?: string } }
+    const v = parseFloat(r?.USDBRL?.bid ?? '')
+    if (v > 0) return v
+    console.warn('[Cotações] awesomeapi: shape inesperado, tentando fallback')
+  } catch (err) {
+    console.warn('[Cotações] awesomeapi falhou:', err instanceof Error ? err.message : err)
+  }
+
+  // Fonte 2: open.er-api.com (sem key, server-friendly)
+  try {
+    const r = await httpsGetJson('https://open.er-api.com/v6/latest/USD') as { result?: string; rates?: { BRL?: number } }
+    const v = r?.rates?.BRL
+    if (r?.result === 'success' && typeof v === 'number' && v > 0) return v
+    console.warn('[Cotações] open.er-api: shape inesperado')
+  } catch (err) {
+    console.warn('[Cotações] open.er-api falhou:', err instanceof Error ? err.message : err)
+  }
+
+  throw new Error('nenhuma fonte de câmbio USD/BRL respondeu')
+}
+
+export async function buscarCotacoes(): Promise<ResultadoCotacoes> {
+  const hoje = new Date().toISOString().slice(0, 10)
+  const erros: string[] = []
+  let salvos = 0
+
+  // Busca taxa USD/BRL — sem ela não dá para converter os futuros CBOT
   let usdBrl: number
   try {
-    const cambio = await httpsGetJson('https://economia.awesomeapi.com.br/json/last/USD-BRL') as Record<string, { bid: string }>
-    usdBrl = parseFloat(cambio.USDBRL.bid)
-    if (isNaN(usdBrl) || usdBrl <= 0) throw new Error('Taxa USD/BRL inválida')
+    usdBrl = await buscarUsdBrl()
   } catch (err) {
-    console.error('[Cotações] Erro ao buscar USD/BRL:', err instanceof Error ? err.message : err)
-    return
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[Cotações] Erro ao buscar USD/BRL:', msg)
+    return { salvos: 0, erros: [`câmbio USD/BRL: ${msg}`] }
   }
 
   for (const commodity of COMMODITIES) {
@@ -50,6 +83,7 @@ export async function buscarCotacoes(): Promise<void> {
       const priceUSX = data?.chart?.result?.[0]?.meta?.regularMarketPrice
       if (!priceUSX || priceUSX <= 0) {
         console.warn(`[Cotações] Preço não encontrado para ${commodity.nome}`)
+        erros.push(`${commodity.nome}: preço não encontrado`)
         continue
       }
 
@@ -65,11 +99,17 @@ export async function buscarCotacoes(): Promise<void> {
 
       if (error) {
         console.error(`[Cotações] Erro ao salvar ${commodity.nome}:`, error.message)
+        erros.push(`${commodity.nome}: ${error.message}`)
       } else {
+        salvos++
         console.log(`[Cotações] ${commodity.nome}: R$ ${precoBrl.toFixed(2)}/sc (CBOT ref · ${hoje})`)
       }
     } catch (err) {
-      console.error(`[Cotações] Erro ao buscar ${commodity.nome}:`, err instanceof Error ? err.message : err)
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[Cotações] Erro ao buscar ${commodity.nome}:`, msg)
+      erros.push(`${commodity.nome}: ${msg}`)
     }
   }
+
+  return { salvos, erros }
 }
