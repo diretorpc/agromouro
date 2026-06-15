@@ -157,3 +157,10 @@ John Deere Operations Center · Stara Hércules 6.0 · Open Finance (Pluggy) ·
 NDVI via Sentinel Hub · sensores IoT (LoRaWAN/TTN).
 
 Detalhes e prioridades em [PLAN.md](PLAN.md).
+
+---
+
+## Créditos
+
+Projetado e desenvolvido pela **Serafim IA**.
+
