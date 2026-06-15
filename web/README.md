@@ -1,69 +1,69 @@
 # AgroMouro — Web
 
-Frontend do AgroMouro. Painel de gestão da fazenda em **Next.js 16 (App Router)**,
-**Tailwind CSS** e **shadcn/ui**, autenticado via **Supabase**.
+AgroMouro frontend. Farm management panel built with **Next.js 16 (App Router)**,
+**Tailwind CSS**, and **shadcn/ui**, authenticated via **Supabase**.
 
-> Parte do monorepo AgroMouro. Visão geral, arquitetura e o backend estão no
-> [README da raiz](../README.md).
+> Part of the AgroMouro monorepo. Overview, architecture, and the backend are in
+> the [root README](../README.md).
 
 ## Stack
 
 - **Next.js 16** (App Router) + **React 19**
 - **Tailwind CSS v4** + **shadcn/ui**
-- **Supabase** (`@supabase/supabase-js`) — auth e dados
-- **Recharts** — gráficos do dashboard
-- **Leaflet / react-leaflet** — mapa dos talhões
-- **TanStack Table** + **dnd-kit** — tabelas e ordenação
+- **Supabase** (`@supabase/supabase-js`) — auth and data
+- **Recharts** — dashboard charts
+- **Leaflet / react-leaflet** — fields map
+- **TanStack Table** + **dnd-kit** — tables and drag-and-drop ordering
 
-## Rotas
+## Routes
 
-Sob `app/(app)/`, todas protegidas por autenticação:
+Under `app/(app)/`, all protected by authentication:
 
-| Rota | Página |
+| Route | Page |
 |------|--------|
-| `/dashboard` | Resumo da fazenda |
-| `/estoque` | Estoque de insumos |
-| `/operacoes` | Operações de campo |
-| `/talhoes` | Talhões e mapa |
-| `/nfe` | Notas fiscais recebidas |
-| `/cartoes` | Cartões / extratos |
-| `/financeiro` | Lançamentos financeiros |
-| `/custos` | Centros de custo |
-| `/alertas` | Central de alertas |
+| `/dashboard` | Farm overview |
+| `/estoque` | Input stock |
+| `/operacoes` | Field operations |
+| `/talhoes` | Fields and map |
+| `/nfe` | Received e-invoices |
+| `/cartoes` | Cards / statements |
+| `/financeiro` | Financial entries |
+| `/custos` | Cost centers |
+| `/alertas` | Alerts center |
 
-`app/login/` é a página pública de login.
+`app/login/` is the public login page.
 
-## Rodando localmente
+## Running locally
 
 ```bash
 npm install
 npm run dev      # http://localhost:3000
 ```
 
-### Variáveis de ambiente
+### Environment variables
 
-Crie um `.env.local` com as chaves públicas do Supabase:
+Create a `.env.local` with the Supabase public keys:
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGc...
-NEXT_PUBLIC_API_URL=http://localhost:3001   # API local
+NEXT_PUBLIC_API_URL=http://localhost:3001   # local API
 ```
 
-> Use **apenas** a `anon key` no frontend — a `service key` nunca sai do backend.
+> Use **only** the `anon key` in the frontend — the `service key` never leaves the backend.
 
 ## Scripts
 
-| Comando | Ação |
-|---------|------|
-| `npm run dev` | Servidor de desenvolvimento |
-| `npm run build` | Build de produção |
-| `npm start` | Servir o build |
+| Command | Action |
+|---------|--------|
+| `npm run dev` | Development server |
+| `npm run build` | Production build |
+| `npm start` | Serve the build |
 
 ## Deploy
 
-Deploy automático na **Vercel** a partir da pasta `web/`. Configure as variáveis
-`NEXT_PUBLIC_*` no painel do projeto.
+Automatic deploy on **Vercel** from the `web/` folder. Set the `NEXT_PUBLIC_*`
+variables in the project dashboard.
 
-> ⚠️ Esta é uma versão recente do Next.js (16) com breaking changes. Antes de
-> escrever código, consulte os guias em `node_modules/next/dist/docs/` — veja `AGENTS.md`.
+> ⚠️ This is a recent Next.js version (16) with breaking changes. Before writing
+> code, check the guides in `node_modules/next/dist/docs/` — see `AGENTS.md`.

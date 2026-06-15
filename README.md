@@ -1,34 +1,35 @@
 # 🌱 AgroMouro
 
-> Plataforma de gestão agrícola para fazendas de grãos (soja, milho, trigo).
-> O agricultor opera tudo pelo **WhatsApp** — o sistema coleta os dados sozinho
-> (NF-e, clima, cotações) e só incomoda quando não há outro jeito.
+> Farm management platform for grain farms (soybean, corn, wheat).
+> The farmer runs everything through **WhatsApp** — the system collects the data
+> on its own (e-invoices, weather, commodity prices) and only interrupts when
+> there's no other way.
 
 ---
 
-## O que é
+## What it is
 
-O produtor rural não é técnico e não quer preencher planilhas. O AgroMouro
-inverte o esforço: em vez de pedir dados, ele os **captura automaticamente** e
-cruza tudo para dar visibilidade total da fazenda sem trabalho manual.
+Rural producers aren't technical and don't want to fill in spreadsheets. AgroMouro
+flips the effort: instead of asking for data, it **captures it automatically** and
+cross-references everything to give full visibility of the farm with no manual work.
 
-- 📲 **WhatsApp** — o agricultor registra operações de campo em linguagem natural; o Claude interpreta.
-- 🧾 **NF-e automática** — notas dos fornecedores chegam por e-mail, são lidas e viram estoque + despesa.
-- 🌦️ **Clima e cotações** — alertas de geada/pulverização e preços CEPEA (soja, milho, trigo) diários.
-- 📊 **Painel web** — dashboard, estoque, operações, talhões, financeiro e alertas em um só lugar.
+- 📲 **WhatsApp** — the farmer logs field operations in natural language; Claude parses them.
+- 🧾 **Automatic e-invoices** — supplier invoices arrive by email, get parsed, and become stock + expense entries.
+- 🌦️ **Weather & prices** — frost/spraying alerts and daily CEPEA prices (soybean, corn, wheat).
+- 📊 **Web panel** — dashboard, stock, operations, fields, finance, and alerts in one place.
 
 ---
 
-## Arquitetura
+## Architecture
 
 ```
                           ┌─────────────────────────┐
-   Fornecedor ──(e-mail)─▶│  Make.com (a cada 15min) │──┐
-                          └─────────────────────────┘  │  XML da NF-e
+   Supplier ──(email)────▶│  Make.com (every 15 min) │──┐
+                          └─────────────────────────┘  │  e-invoice XML
                                                         ▼
-  Agricultor ──(WhatsApp)──▶ Z-API ──▶ ┌──────────────────────────┐
+  Farmer ──(WhatsApp)──────▶ Z-API ──▶ ┌──────────────────────────┐
                                        │   API (Node + Express)    │
-   Clima / CEPEA ──(cron)────────────▶ │   Railway                 │
+   Weather / CEPEA ──(cron)──────────▶ │   Railway                 │
                                        └────────────┬─────────────┘
                                                     │
                                           ┌─────────▼─────────┐
@@ -36,62 +37,62 @@ cruza tudo para dar visibilidade total da fazenda sem trabalho manual.
                                           │  + Auth + RLS)     │
                                           └─────────▲─────────┘
                                                     │
-   Agricultor ──(navegador)──▶ ┌────────────────────┴─────────────┐
+   Farmer ──(browser)────────▶ ┌────────────────────┴─────────────┐
                                │   Web (Next.js 16 + Tailwind)     │
                                │   Vercel                          │
                                └──────────────────────────────────┘
 ```
 
-| Camada | Stack | Deploy |
+| Layer | Stack | Deploy |
 |--------|-------|--------|
 | **api/** | Node.js · Express · TypeScript | Railway |
 | **web/** | Next.js 16 (App Router) · Tailwind · shadcn/ui | Vercel |
-| **Banco** | Supabase — PostgreSQL + Auth + RLS + Realtime | Supabase Cloud |
-| **WhatsApp** | Z-API + Claude Haiku (parsing de mensagens) | — |
-| **NF-e** | Make.com monitora e-mails Outlook → `POST /webhook/nfe-email` | — |
-| **IA** | Anthropic Claude (Haiku: parsing · Sonnet: prescrições de solo) | — |
+| **Database** | Supabase — PostgreSQL + Auth + RLS + Realtime | Supabase Cloud |
+| **WhatsApp** | Z-API + Claude Haiku (message parsing) | — |
+| **E-invoice** | Make.com watches Outlook inboxes → `POST /webhook/nfe-email` | — |
+| **AI** | Anthropic Claude (Haiku: parsing · Sonnet: soil prescriptions) | — |
 
-> ℹ️ **NF-e é 100% automática.** O Make.com vigia dois e-mails Outlook a cada 15min
-> e envia o XML para a API. Não há etapa manual.
+> ℹ️ **E-invoicing is 100% automatic.** Make.com watches two Outlook inboxes every
+> 15 min and sends the XML to the API. There is no manual step.
 
 ---
 
-## Estrutura do monorepo
+## Monorepo structure
 
 ```
 agromouro-base/
 ├── api/                  # Backend — Node + Express + TypeScript (Railway)
 │   └── src/
-│       ├── routes/       # Rotas REST: talhoes, estoque, operacoes, alertas, cartoes
-│       ├── services/     # Lógica de negócio: supabase, zapi, nfeProcessor, categorizador
-│       ├── webhooks/     # Eventos externos: whatsapp, nfe, nfeEmail
-│       ├── jobs/         # node-cron: clima (06:00), cotações (06:30), NF-e e-mail (30min)
+│       ├── routes/       # REST routes: fields, stock, operations, alerts, cards
+│       ├── services/     # Business logic: supabase, zapi, nfeProcessor, categorizer
+│       ├── webhooks/     # External events: whatsapp, nfe, nfeEmail
+│       ├── jobs/         # node-cron: weather (06:00), prices (06:30), e-invoice email (30 min)
 │       ├── middleware/   # auth, errorHandler, requestLogger, validateWebhook
 │       ├── database/     # schema.sql, seed.sql, migrations/
-│       └── index.ts      # entrada da aplicação
-├── web/                  # Frontend — Next.js 16 (Vercel) — ver web/README.md
-│   └── app/(app)/        # dashboard, estoque, operacoes, talhoes, nfe, cartoes,
-│                         # financeiro, custos, alertas
-├── supabase/             # configuração do projeto Supabase
-├── docs/                 # documentação, auditorias e setup do Make.com
-├── .env.example          # todas as variáveis de ambiente, comentadas
-└── PLAN.md               # plano de produto e roadmap detalhado
+│       └── index.ts      # application entry point
+├── web/                  # Frontend — Next.js 16 (Vercel) — see web/README.md
+│   └── app/(app)/        # dashboard, stock, operations, fields, e-invoices, cards,
+│                         # finance, costs, alerts
+├── supabase/             # Supabase project configuration
+├── docs/                 # documentation, audits, and Make.com setup
+├── .env.example          # all environment variables, commented
+└── PLAN.md               # detailed product plan and roadmap
 ```
 
 ---
 
-## Como rodar localmente
+## Running locally
 
-**Pré-requisitos:** Node.js 20+, conta Supabase, credenciais Z-API e Anthropic.
+**Prerequisites:** Node.js 20+, a Supabase account, Z-API and Anthropic credentials.
 
-### 1. Variáveis de ambiente
+### 1. Environment variables
 
 ```bash
 cp .env.example .env
-# Preencha com suas credenciais (Supabase, Z-API, Anthropic, etc.)
+# Fill in your credentials (Supabase, Z-API, Anthropic, etc.)
 ```
 
-O mesmo `.env` da raiz é usado pela API (`npm run dev` lê `../.env`).
+The same root `.env` is used by the API (`npm run dev` reads `../.env`).
 
 ### 2. API (backend)
 
@@ -102,9 +103,9 @@ npm run dev
 # → http://localhost:3001/health
 ```
 
-Na inicialização a API valida as variáveis obrigatórias
+On startup the API validates the required variables
 (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_ANON_KEY`, `WEBHOOK_SECRET`)
-e avisa sobre as opcionais (Z-API, Anthropic).
+and warns about the optional ones (Z-API, Anthropic).
 
 ### 3. Web (frontend)
 
@@ -115,52 +116,51 @@ npm run dev
 # → http://localhost:3000
 ```
 
-> Configure as variáveis `NEXT_PUBLIC_*` do Supabase para o frontend. Detalhes em [web/README.md](web/README.md).
+> Set the Supabase `NEXT_PUBLIC_*` variables for the frontend. Details in [web/README.md](web/README.md).
 
 ---
 
-## Banco de dados (MVP)
+## Database (MVP)
 
-Tabelas principais: `fazenda`, `talhoes`, `safras`, `operacoes`, `insumos`,
+Main tables: `fazenda`, `talhoes`, `safras`, `operacoes`, `insumos`,
 `estoque`, `movimentacoes_estoque`, `notas_fiscais`, `itens_nfe`,
 `lancamentos_financeiros`, `alertas`.
 
-Schema e migrations versionados em [api/src/database/](api/src/database/).
-Acesso protegido por **Row Level Security (RLS)** no Supabase.
+Schema and migrations are versioned in [api/src/database/](api/src/database/).
+Access is protected by **Row Level Security (RLS)** in Supabase.
 
 ---
 
 ## Deploy
 
-| Serviço | Plataforma | Observação |
-|---------|-----------|------------|
-| API | **Railway** | `npm run build` → `npm start`. Config em `api/nixpacks.toml`. |
-| Web | **Vercel** | Build automático do Next.js a partir de `web/`. |
-| Banco | **Supabase** | PostgreSQL gerenciado + Auth. |
+| Service | Platform | Notes |
+|---------|----------|-------|
+| API | **Railway** | `npm run build` → `npm start`. Config in `api/nixpacks.toml`. |
+| Web | **Vercel** | Automatic Next.js build from `web/`. |
+| Database | **Supabase** | Managed PostgreSQL + Auth. |
 
-Defina todas as variáveis de ambiente no painel de cada serviço — **nunca commite o `.env`**.
-
----
-
-## Segurança
-
-- `.env` está no `.gitignore` — segredos nunca vão para o Git.
-- Webhooks externos têm validação de origem própria (`validateWebhook`) + rate limit.
-- Rotas da API protegidas por autenticação Supabase (`requireAuth`).
-- Helmet, CORS por allowlist e rate limiting global ativos na API.
+Set all environment variables in each service's dashboard — **never commit `.env`**.
 
 ---
 
-## Roadmap (pós-MVP)
+## Security
+
+- `.env` is in `.gitignore` — secrets never reach Git.
+- External webhooks have their own origin validation (`validateWebhook`) + rate limiting.
+- API routes are protected by Supabase authentication (`requireAuth`).
+- Helmet, allowlist-based CORS, and global rate limiting are active on the API.
+
+---
+
+## Roadmap (post-MVP)
 
 John Deere Operations Center · Stara Hércules 6.0 · Open Finance (Pluggy) ·
-NDVI via Sentinel Hub · sensores IoT (LoRaWAN/TTN).
+NDVI via Sentinel Hub · IoT sensors (LoRaWAN/TTN).
 
-Detalhes e prioridades em [PLAN.md](PLAN.md).
+Details and priorities in [PLAN.md](PLAN.md).
 
 ---
 
-## Créditos
+## Credits
 
-Projetado e desenvolvido pela **Serafim IA**.
-
+Built by [Matheus Dib Mouro](https://www.linkedin.com/in/matheus-dib-26b458160/) — AI Automation Developer (Serafim IA).
