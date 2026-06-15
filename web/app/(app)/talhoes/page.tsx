@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { MapPin, Plus, Trash2, Layers, Sprout, Upload, CheckCircle2, AlertCircle } from 'lucide-react'
+import { MapPin, Plus, Pencil, Trash2, Layers, Sprout, Upload, CheckCircle2, AlertCircle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -75,13 +75,14 @@ export default function TalhoesPage() {
   const [importando, setImportando] = useState(false)
   const [importResult, setImportResult] = useState<{ ok: number; total: number; semMatch: string[] } | null>(null)
 
-  // novo talhão
-  const [novoDialog, setNovoDialog] = useState(false)
-  const [novoForm, setNovoForm] = useState({
+  // criar / editar talhão — mesmo dialog: editId null = criar, preenchido = editar
+  const [formDialog, setFormDialog] = useState(false)
+  const [editId, setEditId] = useState<string | null>(null)
+  const [form, setForm] = useState({
     nome: '', area_ha: '', cultura_atual: '', status: 'ativo' as Talhao['status'],
   })
   const [salvando, setSalvando] = useState(false)
-  const [novoErro, setNovoErro] = useState<string | null>(null)
+  const [formErro, setFormErro] = useState<string | null>(null)
 
   // deletar
   const [deleteDialog, setDeleteDialog] = useState<Talhao | null>(null)
@@ -137,28 +138,51 @@ export default function TalhoesPage() {
     }
   }
 
-  // ── Novo talhão ──
-  async function salvarNovo() {
-    setNovoErro(null)
-    const nome = novoForm.nome.trim()
-    const area = parseFloat(novoForm.area_ha)
+  // ── Abrir dialog ──
+  function abrirNovo() {
+    setEditId(null)
+    setForm({ nome: '', area_ha: '', cultura_atual: '', status: 'ativo' })
+    setFormErro(null)
+    setFormDialog(true)
+  }
 
-    if (!nome) return setNovoErro('Nome é obrigatório.')
-    if (isNaN(area) || area <= 0) return setNovoErro('Área deve ser um número positivo.')
+  function abrirEdicao(t: Talhao) {
+    setEditId(t.id)
+    setForm({
+      nome: t.nome,
+      area_ha: String(t.area_ha),
+      cultura_atual: t.cultura_atual ?? '',
+      status: t.status,
+    })
+    setFormErro(null)
+    setFormDialog(true)
+  }
 
-    setSalvando(true)
-    const { error } = await supabase.from('talhoes').insert({
+  // ── Criar / editar talhão ──
+  async function salvar() {
+    setFormErro(null)
+    const nome = form.nome.trim()
+    const area = parseFloat(form.area_ha)
+
+    if (!nome) return setFormErro('Nome é obrigatório.')
+    if (isNaN(area) || area <= 0) return setFormErro('Área deve ser um número positivo.')
+
+    const payload = {
       nome,
       area_ha: area,
-      status: novoForm.status,
-      cultura_atual: novoForm.cultura_atual.trim() || null,
-    })
+      status: form.status,
+      cultura_atual: form.cultura_atual.trim() || null,
+    }
+
+    setSalvando(true)
+    const { error } = editId
+      ? await supabase.from('talhoes').update(payload).eq('id', editId)
+      : await supabase.from('talhoes').insert(payload)
     setSalvando(false)
 
-    if (error) { setNovoErro('Erro ao salvar. Tente novamente.'); return }
+    if (error) { setFormErro('Erro ao salvar. Tente novamente.'); return }
 
-    setNovoDialog(false)
-    setNovoForm({ nome: '', area_ha: '', cultura_atual: '', status: 'ativo' })
+    setFormDialog(false)
     loadData()
   }
 
@@ -283,7 +307,7 @@ export default function TalhoesPage() {
                 <Upload className="h-4 w-4 mr-1.5" aria-hidden="true" />
                 {importando ? 'Importando…' : 'Importar KMZ'}
               </Button>
-              <Button size="sm" onClick={() => { setNovoErro(null); setNovoDialog(true) }}>
+              <Button size="sm" onClick={abrirNovo}>
                 <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
                 Novo Talhão
               </Button>
@@ -295,7 +319,7 @@ export default function TalhoesPage() {
             <div className="py-14 flex flex-col items-center gap-3 text-center">
               <MapPin className="h-10 w-10 text-muted-foreground/30" />
               <p className="text-sm text-muted-foreground font-medium">Nenhum talhão cadastrado.</p>
-              <Button variant="outline" size="sm" onClick={() => setNovoDialog(true)}>
+              <Button variant="outline" size="sm" onClick={abrirNovo}>
                 <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
                 Cadastrar primeiro talhão
               </Button>
@@ -309,7 +333,7 @@ export default function TalhoesPage() {
                   <TableHead>Cultura Atual</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Mapa</TableHead>
-                  <TableHead className="w-14" />
+                  <TableHead className="w-24" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -331,13 +355,22 @@ export default function TalhoesPage() {
                         : <span className="text-xs text-muted-foreground/50">—</span>}
                     </TableCell>
                     <TableCell>
-                      <button
-                        onClick={() => { setDeleteErro(null); setDeleteDialog(t) }}
-                        className="p-1.5 rounded text-muted-foreground/50 hover:text-red-600 hover:bg-red-50 transition-colors"
-                        aria-label="Excluir talhão"
-                      >
-                        <Trash2 className="h-4 w-4" aria-hidden="true" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => abrirEdicao(t)}
+                          className="p-1.5 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted transition-colors"
+                          aria-label="Editar talhão"
+                        >
+                          <Pencil className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                        <button
+                          onClick={() => { setDeleteErro(null); setDeleteDialog(t) }}
+                          className="p-1.5 rounded text-muted-foreground/50 hover:text-red-600 hover:bg-red-50 transition-colors"
+                          aria-label="Excluir talhão"
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -347,25 +380,27 @@ export default function TalhoesPage() {
         </CardContent>
       </Card>
 
-      {/* Dialog — novo talhão */}
-      <Dialog open={novoDialog} onOpenChange={setNovoDialog}>
+      {/* Dialog — criar / editar talhão */}
+      <Dialog open={formDialog} onOpenChange={setFormDialog}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Novo Talhão</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{editId ? 'Editar Talhão' : 'Novo Talhão'}</DialogTitle>
+          </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
               <Label>Nome *</Label>
-              <Input placeholder="ex: Talhão 01" value={novoForm.nome}
-                onChange={e => setNovoForm(f => ({ ...f, nome: e.target.value }))} />
+              <Input placeholder="ex: Talhão 01" value={form.nome}
+                onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} />
             </div>
             <div className="space-y-1.5">
               <Label>Área (ha) *</Label>
-              <Input type="number" min="0" step="0.1" placeholder="ex: 120.5" value={novoForm.area_ha}
-                onChange={e => setNovoForm(f => ({ ...f, area_ha: e.target.value }))} />
+              <Input type="number" min="0" step="0.1" placeholder="ex: 120.5" value={form.area_ha}
+                onChange={e => setForm(f => ({ ...f, area_ha: e.target.value }))} />
             </div>
             <div className="space-y-1.5">
               <Label>Status</Label>
-              <select className={SELECT_CLASS} value={novoForm.status}
-                onChange={e => setNovoForm(f => ({ ...f, status: e.target.value as Talhao['status'] }))}>
+              <select className={SELECT_CLASS} value={form.status}
+                onChange={e => setForm(f => ({ ...f, status: e.target.value as Talhao['status'] }))}>
                 {STATUS_OPTIONS.map(s => (
                   <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
                 ))}
@@ -373,14 +408,14 @@ export default function TalhoesPage() {
             </div>
             <div className="space-y-1.5">
               <Label>Cultura Atual <span className="text-muted-foreground font-normal">(opcional)</span></Label>
-              <Input placeholder="ex: soja" value={novoForm.cultura_atual}
-                onChange={e => setNovoForm(f => ({ ...f, cultura_atual: e.target.value }))} />
+              <Input placeholder="ex: soja" value={form.cultura_atual}
+                onChange={e => setForm(f => ({ ...f, cultura_atual: e.target.value }))} />
             </div>
-            {novoErro && <p className="text-sm text-red-600">{novoErro}</p>}
+            {formErro && <p className="text-sm text-red-600">{formErro}</p>}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setNovoDialog(false)}>Cancelar</Button>
-            <Button onClick={salvarNovo} disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar'}</Button>
+            <Button variant="outline" onClick={() => setFormDialog(false)}>Cancelar</Button>
+            <Button onClick={salvar} disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
