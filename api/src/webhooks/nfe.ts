@@ -52,6 +52,7 @@ nfeWebhook.post('/', async (req, res) => {
         totalValue:   item.totalValue,
         quantityTrib: item.quantityTrib ?? item.quantity,
         unitTrib:     item.unitTrib     ?? item.unit,
+        ncm:          String(item.ncm ?? '').replace(/\D/g, ''),
       })),
     }
 
