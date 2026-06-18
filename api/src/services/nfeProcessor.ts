@@ -14,6 +14,15 @@ const TIPOS_VALIDOS = [
 
 type TipoInsumo = typeof TIPOS_VALIDOS[number]
 
+// Categorias que alimentam o ESTOQUE (insumos de campo consumíveis).
+// Tipos fora desta lista (peça, serviço, frete, combustível, RH, etc.) são
+// registrados apenas na nota e no financeiro — sem poluir o estoque.
+const TIPOS_ESTOCAVEIS = new Set<TipoInsumo>([
+  'herbicida', 'fungicida', 'inseticida', 'biologico', 'adjuvante',
+  'fertilizante_n', 'fertilizante_p', 'fertilizante_k', 'fertilizante_outro', 'calcario',
+  'semente',
+])
+
 // Unidades comerciais de embalagem — quando uCom ≠ uTrib, usa qTrib e uTrib como quantidade base
 const UNIDADES_COMERCIAIS = new Set([
   'BD', 'PAC', 'CX', 'FR', 'BAG', 'BALDE', 'CAIXA', 'PACOTE', 'DOSE',
@@ -28,6 +37,7 @@ export interface NFeItem {
   totalValue:   number
   quantityTrib: number   // qTrib — quantidade em unidade tributável (ex: litros)
   unitTrib:     string   // uTrib — unidade tributável (ex: L, kg)
+  ncm:          string   // ← NOVO: código NCM (8 dígitos), ex: "38089329"
 }
 
 export interface NFeData {
@@ -78,6 +88,7 @@ export function parseXmlNFe(xmlStr: string): NFeData | null {
         totalValue:   parseFloat(String(prod.vProd  ?? 0)),
         quantityTrib: parseFloat(String(prod.qTrib  ?? prod.qCom ?? 0)),
         unitTrib:     String(prod.uTrib ?? prod.uCom ?? 'un'),
+        ncm:          String(prod.NCM ?? '').replace(/\D/g, ''),  // ← NOVO: só dígitos
       }
     }).filter((i: NFeItem) => i.description)
 
@@ -100,6 +111,20 @@ export async function nfeJaProcessada(numero: string, fazenda_id: string): Promi
     .limit(1)
     .single()
   return !!data
+}
+
+// Decide estoque/não-estoque pelo NCM (determinístico).
+// Retorna null quando o NCM não é conclusivo → cai pro Haiku como fallback.
+function fronteiraPorNCM(ncm: string): boolean | null {
+  if (!ncm || ncm.length < 4) return null      // NCM ausente/inválido → fallback
+
+  if (ncm.startsWith('3808')) return true       // defensivos
+  if (ncm.startsWith('31'))   return true        // adubos/fertilizantes (cap. 31)
+  if (ncm.startsWith('1209')) return true        // sementes para semeadura
+  if (ncm.startsWith('2710')) return false       // combustível/lubrificante
+  if (ncm.startsWith('84') || ncm.startsWith('87')) return false  // peças/máquinas
+
+  return null                                    // desconhecido → Haiku decide
 }
 
 // ─── Categorizar item com Claude Haiku ───────────────────────────────────────
@@ -180,11 +205,32 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
     nfeId = notaFiscal.id
 
     // 2. Processar todos os itens imediatamente (sem fluxo de confirmação)
-    const itensAtualizados: string[] = []
-    const itensAutoCriados: string[] = []
+    const itensAtualizados:  string[] = []
+    const itensAutoCriados:  string[] = []
+    const itensNaoEstocados: string[] = []
 
     for (const item of itensSeguros) {
-      const tipo = await categorizarItem(item.description)
+      // Cascata: NCM decide a fronteira; o Haiku só desempata quando o NCM é mudo.
+      const vereditoNCM = fronteiraPorNCM(item.ncm)
+      const tipo        = await categorizarItem(item.description)  // ainda alimenta insumos.tipo
+      const estocavel   = vereditoNCM !== null ? vereditoNCM : TIPOS_ESTOCAVEIS.has(tipo)
+
+      // Itens não-estocáveis (peça, serviço, frete, combustível, RH, etc.):
+      // registra só na nota — sem criar insumo, estoque ou movimentação.
+      if (!estocavel) {
+        await supabase.from('itens_nfe').insert({
+          nota_fiscal_id: nfeId,
+          descricao:      item.description.slice(0, 500),
+          quantidade:     item.quantity,
+          unidade:        item.unit,
+          valor_unitario: item.unitValue,
+          valor_total:    item.totalValue,
+          insumo_id:      null,
+          fazenda_id,
+        })
+        itensNaoEstocados.push(`• ${item.quantity}${item.unit} ${item.description.trim().slice(0, 60)}`)
+        continue
+      }
 
       // Se for unidade comercial com qTrib disponível, usa qTrib/uTrib como quantidade base
       const isComercial  = UNIDADES_COMERCIAIS.has(item.unit) && item.unitTrib && item.unitTrib !== item.unit
@@ -257,6 +303,10 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
     if (itensAutoCriados.length > 0) {
       if (itensAtualizados.length > 0) mensagem += '\n\n'
       mensagem += `🆕 *Novos insumos:*\n${itensAutoCriados.join('\n')}`
+    }
+    if (itensNaoEstocados.length > 0) {
+      if (itensAtualizados.length > 0 || itensAutoCriados.length > 0) mensagem += '\n\n'
+      mensagem += `📦 *Não estocados* (só financeiro):\n${itensNaoEstocados.join('\n')}`
     }
 
     await enviarMensagem(phone, mensagem)
