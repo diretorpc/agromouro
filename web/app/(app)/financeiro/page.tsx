@@ -237,6 +237,7 @@ export default function FinanceiroPage() {
 
   const [addDialog, setAddDialog] = useState(false)
   const [editItem, setEditItem] = useState<ItemFinanceiro | null>(null)
+  const [editErro, setEditErro] = useState<string | null>(null)
   const [deleteItem, setDeleteItem] = useState<ItemFinanceiro | null>(null)
   const [deleteErro, setDeleteErro] = useState<string | null>(null)
   const [salvando, setSalvando] = useState(false)
@@ -246,7 +247,7 @@ export default function FinanceiroPage() {
     const [nfeResult, lancResult] = await Promise.all([
       supabase
         .from('itens_nfe')
-        .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, insumo_id, insumos(tipo), notas_fiscais(numero, emitente_nome, data_emissao)')
+        .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, centro_custo, insumo_id, insumos(tipo), notas_fiscais(numero, emitente_nome, data_emissao)')
         .order('id', { ascending: false }),
       supabase
         .from('lancamentos_financeiros')
@@ -269,7 +270,7 @@ export default function FinanceiroPage() {
       unidade: row.unidade,
       valor_unitario: row.valor_unitario,
       valor_total: row.valor_total,
-      centro_custo: row.insumos?.tipo ?? 'outro',
+      centro_custo: row.centro_custo ?? row.insumos?.tipo ?? 'outro',
       insumo_id: row.insumo_id,
       nota_numero: row.notas_fiscais?.numero ?? null,
       emitente_nome: row.notas_fiscais?.emitente_nome ?? '',
@@ -369,6 +370,7 @@ export default function FinanceiroPage() {
       centro_custo: item.centro_custo,
       data: item.data_emissao ? item.data_emissao.slice(0, 10) : new Date().toISOString().slice(0, 10),
     })
+    setEditErro(null)
     setEditItem(item)
   }
 
@@ -378,19 +380,30 @@ export default function FinanceiroPage() {
     const qtd = parseFloat(form.quantidade) || 1
     const vUnit = parseFloat(form.valor_unitario) || 0
 
-    if (editItem.insumo_id) {
-      await supabase.from('insumos').update({ tipo: form.centro_custo }).eq('id', editItem.insumo_id)
-    }
-
-    await supabase.from('itens_nfe').update({
+    // Centro de custo é gravado por lançamento na própria itens_nfe (independente
+    // do insumo/estoque) — itens não-estocáveis (peça, frete) não têm insumo_id.
+    const { data: updated, error } = await supabase.from('itens_nfe').update({
       descricao: form.descricao.trim(),
       quantidade: qtd,
       unidade: form.unidade,
       valor_unitario: vUnit,
       valor_total: qtd * vUnit,
-    }).eq('id', editItem.id)
+      centro_custo: form.centro_custo,
+    }).eq('id', editItem.id).select('id')
 
     setSalvando(false)
+
+    if (error) {
+      console.error('[Financeiro] Erro ao editar lançamento:', error)
+      setEditErro(`Erro ao salvar: ${error.message}`)
+      return
+    }
+    if (!updated || updated.length === 0) {
+      console.error('[Financeiro] Update não afetou nenhuma linha — possível política RLS')
+      setEditErro('Sem permissão para editar este item. Verifique as políticas do banco.')
+      return
+    }
+
     setEditItem(null)
     setForm(FORM_VAZIO)
     load()
@@ -788,10 +801,15 @@ export default function FinanceiroPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!editItem} onOpenChange={open => { if (!open) setEditItem(null) }}>
+      <Dialog open={!!editItem} onOpenChange={open => { if (!open) { setEditItem(null); setEditErro(null) } }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Editar Lançamento</DialogTitle></DialogHeader>
           <FormFields form={form} setForm={setForm} />
+          {editErro && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              {editErro}
+            </p>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditItem(null)}>Cancelar</Button>
             <Button onClick={handleEdit} disabled={salvando || !form.descricao || !form.valor_unitario}>
