@@ -20,6 +20,21 @@ cross-references everything to give full visibility of the farm with no manual w
 
 ---
 
+## Screenshots
+
+> 💰 Monetary values are masked (`R$ •••••`) — the data belongs to a real, operating farm.
+
+![Dashboard](docs/screenshots-publicas/01-dashboard.png)
+
+| | |
+|---|---|
+| **Fields** — satellite map + KMZ import ![Fields](docs/screenshots-publicas/02-talhoes.png) | **Stock** — inputs with average price and unit conversion ![Stock](docs/screenshots-publicas/03-estoque.png) |
+| **Operations** — field history with dosage per hectare ![Operations](docs/screenshots-publicas/04-operacoes.png) | **E-invoices** — parsed automatically from supplier emails ![E-invoices](docs/screenshots-publicas/05-nfe.png) |
+| **Credit cards** — statement import + auto-categorization ![Cards](docs/screenshots-publicas/06-cartoes.png) | **Finance** — expenses by category, fed by e-invoices ![Finance](docs/screenshots-publicas/07-financeiro.png) |
+| **Cost per field** — R$/ha comparison across fields ![Costs](docs/screenshots-publicas/08-custos.png) | **Alerts** — spraying windows, frost, low stock ![Alerts](docs/screenshots-publicas/09-alertas.png) |
+
+---
+
 ## Architecture
 
 ```
