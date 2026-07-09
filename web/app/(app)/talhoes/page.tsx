@@ -235,7 +235,7 @@ export default function TalhoesPage() {
         <KpiCard
           label="Área Total"
           value={`${areaTotal.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} ha`}
-          sub={`${talhoes.length} talhão${talhoes.length !== 1 ? 'ões' : ''}`}
+          sub={`${talhoes.length} talh${talhoes.length !== 1 ? 'ões' : 'ão'}`}
           icon={<Layers className="h-5 w-5" />}
           iconBg="#EEF5E5" iconColor="#5B8C2A"
         />
@@ -253,7 +253,7 @@ export default function TalhoesPage() {
         <Card className="border-0 shadow-sm overflow-hidden">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
-              Mapa — {comMapa.length} de {talhoes.length} talhão{talhoes.length !== 1 ? 'ões' : ''} mapeado{comMapa.length !== 1 ? 's' : ''}
+              Mapa — {comMapa.length} de {talhoes.length} talh{talhoes.length !== 1 ? 'ões' : 'ão'} mapeado{comMapa.length !== 1 ? 's' : ''}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -271,7 +271,7 @@ export default function TalhoesPage() {
           <div>
             <p className="font-semibold">
               {importResult.ok > 0
-                ? `${importResult.ok} de ${importResult.total} talhão${importResult.total !== 1 ? 'ões' : ''} mapeado${importResult.ok !== 1 ? 's' : ''} com sucesso.`
+                ? `${importResult.ok} de ${importResult.total} talh${importResult.total !== 1 ? 'ões' : 'ão'} mapeado${importResult.ok !== 1 ? 's' : ''} com sucesso.`
                 : 'Nenhum talhão foi mapeado.'}
             </p>
             {importResult.semMatch.length > 0 && (
