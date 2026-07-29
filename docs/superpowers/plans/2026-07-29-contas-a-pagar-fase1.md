@@ -295,6 +295,30 @@ describe('ocorrenciasEsperadas', () => {
     const r = ocorrenciasEsperadas(base, { ano: 2026, mes: 12 }, { ano: 2027, mes: 1 })
     expect(r.map(o => o.competencia)).toEqual(['2026-12-01', '2027-01-01'])
   })
+
+  it('bimestral com mes_primeira 1 cai de 2 em 2 meses', () => {
+    const regra: Regra = { ...base, periodicidade: 'bimestral', mes_primeira: 1 }
+    const r = ocorrenciasEsperadas(regra, { ano: 2026, mes: 1 }, { ano: 2026, mes: 12 })
+    expect(r.map(o => o.competencia)).toEqual([
+      '2026-01-01', '2026-03-01', '2026-05-01', '2026-07-01', '2026-09-01', '2026-11-01',
+    ])
+  })
+
+  it('conta nao-mensal sem mes_primeira estoura erro claro, nao assume janeiro', () => {
+    const regra: Regra = { ...base, periodicidade: 'anual', mes_primeira: null }
+    expect(() => ocorrenciasEsperadas(regra, { ano: 2026, mes: 1 }, { ano: 2026, mes: 12 }))
+      .toThrow(/mes_primeira/)
+  })
+
+  it('conta mensal sem mes_primeira continua funcionando normalmente', () => {
+    const r = ocorrenciasEsperadas({ ...base, mes_primeira: null }, { ano: 2026, mes: 7 }, { ano: 2026, mes: 8 })
+    expect(r.map(o => o.competencia)).toEqual(['2026-07-01', '2026-08-01'])
+  })
+
+  it('regra inativa nao estoura, mesmo sem mes_primeira', () => {
+    const regra: Regra = { ...base, periodicidade: 'anual', mes_primeira: null, ativa: false }
+    expect(ocorrenciasEsperadas(regra, { ano: 2026, mes: 1 }, { ano: 2026, mes: 12 })).toEqual([])
+  })
 })
 
 describe('ocorrenciasFaltantes', () => {
@@ -361,7 +385,18 @@ export function ocorrenciasEsperadas(regra: Regra, de: AnoMes, ate: AnoMes): Oco
   if (!intervalo) return []
 
   // Mês âncora (0..11). Mensal cai em todo mês, então a âncora não importa.
-  const ancora = intervalo === 1 ? 0 : (regra.mes_primeira ?? 1) - 1
+  // Conta que não é mensal PRECISA saber em que mês cai a primeira. Sem isso o
+  // âncora viraria janeiro em silêncio, e as ocorrências nasceriam em datas
+  // erradas que parecem normais. Decisão do Matheus em 29/07: reclamar alto.
+  let ancora = 0
+  if (intervalo !== 1) {
+    if (regra.mes_primeira == null) {
+      throw new Error(
+        `Conta recorrente ${regra.id}: periodicidade '${regra.periodicidade}' exige mes_primeira, que veio vazio.`,
+      )
+    }
+    ancora = regra.mes_primeira - 1
+  }
 
   const inicio = de.ano * 12 + (de.mes - 1)
   const fim    = ate.ano * 12 + (ate.mes - 1)
@@ -639,8 +674,21 @@ export async function sincronizarOcorrencias(fazendaId: string, hojeISO: string)
   const novas: any[] = []
 
   for (const regra of regras) {
-    const esperadas = ocorrenciasEsperadas(regra as unknown as Regra, de, ate)
-    const faltam    = ocorrenciasFaltantes(esperadas, existentes ?? [])
+    // Uma regra com dado inconsistente (ex.: anual sem mes_primeira) estoura
+    // de propósito lá no gerador. Aqui ela é isolada: registra e segue para a
+    // próxima. Uma conta com defeito não pode calar o aviso de todas as outras.
+    let esperadas
+    try {
+      esperadas = ocorrenciasEsperadas(regra as unknown as Regra, de, ate)
+    } catch (err) {
+      console.error(
+        `[Contas] Regra ignorada — ${regra.descricao} (${regra.id}):`,
+        err instanceof Error ? err.message : err,
+      )
+      continue
+    }
+
+    const faltam = ocorrenciasFaltantes(esperadas, existentes ?? [])
     if (!faltam.length) continue
 
     // Valor da estimativa: o último valor realmente pago dessa regra.
