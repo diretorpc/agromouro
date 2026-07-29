@@ -47,6 +47,30 @@ describe('ocorrenciasEsperadas', () => {
     const r = ocorrenciasEsperadas(base, { ano: 2026, mes: 12 }, { ano: 2027, mes: 1 })
     expect(r.map(o => o.competencia)).toEqual(['2026-12-01', '2027-01-01'])
   })
+
+  it('conta nao-mensal sem mes_primeira estoura erro claro, nao assume janeiro', () => {
+    const regra: Regra = { ...base, periodicidade: 'anual', mes_primeira: null }
+    expect(() => ocorrenciasEsperadas(regra, { ano: 2026, mes: 1 }, { ano: 2026, mes: 12 }))
+      .toThrow(/mes_primeira/)
+  })
+
+  it('conta mensal sem mes_primeira continua funcionando normalmente', () => {
+    const r = ocorrenciasEsperadas({ ...base, mes_primeira: null }, { ano: 2026, mes: 7 }, { ano: 2026, mes: 8 })
+    expect(r.map(o => o.competencia)).toEqual(['2026-07-01', '2026-08-01'])
+  })
+
+  it('regra inativa nao estoura, mesmo sem mes_primeira', () => {
+    const regra: Regra = { ...base, periodicidade: 'anual', mes_primeira: null, ativa: false }
+    expect(ocorrenciasEsperadas(regra, { ano: 2026, mes: 1 }, { ano: 2026, mes: 12 })).toEqual([])
+  })
+
+  it('bimestral com mes_primeira 1 cai de 2 em 2 meses', () => {
+    const regra: Regra = { ...base, periodicidade: 'bimestral', mes_primeira: 1 }
+    const r = ocorrenciasEsperadas(regra, { ano: 2026, mes: 1 }, { ano: 2026, mes: 12 })
+    expect(r.map(o => o.competencia)).toEqual([
+      '2026-01-01', '2026-03-01', '2026-05-01', '2026-07-01', '2026-09-01', '2026-11-01',
+    ])
+  })
 })
 
 describe('ocorrenciasFaltantes', () => {

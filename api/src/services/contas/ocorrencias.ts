@@ -27,8 +27,18 @@ export function ocorrenciasEsperadas(regra: Regra, de: AnoMes, ate: AnoMes): Oco
   const intervalo = INTERVALO_MESES[regra.periodicidade]
   if (!intervalo) return []
 
-  // Mês âncora (0..11). Mensal cai em todo mês, então a âncora não importa.
-  const ancora = intervalo === 1 ? 0 : (regra.mes_primeira ?? 1) - 1
+  // Conta que não é mensal PRECISA saber em que mês cai a primeira.
+  // Sem isso o mês âncora viraria janeiro em silêncio, e as ocorrências
+  // nasceriam em datas erradas que parecem normais.
+  let ancora = 0
+  if (intervalo !== 1) {
+    if (regra.mes_primeira == null) {
+      throw new Error(
+        `Conta recorrente ${regra.id}: periodicidade '${regra.periodicidade}' exige mes_primeira, que veio vazio.`,
+      )
+    }
+    ancora = regra.mes_primeira - 1
+  }
 
   const inicio = de.ano * 12 + (de.mes - 1)
   const fim    = ate.ano * 12 + (ate.mes - 1)
