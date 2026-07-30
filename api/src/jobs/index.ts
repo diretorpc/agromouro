@@ -2,6 +2,7 @@ import cron from 'node-cron'
 import { buscarNFesNoEmail } from './nfeEmail'
 import { buscarClimaFazendas } from './clima'
 import { buscarCotacoes } from './cotacoes'
+import { rodarContasDoDia } from './contas'
 
 export function iniciarJobs(): void {
   // 06:00 — alertas de clima (geada, chuva intensa, janela de pulverização)
@@ -16,11 +17,19 @@ export function iniciarJobs(): void {
     await buscarCotacoes()
   }, { timezone: 'America/Sao_Paulo' })
 
+  // 07:00 — contas a pagar: cria as ocorrências do mês e monta o aviso do dia.
+  // Roda TODO DIA (não no dia 1º): se o servidor reiniciar num dia 1º, uma tarefa
+  // mensal perderia o mês inteiro em silêncio. Diária, ela se conserta sozinha.
+  cron.schedule('0 7 * * *', async () => {
+    console.log('[Jobs] Contas a pagar do dia...')
+    await rodarContasDoDia()
+  }, { timezone: 'America/Sao_Paulo' })
+
   // A cada 30 minutos — buscar NF-es no e-mail
   cron.schedule('*/30 * * * *', async () => {
     console.log('[Jobs] Buscando NF-es no e-mail...')
     await buscarNFesNoEmail()
   }, { timezone: 'America/Sao_Paulo' })
 
-  console.log('[Jobs] Jobs agendados: clima (06:00), cotações (06:30), NF-e e-mail (30min)')
+  console.log('[Jobs] Jobs agendados: clima (06:00), cotações (06:30), contas (07:00), NF-e e-mail (30min)')
 }
