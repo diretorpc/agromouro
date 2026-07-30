@@ -25,6 +25,9 @@ export function montarResumo(contas: ContaResumo[], hojeISO: string): Resumo {
 
     const dias = diasEntre(hojeISO, c.vencimento)
 
+    // Uma conta aguardando (não chegou) que venceu já deve ser alertada como atrasada,
+    // pois "atrasada" é a situação mais urgente — o fornecedor não apenas esqueceu,
+    // mas agora deveria ter chegado.
     if (dias < 0) { r.atrasadas.push(c); continue }
     if (dias > c.avisar_dias_antes) continue
 
@@ -39,7 +42,10 @@ export function resumoVazio(r: Resumo): boolean {
 }
 
 function reais(v: number | null): string {
-  return v == null ? 'valor a definir' : `R$ ${v.toFixed(2).replace('.', ',')}`
+  if (v == null) return 'valor a definir'
+  // toLocaleString('pt-BR') para o separador de milhar: R$ 1.234,56.
+  // Um simples replace do ponto por vírgula escreveria "R$ 1234,56".
+  return `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 function ddmm(iso: string): string {
@@ -59,7 +65,8 @@ export function textoResumo(r: Resumo, hojeISO: string): string {
     for (const c of r.vencendo) linhas.push(`• ${c.descricao} — dia ${ddmm(c.vencimento)}, ${reais(c.valor)}`)
   }
   if (r.naoChegaram.length) {
-    linhas.push(`\n⏳ ${r.naoChegaram.length} ainda não chegou:`)
+    const n = r.naoChegaram.length
+    linhas.push(`\n⏳ ${n} ainda ${n > 1 ? 'não chegaram' : 'não chegou'}:`)
     for (const c of r.naoChegaram) linhas.push(`• ${c.descricao} — esperada dia ${ddmm(c.vencimento)}`)
   }
   return linhas.join('\n')

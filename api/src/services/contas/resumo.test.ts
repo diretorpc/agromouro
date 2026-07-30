@@ -53,6 +53,17 @@ describe('montarResumo', () => {
     expect(r.vencendo).toHaveLength(1)
     expect(r.atrasadas).toHaveLength(0)
   })
+
+  it('conta vencida com status aguardando entra como atrasada, nao como nao chegou', () => {
+    const r = montarResumo([conta({ vencimento: '2026-07-25', status: 'aguardando' })], HOJE)
+    expect(r.atrasadas).toHaveLength(1)
+    expect(r.naoChegaram).toHaveLength(0)
+  })
+
+  it('conta vencendo exatamente no limite do aviso entra no resumo', () => {
+    const r = montarResumo([conta({ vencimento: '2026-08-01', avisar_dias_antes: 3 })], HOJE)
+    expect(r.vencendo).toHaveLength(1)
+  })
 })
 
 describe('textoResumo', () => {
@@ -68,5 +79,23 @@ describe('textoResumo', () => {
     expect(txt).toContain('Energia')
     expect(txt).toContain('Telefone')
     expect(txt).toContain('ainda não chegou')
+  })
+
+  it('duas contas nao chegadas usam o plural correto', () => {
+    const r = montarResumo([
+      conta({ descricao: 'Telefone', vencimento: '2026-07-30', status: 'aguardando' }),
+      conta({ descricao: 'Internet', vencimento: '2026-07-31', status: 'aguardando' }),
+    ], HOJE)
+    expect(textoResumo(r, HOJE)).toContain('2 ainda não chegaram')
+  })
+
+  it('uma conta nao chegada usa o singular', () => {
+    const r = montarResumo([conta({ vencimento: '2026-07-30', status: 'aguardando' })], HOJE)
+    expect(textoResumo(r, HOJE)).toContain('1 ainda não chegou')
+  })
+
+  it('valor na casa dos milhares sai com ponto separador', () => {
+    const r = montarResumo([conta({ vencimento: '2026-07-30', valor: 1234.56 })], HOJE)
+    expect(textoResumo(r, HOJE)).toContain('R$ 1.234,56')
   })
 })
