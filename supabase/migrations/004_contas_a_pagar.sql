@@ -48,9 +48,18 @@ CREATE TABLE IF NOT EXISTS contas_a_pagar (
 
 -- 3. Idempotência da tarefa diária: uma ocorrência por regra por competência.
 --    É ESTE índice que impede a tarefa de duplicar conta ao rodar todo dia.
+--
+--    SEM cláusula WHERE, de propósito. Um índice único PARCIAL não serve de
+--    árbitro para o ON CONFLICT que o upsert do supabase-js gera: o banco
+--    recusa com erro 42P10 e NADA é gravado, em silêncio. Este projeto já
+--    passou por isso nas cotações — ver o cabeçalho de
+--    api/src/database/migrations/011_cotacoes_commodities.sql.
+--
+--    Tirar o WHERE não custa nada: o Postgres já trata cada NULL como distinto
+--    de todos os outros num índice único, então conta avulsa (recorrente_id
+--    nulo) continua sem colidir com outra conta avulsa.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_conta_recorrente_competencia
-  ON contas_a_pagar (recorrente_id, competencia)
-  WHERE recorrente_id IS NOT NULL;
+  ON contas_a_pagar (recorrente_id, competencia);
 
 CREATE INDEX IF NOT EXISTS idx_contas_faz_venc   ON contas_a_pagar (fazenda_id, vencimento);
 CREATE INDEX IF NOT EXISTS idx_contas_faz_status ON contas_a_pagar (fazenda_id, status);

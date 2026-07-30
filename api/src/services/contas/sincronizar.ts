@@ -52,7 +52,7 @@ export async function sincronizarOcorrencias(fazendaId: string, hojeISO: string)
 
     // Valor da estimativa: o último valor realmente pago dessa regra.
     // Se nunca foi paga, cai no valor de referência do cadastro.
-    const { data: ultimaPaga } = await supabase
+    const { data: ultimaPaga, error: erroUltimaPaga } = await supabase
       .from('contas_a_pagar')
       .select('valor_pago')
       .eq('recorrente_id', regra.id)
@@ -60,6 +60,11 @@ export async function sincronizarOcorrencias(fazendaId: string, hojeISO: string)
       .order('competencia', { ascending: false })
       .limit(1)
       .maybeSingle()
+
+    // Erro de banco aqui NÃO pode virar "nunca foi paga" — isso trocaria o
+    // valor real por uma estimativa velha sem ninguém perceber. Banco com
+    // problema é falha de verdade: estoura e o job registra.
+    if (erroUltimaPaga) throw erroUltimaPaga
 
     const estimativa = estimativaDaOcorrencia(
       ultimaPaga?.valor_pago ?? null,
