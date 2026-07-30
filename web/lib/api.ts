@@ -20,7 +20,15 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     },
   })
 
-  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  if (!res.ok) {
+    // Usa a mensagem que o servidor mandou; sem ela, cai no código do erro.
+    let mensagem = `API error: ${res.status}`
+    try {
+      const corpo = await res.json()
+      if (corpo?.error) mensagem = corpo.error
+    } catch { /* resposta sem corpo JSON — mantém a mensagem padrão */ }
+    throw new Error(mensagem)
+  }
   if (res.status === 204) return undefined as T
   return res.json()
 }

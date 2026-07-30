@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import {
-  CalendarClock, AlertTriangle, Clock, CircleDollarSign, Ban, CheckCircle2,
+  CalendarClock, AlertTriangle, Clock, CircleDollarSign, Ban, CheckCircle2, Plus,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -17,6 +17,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/action-menu'
 import { api } from '@/lib/api'
+import { FormularioContaFixa } from './formulario-conta-fixa'
+import { FormularioContaAvulsa } from './formulario-conta-avulsa'
 
 // ─── Cálculo dos três números (task-9-brief.md, verbatim — não alterar) ───────
 // Erra calada se mexido: um total que soma confirmado + estimado vira um
@@ -138,6 +140,9 @@ export default function ContasPage() {
 
   const [dispensarDialog, setDispensarDialog] = useState<ContaAPI | null>(null)
   const [dispensarErro, setDispensarErro]     = useState<string | null>(null)
+
+  const [novaFixaOpen, setNovaFixaOpen]     = useState(false)
+  const [novaAvulsaOpen, setNovaAvulsaOpen] = useState(false)
 
   async function load() {
     setErroCarregar(null)
@@ -265,9 +270,21 @@ export default function ContasPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Contas a Pagar</h1>
-        <p className="text-sm text-muted-foreground mt-1 font-medium">O que a fazenda deve e quando vence</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Contas a Pagar</h1>
+          <p className="text-sm text-muted-foreground mt-1 font-medium">O que a fazenda deve e quando vence</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button size="sm" variant="outline" onClick={() => setNovaAvulsaOpen(true)}>
+            <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
+            Nova conta avulsa
+          </Button>
+          <Button size="sm" onClick={() => setNovaFixaOpen(true)}>
+            <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
+            Nova conta fixa
+          </Button>
+        </div>
       </div>
 
       {/* ── KPIs ── */}
@@ -529,6 +546,18 @@ export default function ContasPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Formulários: nova conta fixa / avulsa ── */}
+      <FormularioContaFixa
+        open={novaFixaOpen}
+        onOpenChange={setNovaFixaOpen}
+        onSalvo={load}
+      />
+      <FormularioContaAvulsa
+        open={novaAvulsaOpen}
+        onOpenChange={setNovaAvulsaOpen}
+        onSalvo={load}
+      />
     </div>
   )
 }
