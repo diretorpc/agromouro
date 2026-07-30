@@ -22,8 +22,18 @@ const recorrenteBase = z.object({
   avisar_dias_antes: z.number().int().min(0).max(30).default(3),
 })
 
-const recorrenteSchema = recorrenteBase.refine(r => r.periodicidade === 'mensal' || r.mes_primeira != null, {
-  message: 'Conta que não é mensal precisa do mês da primeira ocorrência',
+const MSG_MES_PRIMEIRA = 'Conta que não é mensal precisa do mês da primeira ocorrência'
+
+// Regra cruzada para o PATCH: vale sobre o resultado da fusão do que veio no
+// corpo com o que já está gravado. Sem isso, trocar só a periodicidade para
+// 'anual' bate no CHECK do banco e o usuário recebe "Erro interno do servidor"
+// em vez de saber que faltou informar o mês.
+function mesPrimeiraOk(periodicidade: string, mesPrimeira: number | null | undefined): boolean {
+  return periodicidade === 'mensal' || mesPrimeira != null
+}
+
+const recorrenteSchema = recorrenteBase.refine(r => mesPrimeiraOk(r.periodicidade, r.mes_primeira), {
+  message: MSG_MES_PRIMEIRA,
   path: ['mes_primeira'],
 })
 
@@ -122,6 +132,24 @@ contaRoutes.patch('/recorrentes/:id', async (req, res, next) => {
     if (!fazendaId) return res.status(400).json({ error: 'Fazenda não identificada' })
 
     const body = recorrenteBase.partial().parse(req.body)
+
+    // Lê o estado atual para validar a regra cruzada sobre o resultado final.
+    const { data: atual, error: erroAtual } = await supabase
+      .from('contas_recorrentes')
+      .select('periodicidade, mes_primeira')
+      .eq('id', req.params.id)
+      .eq('fazenda_id', fazendaId)
+      .maybeSingle()
+
+    if (erroAtual) throw erroAtual
+    if (!atual) return res.status(404).json({ error: 'Conta fixa não encontrada' })
+
+    const periodicidadeFinal = body.periodicidade ?? atual.periodicidade
+    const mesPrimeiraFinal   = body.mes_primeira !== undefined ? body.mes_primeira : atual.mes_primeira
+
+    if (!mesPrimeiraOk(periodicidadeFinal, mesPrimeiraFinal)) {
+      return res.status(400).json({ error: MSG_MES_PRIMEIRA })
+    }
 
     const { data, error } = await supabase
       .from('contas_recorrentes')
