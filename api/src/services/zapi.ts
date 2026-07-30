@@ -23,7 +23,7 @@ export async function enviarMensagem(
   phone: string,
   message: string,
   fazendaCodigo: string = 'mg',
-): Promise<void> {
+): Promise<boolean> {
   const { instance, token, clientToken } = getZapiConfig(fazendaCodigo)
   const baseUrl = `https://api.z-api.io/instances/${instance}/token/${token}/send-text`
 
@@ -50,10 +50,11 @@ export async function enviarMensagem(
       res.on('end', () => {
         if (res.statusCode && res.statusCode >= 400) {
           console.error(`[Z-API][${fazendaCodigo}] Erro ${res.statusCode}:`, data.slice(0, 200))
+          resolve(false)
         } else {
           console.log(`[Z-API][${fazendaCodigo}] Resposta ${res.statusCode}:`, data.slice(0, 200))
+          resolve(true)
         }
-        resolve()
       })
     })
 

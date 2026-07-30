@@ -22,11 +22,16 @@ export async function rodarContasDoDia(): Promise<void> {
       const criadas = await sincronizarOcorrencias(fazenda.id, hoje)
       if (criadas > 0) console.log(`[Contas] ${fazenda.nome}: ${criadas} ocorrência(s) criada(s).`)
 
-      const { data: contas } = await supabase
+      const { data: contas, error: erroContas } = await supabase
         .from('contas_a_pagar')
         .select('descricao, fornecedor, vencimento, valor, status, contas_recorrentes(avisar_dias_antes)')
         .eq('fazenda_id', fazenda.id)
         .in('status', ['aguardando', 'aberta'])
+
+      // Sem esta checagem, banco com problema devolve lista vazia e o job
+      // conclui "nada a avisar hoje" — falha de banco vira silêncio idêntico
+      // ao dia em que realmente não há nada. Justo o contrário do que queremos.
+      if (erroContas) throw erroContas
 
       const paraResumo: ContaResumo[] = (contas ?? []).map((c: any) => ({
         descricao:         c.descricao,
@@ -46,13 +51,14 @@ export async function rodarContasDoDia(): Promise<void> {
       const titulo = `Contas — ${hoje}`
 
       // Um alerta por fazenda por dia. Se a tarefa rodar de novo, não duplica.
-      const { data: existente } = await supabase
+      const { data: existente, error: erroExistente } = await supabase
         .from('alertas')
         .select('id')
         .eq('fazenda_id', fazenda.id)
         .eq('titulo', titulo)
         .maybeSingle()
 
+      if (erroExistente) throw erroExistente
       if (existente) { console.log(`[Contas] ${fazenda.nome}: aviso de hoje já existe.`); continue }
 
       const mensagem = textoResumo(resumo, hoje)
@@ -75,15 +81,21 @@ export async function rodarContasDoDia(): Promise<void> {
       let enviou = false
       for (const phone of telefones) {
         try {
-          await enviarMensagem(phone, mensagem, fazenda.codigo)
-          enviou = true
+          // enviarMensagem devolve false quando a Z-API RECUSA (ex.: celular
+          // desconectado da instância). Sem ler esse retorno, o painel diria
+          // "avisei no WhatsApp" para mensagem que nunca chegou.
+          const ok = await enviarMensagem(phone, mensagem, fazenda.codigo)
+          if (ok) enviou = true
+          else console.error(`[Contas] Z-API recusou o envio para ${phone}.`)
         } catch (err) {
           console.error(`[Contas] Falha ao enviar para ${phone}:`, err instanceof Error ? err.message : err)
         }
       }
 
       if (enviou) {
-        await supabase.from('alertas').update({ enviado_whatsapp: true }).eq('id', alerta.id)
+        const { error: erroFlag } = await supabase
+          .from('alertas').update({ enviado_whatsapp: true }).eq('id', alerta.id)
+        if (erroFlag) console.error(`[Contas] Não consegui marcar o alerta como enviado:`, erroFlag.message)
       }
     } catch (err) {
       console.error(`[Contas] Erro em ${fazenda.nome}:`, err instanceof Error ? err.message : err)
