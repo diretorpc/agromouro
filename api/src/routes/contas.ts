@@ -20,6 +20,10 @@ const recorrenteBase = z.object({
   mes_primeira:      z.number().int().min(1).max(12).nullable().optional(),
   valor_referencia:  z.number().nonnegative().nullable().optional(),
   avisar_dias_antes: z.number().int().min(0).max(30).default(3),
+  // Sem este campo aqui, o Zod DESCARTA `ativa` do corpo em silêncio (modo
+  // "strip" é o padrão) e o banco aplica DEFAULT true. A caixinha "Ativa" do
+  // formulário viraria enfeite: desmarcar não teria efeito nenhum, sem erro.
+  ativa:             z.boolean().optional(),
 })
 
 const MSG_MES_PRIMEIRA = 'Conta que não é mensal precisa do mês da primeira ocorrência'
