@@ -44,15 +44,32 @@ export function motivoSemBoleto(formaPagamento: string | null): string | null {
 
 // Mês de uma data 'YYYY-MM-DD' (ou ISO completo) como primeiro dia do mês.
 // Usada tanto para a data de emissão quanto para o vencimento de uma parcela — nos
-// dois casos a entrada precisa começar com 'YYYY-MM-DD'. Sem essa checagem, uma nota
-// sem data de emissão (dataEmissao === '') vira competência "NaN-undefined-01" sem
-// erro nenhum — e a coluna `competencia` no banco é DATE NOT NULL, então o defeito só
-// aparece lá na frente, como erro do Postgres que não diz que a causa foi a nota sem data.
+// dois casos a entrada precisa começar com 'YYYY-MM-DD' e representar uma data REAL.
+// Sem essa checagem, uma nota sem data de emissão (dataEmissao === '') vira competência
+// "NaN-undefined-01" sem erro nenhum, e um mês inválido tipo '2026-13-01' passaria
+// batido do mesmo jeito — e a coluna `competencia` no banco é DATE NOT NULL, então o
+// defeito só apareceria lá na frente, como erro do Postgres que não diz que a causa foi
+// uma data ruim vinda da nota.
 function mesDe(dataISO: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}/.test(dataISO)) {
-    throw new Error(`Data em formato inválido ao calcular competência da conta: ${JSON.stringify(dataISO)}`)
-  }
-  const [ano, mes] = dataISO.slice(0, 10).split('-').map(Number)
+  const erro = () => new Error(`Data em formato inválido ao calcular competência da conta: ${JSON.stringify(dataISO)}`)
+
+  if (!/^\d{4}-\d{2}-\d{2}/.test(dataISO)) throw erro()
+
+  const [ano, mes, dia] = dataISO.slice(0, 10).split('-').map(Number)
+
+  // Confere se a data EXISTE de verdade (não só se o formato bate): monta com
+  // Date.UTC e checa se os componentes voltam iguais aos que entraram. Mês 13 ou
+  // 29 de fevereiro num ano não bissexto "rolam" para o mês seguinte em vez de dar
+  // erro — é assim que o padrão já usado em `datas.ts` (diasEntre) detecta isso.
+  // Nunca usar `new Date('YYYY-MM-DD')`: esse construtor lê como UTC e derruba 1 dia
+  // no fuso do Brasil.
+  const comoData = new Date(Date.UTC(ano, mes - 1, dia))
+  const dataExiste =
+    comoData.getUTCFullYear() === ano &&
+    comoData.getUTCMonth() === mes - 1 &&
+    comoData.getUTCDate() === dia
+  if (!dataExiste) throw erro()
+
   return competenciaDoMes(ano, mes)
 }
 

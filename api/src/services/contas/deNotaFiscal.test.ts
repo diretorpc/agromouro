@@ -124,4 +124,24 @@ describe('contasDaNota', () => {
     expect(() => contasDaNota({ ...base, dataEmissao: '14/07/2026', duplicatas: [] }))
       .toThrow(/Data em formato inválido/)
   })
+
+  it('dataEmissao com componentes zerados (0000-00-00) estoura, mesmo com formato certo', () => {
+    expect(() => contasDaNota({ ...base, dataEmissao: '0000-00-00', duplicatas: [] }))
+      .toThrow(/Data em formato inválido/)
+  })
+
+  it('dataEmissao com mes inexistente (13) estoura, mesmo com formato certo', () => {
+    expect(() => contasDaNota({ ...base, dataEmissao: '2026-13-01', duplicatas: [] }))
+      .toThrow(/Data em formato inválido/)
+  })
+
+  it('29 de fevereiro em ano nao bissexto (2026) estoura', () => {
+    expect(() => contasDaNota({ ...base, dataEmissao: '2026-02-29', duplicatas: [] }))
+      .toThrow(/Data em formato inválido/)
+  })
+
+  it('29 de fevereiro em ano bissexto (2028) passa normalmente', () => {
+    const r = contasDaNota({ ...base, dataEmissao: '2028-02-29', duplicatas: [] })
+    expect(r[0].competencia).toBe('2028-02-01')
+  })
 })
