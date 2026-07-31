@@ -68,12 +68,19 @@ CREATE INDEX IF NOT EXISTS idx_recorrentes_faz   ON contas_recorrentes (fazenda_
 -- 4. Permissões — FOR ALL cobre ler, inserir, alterar e apagar.
 --    Só de SELECT faria a escrita do site falhar em silêncio.
 ALTER TABLE contas_recorrentes ENABLE ROW LEVEL SECURITY;
+-- CREATE POLICY não tem "IF NOT EXISTS" no Postgres: colar este arquivo uma
+-- segunda vez pararia aqui com erro 42710 e desfaria o arquivo inteiro (o
+-- Editor SQL do Supabase roda o que foi colado como uma única transação).
+-- O DROP abaixo garante que colar de novo é seguro.
+DROP POLICY IF EXISTS "contas_recorrentes_tenant" ON contas_recorrentes;
 CREATE POLICY "contas_recorrentes_tenant" ON contas_recorrentes
   FOR ALL
   USING      (auth.uid() IS NOT NULL AND fazenda_id = get_fazenda_ativa_id())
   WITH CHECK (auth.uid() IS NOT NULL AND fazenda_id = get_fazenda_ativa_id());
 
 ALTER TABLE contas_a_pagar ENABLE ROW LEVEL SECURITY;
+-- Mesmo motivo do DROP acima: torna seguro colar o arquivo mais de uma vez.
+DROP POLICY IF EXISTS "contas_a_pagar_tenant" ON contas_a_pagar;
 CREATE POLICY "contas_a_pagar_tenant" ON contas_a_pagar
   FOR ALL
   USING      (auth.uid() IS NOT NULL AND fazenda_id = get_fazenda_ativa_id())
@@ -83,18 +90,22 @@ CREATE POLICY "contas_a_pagar_tenant" ON contas_a_pagar
 --    Sem isso o lançamento nasce com origem nula e a tela Financeiro, que filtra
 --    por origem, nunca o mostra — enquanto o Dashboard, que não filtra, o conta.
 --    O nome da constraint foi gerado pelo Postgres, então é descoberto, não chutado.
+--    É um LOOP, não um SELECT ... INTO: se um dia existir mais de uma constraint
+--    de origem (patch manual, backup restaurado), SELECT ... INTO pegaria uma
+--    e descartaria as outras em silêncio — a sobrevivente continuaria recusando
+--    o pagamento, e o erro só apareceria na hora de pagar uma conta, não aqui.
+--    O loop derruba todas as que encontrar.
 DO $$
 DECLARE nome_constraint text;
 BEGIN
-  SELECT conname INTO nome_constraint
-    FROM pg_constraint
-   WHERE conrelid = 'lancamentos_financeiros'::regclass
-     AND contype  = 'c'
-     AND pg_get_constraintdef(oid) ILIKE '%origem%';
-
-  IF nome_constraint IS NOT NULL THEN
+  FOR nome_constraint IN
+    SELECT conname FROM pg_constraint
+     WHERE conrelid = 'lancamentos_financeiros'::regclass
+       AND contype  = 'c'
+       AND pg_get_constraintdef(oid) ILIKE '%origem%'
+  LOOP
     EXECUTE format('ALTER TABLE lancamentos_financeiros DROP CONSTRAINT %I', nome_constraint);
-  END IF;
+  END LOOP;
 END $$;
 
 -- origem nula continua válida: as NF-e antigas nunca gravaram esse campo.
