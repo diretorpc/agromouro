@@ -339,3 +339,58 @@ describe('processarNFe — isolamento do bloco de boletos (Fase 2)', () => {
     expect(logouIsolamento).toBe(false)
   })
 })
+
+// ─── CONSERTO 1 (revisão final da Fase 2) — "em N dias" compara com HOJE ────
+//
+// Amostra real (31/07/2026): nota da METAL AGRICOLA emitida 31/07, vencimento
+// 01/08. Antes deste conserto, nfeProcessor passava `dataFormatada` (a data
+// de EMISSÃO da nota) para o parâmetro `hojeISO` de linhaBoleto — então uma
+// nota processada em atraso (ex.: 03/08, quando o e-mail demora a chegar)
+// dizia "vence 01/08 (em 1 dia)" para um boleto que já tinha vencido há 2 dias.
+// O sistema nunca conseguia dizer "venceu há N dias", porque a conta era
+// sempre contra uma data congelada no passado.
+describe('processarNFe — "em N dias" usa hoje de verdade, não a data da nota (conserto 1)', () => {
+  const nfeAtrasada: NFeData = {
+    numero:         '9001',
+    dataEmissao:    '2026-07-31T09:00:00-03:00',
+    emitenteNome:   'METAL AGRICOLA LTDA',
+    emitenteCnpj:   '22222222000199',
+    valorTotal:     1000,
+    items: [{
+      description:  'PECA METALICA',
+      quantity:     1,
+      unit:         'un',
+      unitValue:    1000,
+      totalValue:   1000,
+      quantityTrib: 1,
+      unitTrib:     'un',
+      ncm:          '84314900',   // peça de máquina — fronteira determinística, não passa pelo Haiku
+    }],
+    duplicatas:     [{ numero: '001', vencimento: '2026-08-01', valor: 1000 }],
+    formaPagamento: '15',
+  }
+
+  beforeEach(() => {
+    chamadas.length = 0
+    estadoBanco.falharUpsertContas = false
+    vi.mocked(enviarMensagem).mockClear()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('nota emitida 31/07, vence 01/08, processada em 03/08 → mensagem diz "venceu há 2 dias"', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-03T12:00:00-03:00'))   // "hoje" = 3 dias depois da emissão
+
+    await processarNFe(nfeAtrasada, 'webhook', 'fazenda-fake-id')
+
+    const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
+    // Falharia com o código antigo: contra a data de EMISSÃO (31/07), o
+    // vencimento 01/08 calcularia "em 1 dia" em vez de "venceu há 2 dias".
+    expect(mensagem).toContain('venceu há 2 dias')
+    expect(mensagem).not.toContain('em 1 dia')
+  })
+})

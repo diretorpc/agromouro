@@ -1,19 +1,6 @@
 import { diasEntre } from './datas'
+import { APP_URL, reais, ddmm } from './formato'
 import type { ContaDeNota, ParcelaDescartada } from './deNotaFiscal'
-
-// Endereço do site. Variável de ambiente porque quem manda no domínio não sou
-// eu: mudou o endereço, muda a variável — não o código.
-const APP_URL = process.env.APP_URL ?? 'https://agromouro.com.br'
-
-function reais(v: number | null): string {
-  if (v == null) return 'valor a definir'
-  return `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
-
-function ddmm(iso: string): string {
-  const [, m, d] = iso.split('-')
-  return `${d}/${m}`
-}
 
 function quando(vencimentoISO: string, hojeISO: string): string {
   const dias = diasEntre(hojeISO, vencimentoISO)

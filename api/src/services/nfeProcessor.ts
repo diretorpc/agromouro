@@ -5,6 +5,7 @@ import { enviarMensagem } from './zapi'
 import { gravarContasDaNota } from './contas/gravarDeNota'
 import { motivoSemBoleto, type ContaDeNota, type ParcelaDescartada } from './contas/deNotaFiscal'
 import { linhaBoleto } from './contas/avisoBoleto'
+import { hojeSaoPauloISO } from './contas/formato'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -403,10 +404,15 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
       mensagem += `📦 *Não estocados* (só financeiro):\n${itensNaoEstocados.join('\n')}`
     }
 
+    // hojeSaoPauloISO(), NUNCA dataFormatada (data de EMISSÃO da nota): o "em N
+    // dias"/"venceu há N dias" da mensagem compara o vencimento contra HOJE, não
+    // contra uma data congelada no passado. Bug medido em 31/07/2026 — ver
+    // conserto 1 da revisão final da Fase 2 (nota processada em atraso mostrava
+    // "vence em 1 dia" para um boleto que já tinha vencido há 2).
     mensagem += linhaBoleto(
       contasCriadas,
       motivoSemBoleto(formaPagamento),
-      dataFormatada,
+      hojeSaoPauloISO(),
       erroContas,
       parcelasPerdidas,
     )

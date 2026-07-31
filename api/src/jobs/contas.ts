@@ -2,14 +2,7 @@ import { supabase } from '../services/supabase'
 import { enviarMensagem, getAuthorizedPhones } from '../services/zapi'
 import { sincronizarOcorrencias } from '../services/contas/sincronizar'
 import { montarResumo, resumoVazio, textoResumo, type ContaResumo } from '../services/contas/resumo'
-
-// Data de hoje como 'YYYY-MM-DD' no fuso de São Paulo.
-// NÃO usar toISOString(): ele devolve UTC e vira o dia seguinte depois das 21h.
-function hojeSaoPauloISO(): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date())
-}
+import { hojeSaoPauloISO } from '../services/contas/formato'
 
 export async function rodarContasDoDia(): Promise<void> {
   const hoje = hojeSaoPauloISO()

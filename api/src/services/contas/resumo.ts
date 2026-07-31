@@ -1,7 +1,5 @@
 import { diasEntre } from './datas'
-
-// Endereço do site — mesma variável usada em avisoBoleto.ts.
-const APP_URL = process.env.APP_URL ?? 'https://agromouro.com.br'
+import { APP_URL, reais, ddmm } from './formato'
 
 // Dias sem resposta a partir dos quais a conta sem data sobe de tom.
 // Motivo do escalonamento: conta sem vencimento NUNCA pode ficar "atrasada",
@@ -65,18 +63,6 @@ export function resumoVazio(r: Resumo): boolean {
   return r.atrasadas.length === 0 && r.vencendo.length === 0 &&
          r.naoChegaram.length === 0 && r.semVencimento.length === 0 &&
          r.semVencimentoAntigas.length === 0
-}
-
-function reais(v: number | null): string {
-  if (v == null) return 'valor a definir'
-  // toLocaleString('pt-BR') para o separador de milhar: R$ 1.234,56.
-  // Um simples replace do ponto por vírgula escreveria "R$ 1234,56".
-  return `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
-
-function ddmm(iso: string): string {
-  const [, m, d] = iso.split('-')
-  return `${d}/${m}`
 }
 
 export function textoResumo(r: Resumo, hojeISO: string): string {
