@@ -73,6 +73,9 @@ adubo de valor alto. O caso dos R$ 660 mil **continua sem prova**.
 | 7 | Notas antigas | **Não migram.** O arquivo delas nunca foi guardado. Vale das novas em diante |
 | 8 | Guardar o arquivo XML | **Não.** 100–200 MB/ano contra 500 MB do plano gratuito. Extrai o que serve, descarta o resto |
 | 9 | Aviso de boleto curto | **Vai junto na mensagem de "NF-e processada"** que já existe, no minuto em que a nota chega |
+| 10 | Trava anti-duplicata de NF-e furada | **Consertar DENTRO desta fase, como primeira tarefa.** Ver "Pré-requisito" |
+| 11 | Insistência da conta sem data | **Todo dia, subindo de tom:** passados 5 dias sem resposta, sai do grupo ❓ e entra no 🔴 junto das atrasadas |
+| 12 | Aprender o prazo do fornecedor | **Fora desta fase.** Ver "Fora de escopo" |
 
 ### Alternativa descartada: responder por texto no WhatsApp
 
@@ -89,6 +92,58 @@ Foi considerada e recusada **nesta fase**. Motivo medido, não estético:
 
 O link resolve a ambiguidade de graça: ele tocou naquela conta, então o sistema sabe qual é.
 Se o uso provar que abrir o site incomoda, isto vira fase própria — com dado, não palpite.
+
+---
+
+## Pré-requisito: consertar a trava anti-duplicata de NF-e
+
+**Descoberto na sabatina de 31/07, em código que já está em produção.** Não foi criado
+pela Fase 2 — mas a Fase 2 pisa em cima e transforma um número errado em dinheiro perdido.
+Aprovado pelo Matheus para entrar **como primeira tarefa desta fase**.
+
+### Defeito 1 — a chave de deduplicação ignora quem emitiu
+
+`nfeJaProcessada(numero, fazenda_id)` (`nfeProcessor.ts:105-114`) pergunta apenas
+*"já existe a nota nº 4516 nesta fazenda?"*.
+
+**O número da NF-e não é único no mundo — é sequencial por emitente e por série.** As três
+amostras reais: Triângulo Diesel nº 4516, Metal Agrícola nº 51843, ERCAL nº 82398. No dia
+em que outro fornecedor emitir uma nota nº 4516, o sistema **descarta em silêncio**
+(`"NF-e 4516 já processada — ignorando"`): estoque não entra, financeiro não registra e,
+com a Fase 2, **o boleto nunca nasce** — o Matheus não paga e leva juros ou protesto.
+
+### Defeito 2 — duas portas de entrada, conferência não atômica
+
+A NF-e entra por dois caminhos que rodam em paralelo:
+
+- Make (make.com) vigia as duas caixas → `POST /webhook/nfe-email` → `nfeEmailWebhook.ts`
+- Tarefa `nfeEmail.ts` a cada 30 min, via IMAP direto (`jobs/index.ts:29`)
+
+Ambos fazem *conferir → gravar* em dois passos separados. Não existe **nenhuma** restrição
+única no banco: `notas_fiscais` não tem UNIQUE em coluna alguma (conferido em
+`schema.sql:84-94` e em todas as migrations). Se os dois caminhos pegarem a mesma nota no
+mesmo instante, ela entra duas vezes — estoque dobrado, gasto dobrado, boleto dobrado.
+
+### O conserto (um só, resolve os dois)
+
+```sql
+-- ANTES DE APLICAR: conferir se já existe duplicata em produção.
+-- Se devolver linha, decidir com o Matheus qual fica — o índice FALHA se houver repetido.
+SELECT numero, emitente_cnpj, fazenda_id, count(*)
+FROM notas_fiscais
+GROUP BY numero, emitente_cnpj, fazenda_id
+HAVING count(*) > 1;
+
+-- A tranca de verdade. Sem cláusula WHERE, pelo mesmo motivo da Fase 1.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_nfe_numero_emitente_fazenda
+  ON notas_fiscais (numero, emitente_cnpj, fazenda_id);
+```
+
+E no código: `nfeJaProcessada(numero, emitenteCnpj, fazendaId)` — os dois chamadores
+(`jobs/nfeEmail.ts:89` e `webhooks/nfeEmailWebhook.ts`) passam o CNPJ do emitente.
+
+**Ordem obrigatória:** esta tarefa vem **antes** de qualquer coisa da Fase 2. Construir
+boleto automático em cima de trava furada é construir sobre areia.
 
 ---
 
@@ -250,6 +305,17 @@ descobrir pelo boleto vencido. Este é o principal remédio do risco nº 3.
 | Parcela com `dVenc` mas sem `vDup` | Cria a conta com data e **sem valor**; o valor entra junto com a confirmação |
 | Mais de 24 parcelas | Cria mesmo assim e registra no log. Truncar seria perder boleto em silêncio |
 
+⚠️ **Armadilha de leitura, com risco real de passar despercebida.** O leitor de XML devolve
+**um objeto** quando existe uma única `<dup>` e **uma lista** quando existem várias. O
+código já trata isso para os itens da nota (`nfeProcessor.ts:78-79`) e **precisa tratar
+igual** para `cobr.dup` e `pag.detPag`.
+
+Por que isto é perigoso aqui: **as três amostras reais têm exatamente uma parcela.** O
+caminho de várias parcelas **não tem nenhuma prova real** — ele vai ser exercitado pela
+primeira vez em produção, na primeira nota parcelada. E como a criação de contas é
+isolada em `try/catch`, o erro seria engolido: a nota entraria normalmente e **o boleto
+simplesmente não nasceria**. Teste com XML de várias duplicatas é obrigatório.
+
 ---
 
 ## A tela
@@ -282,6 +348,11 @@ contas fixas. Sem ele, a conta de luz some no meio das notas de peça.
 | Informar data | `PATCH /contas/:id` (já aceita `vencimento`) | `aberta` com data |
 | Já foi paga | `POST /contas/:id/pagar` | `paga` |
 | Sem boleto | `POST /contas/:id/dispensar` | `dispensada` |
+
+**Guarda leve na data informada** (proposta minha, não pedida — vetar se incomodar): se a
+data digitada estiver no passado ou a mais de 180 dias, a tela **avisa e deixa salvar**.
+Aviso, nunca bloqueio: errar o ano ao digitar é comum, e travar o Matheus fora do próprio
+sistema é pior que o erro.
 
 **Sem dinheiro contado duas vezes:** a regra `precisaCriarLancamento` da Fase 1 já devolve
 `false` para conta que veio de nota fiscal — o gasto entrou no Financeiro quando a nota
@@ -338,6 +409,20 @@ Ganha um quarto grupo e o link:
 👉 agromouro.com.br/contas?filtro=sem-vencimento
 ```
 
+### Escalonamento da conta sem data
+
+**Este é o único ponto cego do sistema.** Conta sem vencimento **nunca pode ficar
+"atrasada"** — não há data para comparar. O boleto vence no mundo real e o sistema não
+tem como saber. Por isso ele não se cala:
+
+| Dias desde que a conta nasceu | Onde aparece |
+|---|---|
+| 0 a 5 | grupo `❓ sem vencimento` |
+| **6 em diante** | sobe para `🔴`, junto das atrasadas, com o texto *"há N dias sem vencimento informado"* |
+
+Custa uma linha numa mensagem que ele já recebe. Uma linha que aparece igual todo dia
+vira paisagem; o tom subindo, não.
+
 **Link com filtro, não link por conta:** com 3 notas esperando, um link por conta viraria
 3 links na mesma mensagem. O filtro resolve todas de uma vez e é menos peça para quebrar.
 
@@ -347,7 +432,9 @@ Ganha um quarto grupo e o link:
 
 | O quê | Por quê |
 |---|---|
+| **Aprender o prazo do fornecedor** | Decidido na sabatina. O sistema poderia sugerir a data a partir do histórico daquele CNPJ ("nas 3 últimas da ERCAL, 23 dias depois"), **sugerindo sempre, nunca preenchendo sozinho**. Fica de fora porque **não tem o que aprender no dia 1**: depende de o Matheus já ter informado a data 2 ou 3 vezes. Construir agora é entregar peça que fica inútil por semanas e que ninguém vai lembrar de conferir quando acordar. **Reavaliar depois de 3–4 semanas no ar** |
 | Responder por texto no WhatsApp | Ver "Alternativa descartada". Vira fase própria, se o uso provar necessidade |
+| Nota de devolução | Nota de devolução emitida pelo fornecedor criaria boleto que não existe. Não observado até hoje; se aparecer, é um toque em "sem boleto". Construir detecção agora é resolver problema que não temos |
 | Detector de fornecedor de nota que sumiu | Lógica diferente da conta fixa. Não mistura |
 | Filtro de CNPJ do destinatário (nota fantasma) | Premissa mantida: só chega compra da fazenda nas caixas monitoradas |
 | Trazer notas antigas | Impossível — o arquivo não existe mais |
@@ -367,6 +454,8 @@ Ganha um quarto grupo e o link:
 | 4 | Quebrar o processamento de NF-e | Baixa, **mas a mais grave se ocorrer** | As quatro travas da rede de proteção + teste que prova o isolamento |
 | 5 | Volume afogar as contas fixas | Média | Filtro por tipo |
 | 6 | Tornar `vencimento` opcional quebrar código que já roda | Média | Teste para cada consumidor da coluna antes de mexer |
+| 7 | **O caminho de várias parcelas nunca foi exercitado com arquivo real** — e, se quebrar, o `try/catch` engole e o boleto some calado | **Alta** | Teste obrigatório com XML de 3 duplicatas, montado à mão. Pedir uma nota parcelada real assim que houver |
+| 8 | O índice único novo falhar por já existir nota duplicada em produção | Baixa | A consulta de conferência roda **antes**, e o Matheus decide qual fica |
 
 ### Observação fora desta fase
 
@@ -379,7 +468,14 @@ aqui** — registrado para virar tarefa própria.
 
 ## Testes
 
+**Trava anti-duplicata (pré-requisito):**
+- Duas notas de **fornecedores diferentes** com o **mesmo número** entram as duas
+- A **mesma** nota do **mesmo** fornecedor entra uma vez só
+- Gravar a mesma nota duas vezes em paralelo: a segunda é recusada pelo banco, não pelo código
+
 **Leitura do arquivo (`parseXmlNFe`):**
+- **XML com 3 duplicatas devolve 3 parcelas** (o caso que nenhuma amostra real cobre)
+- XML com 1 duplicata devolve 1 parcela — não quebra por vir objeto em vez de lista
 - Nota com 1 duplicata devolve 1 parcela, com data e valor corretos
 - Nota com 3 duplicatas devolve 3 parcelas, na ordem
 - Nota **sem** quadro de cobrança devolve lista vazia — não estoura
@@ -407,6 +503,8 @@ aqui** — registrado para virar tarefa própria.
 **Aviso:**
 - Conta sem vencimento entra no grupo "sem vencimento" e em nenhum outro
 - Conta sem vencimento **não** é contada como atrasada
+- Conta sem vencimento com 6 dias ou mais **sobe para o grupo crítico**
+- Conta sem vencimento com 5 dias **ainda não** subiu (a fronteira exata)
 - Dia sem nada a dizer continua sem gravar alerta
 
 ---
