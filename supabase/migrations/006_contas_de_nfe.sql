@@ -5,6 +5,24 @@
 -- Spec: docs/superpowers/specs/2026-07-31-contas-a-pagar-fase2-design.md
 -- ============================================================
 
+-- ============================================================
+-- PRÉ-CONDIÇÃO — verificar que 005 foi rodada
+-- ============================================================
+-- A Fase 2 cria o segundo pilar de proteção contra duplicata de NF-e.
+-- O primeiro pilar (index idx_nfe_numero_emitente_fazenda) é criado pela 005.
+-- Se a 006 rodar sem a 005, a trava fica meia: os boletos duplicam
+-- (duas contas de R$ 660 mil aparecem na tela, com risco real de pagar as duas).
+-- A verificação abaixo aborta com erro claro se a 005 ainda não rodou.
+--
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE indexname = 'idx_nfe_numero_emitente_fazenda'
+  ) THEN
+    RAISE EXCEPTION 'Erro: a migração 005_nfe_duplicidade.sql ainda não foi rodada. Abra o Supabase SQL Editor, cole aquele arquivo e rode primeiro. A Fase 2 depende dele.';
+  END IF;
+END $$;
+
 -- 1. Conta pode nascer sem data de vencimento (caso ERCAL: fornecedor não informou).
 --    "Falta vencimento" NÃO vira status: é derivado da coluna vazia, do mesmo jeito
 --    que "atrasada" já é derivada. Guardar como estado criaria uma segunda verdade
