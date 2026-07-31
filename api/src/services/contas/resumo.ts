@@ -1,27 +1,51 @@
 import { diasEntre } from './datas'
 
+// Endereço do site — mesma variável usada em avisoBoleto.ts.
+const APP_URL = process.env.APP_URL ?? 'https://agromouro.com.br'
+
+// Dias sem resposta a partir dos quais a conta sem data sobe de tom.
+// Motivo do escalonamento: conta sem vencimento NUNCA pode ficar "atrasada",
+// porque não há data para comparar — o boleto vence no mundo real e o sistema
+// não tem como saber. É o único ponto cego, então ele grita em vez de calar.
+const DIAS_PARA_ESCALAR = 5
+
 export type ContaResumo = {
   descricao:         string
   fornecedor:        string | null
-  vencimento:        string
+  vencimento:        string | null   // vazio = o fornecedor não informou
   valor:             number | null
   status:            string
   avisar_dias_antes: number
+  criada_em:         string          // 'YYYY-MM-DD' — base do escalonamento
 }
 
 export type Resumo = {
-  atrasadas:   ContaResumo[]
-  vencendo:    ContaResumo[]
-  naoChegaram: ContaResumo[]
+  atrasadas:            ContaResumo[]
+  vencendo:             ContaResumo[]
+  naoChegaram:          ContaResumo[]
+  semVencimento:        ContaResumo[]
+  semVencimentoAntigas: ContaResumo[]
 }
 
 const ENCERRADAS = new Set(['paga', 'dispensada'])
 
 export function montarResumo(contas: ContaResumo[], hojeISO: string): Resumo {
-  const r: Resumo = { atrasadas: [], vencendo: [], naoChegaram: [] }
+  const r: Resumo = {
+    atrasadas: [], vencendo: [], naoChegaram: [],
+    semVencimento: [], semVencimentoAntigas: [],
+  }
 
   for (const c of contas) {
     if (ENCERRADAS.has(c.status)) continue
+
+    // Sem data não dá para calcular atraso. Vai para o grupo próprio, e sobe
+    // de tom conforme envelhece sem resposta.
+    if (!c.vencimento) {
+      const esperando = diasEntre(c.criada_em, hojeISO)
+      if (esperando > DIAS_PARA_ESCALAR) r.semVencimentoAntigas.push(c)
+      else                                r.semVencimento.push(c)
+      continue
+    }
 
     const dias = diasEntre(hojeISO, c.vencimento)
 
@@ -38,7 +62,9 @@ export function montarResumo(contas: ContaResumo[], hojeISO: string): Resumo {
 }
 
 export function resumoVazio(r: Resumo): boolean {
-  return r.atrasadas.length === 0 && r.vencendo.length === 0 && r.naoChegaram.length === 0
+  return r.atrasadas.length === 0 && r.vencendo.length === 0 &&
+         r.naoChegaram.length === 0 && r.semVencimento.length === 0 &&
+         r.semVencimentoAntigas.length === 0
 }
 
 function reais(v: number | null): string {
@@ -56,18 +82,32 @@ function ddmm(iso: string): string {
 export function textoResumo(r: Resumo, hojeISO: string): string {
   const linhas: string[] = [`📋 *Contas — ${ddmm(hojeISO)}*`]
 
-  if (r.atrasadas.length) {
-    linhas.push(`\n🔴 ${r.atrasadas.length} atrasada${r.atrasadas.length > 1 ? 's' : ''}:`)
-    for (const c of r.atrasadas) linhas.push(`• ${c.descricao} — venceu ${ddmm(c.vencimento)}, ${reais(c.valor)}`)
+  const criticas = r.atrasadas.length + r.semVencimentoAntigas.length
+  if (criticas > 0) {
+    linhas.push(`\n🔴 ${criticas} urgente${criticas > 1 ? 's' : ''}:`)
+    for (const c of r.atrasadas) {
+      linhas.push(`• ${c.descricao} — venceu ${ddmm(c.vencimento!)}, ${reais(c.valor)}`)
+    }
+    for (const c of r.semVencimentoAntigas) {
+      const dias = diasEntre(c.criada_em, hojeISO)
+      linhas.push(`• ${c.descricao} — ${reais(c.valor)}, há ${dias} dias sem vencimento informado`)
+    }
   }
   if (r.vencendo.length) {
     linhas.push(`\n🟡 ${r.vencendo.length} vencendo:`)
-    for (const c of r.vencendo) linhas.push(`• ${c.descricao} — dia ${ddmm(c.vencimento)}, ${reais(c.valor)}`)
+    for (const c of r.vencendo) linhas.push(`• ${c.descricao} — dia ${ddmm(c.vencimento!)}, ${reais(c.valor)}`)
   }
   if (r.naoChegaram.length) {
     const n = r.naoChegaram.length
     linhas.push(`\n⏳ ${n} ainda ${n > 1 ? 'não chegaram' : 'não chegou'}:`)
-    for (const c of r.naoChegaram) linhas.push(`• ${c.descricao} — esperada dia ${ddmm(c.vencimento)}`)
+    for (const c of r.naoChegaram) linhas.push(`• ${c.descricao} — esperada dia ${ddmm(c.vencimento!)}`)
+  }
+  if (r.semVencimento.length) {
+    linhas.push(`\n❓ ${r.semVencimento.length} sem vencimento:`)
+    for (const c of r.semVencimento) linhas.push(`• ${c.descricao} — ${reais(c.valor)}`)
+  }
+  if (r.semVencimento.length || r.semVencimentoAntigas.length) {
+    linhas.push(`👉 ${APP_URL}/contas?filtro=sem-vencimento`)
   }
   return linhas.join('\n')
 }
