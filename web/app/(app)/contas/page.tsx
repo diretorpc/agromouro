@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
 import { FormularioContaFixa } from './formulario-conta-fixa'
 import { FormularioContaAvulsa } from './formulario-conta-avulsa'
+import { DialogoVencimento } from './dialogo-vencimento'
 import { ListaContas, fmtBRL } from './lista-contas'
 import { ENCERRADAS, type Conta, type ContaAPI } from './tipos'
 
@@ -114,6 +115,8 @@ export default function ContasPage() {
 
   const [novaFixaOpen, setNovaFixaOpen]     = useState(false)
   const [novaAvulsaOpen, setNovaAvulsaOpen] = useState(false)
+
+  const [dataDialog, setDataDialog] = useState<ContaAPI | null>(null)
 
   async function load() {
     setErroCarregar(null)
@@ -270,12 +273,6 @@ export default function ContasPage() {
     }
   }
 
-  // ─── Ações: informar data (placeholder — diálogo de verdade chega na Task 9) ─
-
-  function abrirInformarData(conta: ContaAPI) {
-    console.info('[Contas] "Informar data" ainda não tem diálogo — Task 9 substitui este placeholder.', conta.id)
-  }
-
   if (loading) return <PageSkeleton />
 
   if (erroCarregar) {
@@ -414,7 +411,7 @@ export default function ContasPage() {
             onDispensar={abrirDispensarDialog}
             onDesfazer={abrirDesfazerDialog}
             onEditarValor={abrirValorDialog}
-            onInformarData={abrirInformarData}
+            onInformarData={setDataDialog}
           />
         </CardContent>
       </Card>
@@ -534,6 +531,13 @@ export default function ContasPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Dialog: informar data de vencimento ── */}
+      <DialogoVencimento
+        conta={dataDialog}
+        onFechar={() => setDataDialog(null)}
+        onSalvo={() => { setDataDialog(null); load() }}
+      />
 
       {/* ── Formulários: nova conta fixa / avulsa ── */}
       <FormularioContaFixa
