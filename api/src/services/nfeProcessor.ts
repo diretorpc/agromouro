@@ -147,7 +147,7 @@ export async function nfeJaProcessada(
   emitenteCnpj: string,
   fazenda_id: string,
 ): Promise<boolean> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('notas_fiscais')
     .select('id')
     .eq('numero', numero)
@@ -155,6 +155,12 @@ export async function nfeJaProcessada(
     .eq('fazenda_id', fazenda_id)
     .limit(1)
     .maybeSingle()
+
+  // Falha de banco NÃO pode virar "não é duplicata" — senão a nota é gravada
+  // de novo, e o estoque e o gasto são contados em dobro, em silêncio.
+  // Mesmo padrão de `jobs/contas.ts`: erro de consulta é relançado, nunca engolido.
+  if (error) throw error
+
   return !!data
 }
 
