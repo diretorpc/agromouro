@@ -117,8 +117,24 @@ contaRoutes.post('/recorrentes', async (req, res, next) => {
 
     // Já cria as ocorrências da janela para a conta aparecer na hora,
     // sem esperar a tarefa das 07:00 do dia seguinte.
-    const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
-    await sincronizarOcorrencias(fazendaId, hoje)
+    //
+    // Falha aqui NÃO pode derrubar a requisição: a regra JÁ está salva. Se o
+    // usuário recebesse erro, ele clicaria em Salvar de novo e nasceria uma
+    // SEGUNDA regra idêntica — nada no banco impede isso — e daí todo mês
+    // apareceriam duas contas iguais, para sempre.
+    // Este módulo se apoia num princípio: a tarefa das 07:00 é idempotente e se
+    // conserta sozinha. Um dia de atraso nas ocorrências é muito melhor que uma
+    // regra duplicada, que só sai de lá com SQL na mão.
+    try {
+      const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+      await sincronizarOcorrencias(fazendaId, hoje)
+    } catch (erroSync) {
+      console.error(
+        `[Contas] Regra ${data?.id} salva, mas falhou ao criar as ocorrências agora. ` +
+        'A tarefa das 07:00 cria na próxima execução.',
+        erroSync,
+      )
+    }
 
     res.status(201).json(data)
   } catch (err) {
@@ -274,14 +290,46 @@ contaRoutes.post('/:id/pagar', async (req, res, next) => {
         status:         'paga',
         data_pagamento: body.data_pagamento,
         valor_pago:     body.valor_pago,
+        // Conta paga: o valor que saiu do banco passa a ser a verdade e a
+        // estimativa não serve mais para nada. Sem estas duas linhas a lista
+        // continuaria mostrando "R$ 890,00 — estimado" numa conta de R$ 912,35
+        // já quitada, e o resumo das 07:00 no WhatsApp repetiria o mesmo engano.
+        valor:          body.valor_pago,
+        valor_estimado: false,
         lancamento_id:  lancamentoId,
       })
       .eq('id', req.params.id)
       .eq('fazenda_id', fazendaId)
       .select()
 
-    if (error) throw error
-    if (!data?.length) return res.status(404).json({ error: 'Conta não encontrada' })
+    // Dinheiro contado duas vezes é pior que requisição falhada.
+    // O lançamento acima já está gravado. Se a conta não virou 'paga', ela
+    // continua elegível: o usuário clica de novo, passa pela mesma checagem e
+    // nasce um SEGUNDO lançamento — despesa dobrada, e o órfão nem aparece na
+    // tela de contas. Então desfaz o lançamento antes de devolver o erro.
+    if (error || !data?.length) {
+      if (lancamentoId) {
+        const { error: erroRollback } = await supabase
+          .from('lancamentos_financeiros')
+          .delete()
+          .eq('id', lancamentoId)
+          .eq('fazenda_id', fazendaId)
+
+        // Não estoura: o erro que interessa é o original. Mas registra —
+        // sobrou um lançamento órfão no Financeiro que precisa de olho humano.
+        if (erroRollback) {
+          console.error(
+            `[Contas] Pagamento da conta ${req.params.id} falhou E o lançamento ` +
+            `${lancamentoId} não pôde ser desfeito — há um lançamento órfão no Financeiro.`,
+            erroRollback,
+          )
+        }
+      }
+
+      if (error) throw error
+      return res.status(404).json({ error: 'Conta não encontrada' })
+    }
+
     res.json(data[0])
   } catch (err) {
     if (err instanceof z.ZodError) {

@@ -15,7 +15,7 @@ export async function sincronizarOcorrencias(fazendaId: string, hojeISO: string)
 
   const { data: regras, error: erroRegras } = await supabase
     .from('contas_recorrentes')
-    .select('id, descricao, fornecedor, categoria, periodicidade, dia_vencimento, mes_primeira, valor_referencia, ativa')
+    .select('id, descricao, fornecedor, categoria, periodicidade, dia_vencimento, mes_primeira, valor_referencia, ativa, created_at')
     .eq('fazenda_id', fazendaId)
     .eq('ativa', true)
 
@@ -47,7 +47,24 @@ export async function sincronizarOcorrencias(fazendaId: string, hojeISO: string)
       continue
     }
 
+    // A regra só vale do dia do cadastro em diante.
+    //
+    // Sem este corte, cadastrar "Cemig, dia 10" no dia 30 criaria na hora a
+    // ocorrência do dia 10 DESTE mês — já vencida, com valor chutado. No dia da
+    // virada o agricultor cadastra as contas fixas todas de uma vez, e a
+    // primeira mensagem das 07:00 abriria com "🔴 10 atrasadas" de contas que
+    // ele já pagou antes do sistema existir. O aviso de atraso é justamente o
+    // que este módulo existe para dar — nascer mentindo o desmoraliza.
+    // Combina com a premissa do projeto: o histórico não migra, o módulo começa
+    // limpo, valendo das contas cadastradas em diante.
+    //
+    // created_at é timestamp; comparo como texto 'YYYY-MM-DD' (os 10 primeiros
+    // caracteres). Nada de new Date(): esse caminho já custou um dia de erro no
+    // financeiro deste projeto. Sem created_at, não corta nada.
+    const cadastradaEm = String(regra.created_at ?? '').slice(0, 10)
+
     const faltam = ocorrenciasFaltantes(esperadas, existentes ?? [])
+      .filter(o => o.vencimento >= cadastradaEm)
     if (!faltam.length) continue
 
     // Valor da estimativa: o último valor realmente pago dessa regra.
