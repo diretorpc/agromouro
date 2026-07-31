@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { contasDaNota, motivoSemBoleto, type DadosParaConta } from './deNotaFiscal'
+import { contasDaNota, motivoSemBoleto, parcelasDescartadasDaNota, type DadosParaConta } from './deNotaFiscal'
 
 const base: DadosParaConta = {
   numero:         '4516',
@@ -143,5 +143,87 @@ describe('contasDaNota', () => {
   it('29 de fevereiro em ano bissexto (2028) passa normalmente', () => {
     const r = contasDaNota({ ...base, dataEmissao: '2028-02-29', duplicatas: [] })
     expect(r[0].competencia).toBe('2028-02-01')
+  })
+})
+
+describe('contasDaNota — uma parcela ruim nao pode derrubar as boas', () => {
+  it('3 parcelas, uma ruim no meio: devolve as 2 boas, na ordem, com os valores certos', () => {
+    const r = contasDaNota({ ...base, duplicatas: [
+      { numero: '001', vencimento: '2026-08-15', valor: 220000 },
+      { numero: '002', vencimento: '2026-13-40', valor: 220000 }, // malformada: mes 13, dia 40
+      { numero: '003', vencimento: '2026-10-15', valor: 220000 },
+    ]})
+    expect(r).toHaveLength(2)
+    expect(r.map(c => c.vencimento)).toEqual(['2026-08-15', '2026-10-15'])
+    expect(r.map(c => c.valor)).toEqual([220000, 220000])
+  })
+
+  it('3 parcelas, a primeira ruim: devolve as 2 boas', () => {
+    const r = contasDaNota({ ...base, duplicatas: [
+      { numero: '001', vencimento: '2026-13-40', valor: 100 }, // malformada
+      { numero: '002', vencimento: '2026-08-15', valor: 200 },
+      { numero: '003', vencimento: '2026-09-15', valor: 300 },
+    ]})
+    expect(r).toHaveLength(2)
+    expect(r.map(c => c.vencimento)).toEqual(['2026-08-15', '2026-09-15'])
+    expect(r.map(c => c.valor)).toEqual([200, 300])
+  })
+
+  it('3 parcelas, a ultima ruim: devolve as 2 boas', () => {
+    const r = contasDaNota({ ...base, duplicatas: [
+      { numero: '001', vencimento: '2026-08-15', valor: 100 },
+      { numero: '002', vencimento: '2026-09-15', valor: 200 },
+      { numero: '003', vencimento: '2026-13-40', valor: 300 }, // malformada
+    ]})
+    expect(r).toHaveLength(2)
+    expect(r.map(c => c.vencimento)).toEqual(['2026-08-15', '2026-09-15'])
+    expect(r.map(c => c.valor)).toEqual([100, 200])
+  })
+
+  it('numero_parcela e total_parcelas preservam a POSICAO e o TOTAL originais da nota, com um buraco visivel onde a parcela ruim caiu', () => {
+    const r = contasDaNota({ ...base, duplicatas: [
+      { numero: '001', vencimento: '2026-08-15', valor: 100 },
+      { numero: '002', vencimento: '2026-13-40', valor: 100 }, // malformada — some
+      { numero: '003', vencimento: '2026-10-15', valor: 100 },
+    ]})
+    expect(r).toHaveLength(2)
+    // Renumerar para 1/2, 2/2 apagaria o rastro de que uma parcela sumiu e pareceria
+    // completo por engano. "1/3" seguido de "3/3" (sem "2/3") é o próprio aviso.
+    expect(r.map(c => c.numero_parcela)).toEqual([1, 3])
+    expect(r.every(c => c.total_parcelas === 3)).toBe(true)
+    expect(r[0].descricao).toBe('TRIANGULO DIESEL TRR LTDA — NF 4516 (1/3)')
+    expect(r[1].descricao).toBe('TRIANGULO DIESEL TRR LTDA — NF 4516 (3/3)')
+  })
+
+  it('todas as parcelas ruins: nao devolve lista vazia (indistinguivel de "nao gera boleto") — lanca erro', () => {
+    expect(() => contasDaNota({ ...base, duplicatas: [
+      { numero: '001', vencimento: '2026-13-40', valor: 100 },
+      { numero: '002', vencimento: '2026-99-99', valor: 200 },
+    ]})).toThrow(/Nenhuma das 2 parcela\(s\)/)
+  })
+})
+
+describe('parcelasDescartadasDaNota', () => {
+  it('nota sem problema nenhum: lista vazia', () => {
+    expect(parcelasDescartadasDaNota(base)).toEqual([])
+  })
+
+  it('nota sem duplicata (caso ERCAL): lista vazia — nao ha parcela pra descartar', () => {
+    expect(parcelasDescartadasDaNota({ ...base, duplicatas: [] })).toEqual([])
+  })
+
+  it('cartao de credito: lista vazia — a nota nem tenta gerar boleto', () => {
+    expect(parcelasDescartadasDaNota({ ...base, formaPagamento: '05' })).toEqual([])
+  })
+
+  it('parcela ruim no meio: aparece aqui com o numero da duplicata e o motivo', () => {
+    const r = parcelasDescartadasDaNota({ ...base, duplicatas: [
+      { numero: '001', vencimento: '2026-08-15', valor: 100 },
+      { numero: '002', vencimento: '2026-13-40', valor: 100 },
+      { numero: '003', vencimento: '2026-10-15', valor: 100 },
+    ]})
+    expect(r).toHaveLength(1)
+    expect(r[0].numero).toBe('002')
+    expect(r[0].motivo).toMatch(/Data em formato inválido/)
   })
 })

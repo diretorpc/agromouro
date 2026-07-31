@@ -22,6 +22,14 @@ export type ContaDeNota = {
   total_parcelas: number
 }
 
+// Uma parcela da nota que NÃO virou conta — e o motivo. contasDaNota() é pura (não
+// loga, não manda WhatsApp), então quem precisa avisar o dono de uma parcela perdida
+// no meio de uma nota que, no geral, deu certo, chama esta função à parte.
+export type ParcelaDescartada = {
+  numero: string   // numero da duplicata na nota, não a posição
+  motivo: string
+}
+
 // Formas de pagamento que NÃO geram boleto para o Matheus pagar.
 // A cobrança vem pela fatura do cartão, ou o dinheiro já saiu.
 // ⚠️ Decidido com uma amostra só (31/07/2026): a METAL AGRICOLA usou '05'
@@ -73,38 +81,96 @@ function mesDe(dataISO: string): string {
   return competenciaDoMes(ano, mes)
 }
 
+// Tenta transformar cada duplicata da nota numa conta, isoladamente. Uma parcela com
+// data ruim NÃO pode derrubar as outras: perder 1 parcela é ruim, perder as 3 é muito
+// pior — mesmo raciocínio já usado no limite de 24 parcelas do desenho desta fase
+// ("truncar seria perder boleto em silêncio").
+//
+// Mantém a POSIÇÃO original (i + 1) e o TOTAL original (nfe.duplicatas.length) mesmo
+// quando uma parcela é descartada: se sobrarem só a 1ª e a 3ª de uma nota de 3, o
+// buraco no meio ("1/3", depois "3/3", sem "2/3" nenhuma) é o próprio aviso de que
+// algo sumiu. Renumerar para "1/2, 2/2" apagaria esse rastro e pareceria completo.
+function tentarContasDasDuplicatas(
+  nfe: DadosParaConta,
+  fornecedor: string,
+): { contas: ContaDeNota[]; descartadas: ParcelaDescartada[] } {
+  const total = nfe.duplicatas.length
+  const contas: ContaDeNota[] = []
+  const descartadas: ParcelaDescartada[] = []
+
+  nfe.duplicatas.forEach((d, i) => {
+    try {
+      contas.push({
+        descricao:      total > 1
+                          ? `${fornecedor} — NF ${nfe.numero} (${i + 1}/${total})`
+                          : `${fornecedor} — NF ${nfe.numero}`,
+        fornecedor,
+        vencimento:     d.vencimento,
+        // Parcela sem data não tem mês de vencimento: cai no mês da emissão.
+        // Calculado só aqui dentro (não antes do laço) para que uma dataEmissao
+        // malformada só derrube as parcelas que realmente dependem dela.
+        competencia:    d.vencimento ? mesDe(d.vencimento) : mesDe(nfe.dataEmissao),
+        valor:          d.valor,
+        numero_parcela: i + 1,
+        total_parcelas: total,
+      })
+    } catch (e) {
+      descartadas.push({
+        numero: d.numero,
+        motivo: e instanceof Error ? e.message : String(e),
+      })
+    }
+  })
+
+  return { contas, descartadas }
+}
+
 export function contasDaNota(nfe: DadosParaConta): ContaDeNota[] {
   if (motivoSemBoleto(nfe.formaPagamento)) return []
 
   const fornecedor = nfe.emitenteNome
-  const mesEmissao = mesDe(nfe.dataEmissao)
 
   // Sem quadro de cobrança: uma conta sem data, com o valor total da nota.
   // Não descartar — é o caso ERCAL, e descartar seria perder R$ 8 mil em silêncio.
+  // Aqui não há nada a "salvar parcialmente": é uma conta só, então uma data de
+  // emissão ruim estoura direto (não há como isolar um problema de um item único).
   if (nfe.duplicatas.length === 0) {
     return [{
       descricao:      `${fornecedor} — NF ${nfe.numero}`,
       fornecedor,
       vencimento:     null,
-      competencia:    mesEmissao,
+      competencia:    mesDe(nfe.dataEmissao),
       valor:          nfe.valorTotal,
       numero_parcela: 1,
       total_parcelas: 1,
     }]
   }
 
-  const total = nfe.duplicatas.length
+  const { contas, descartadas } = tentarContasDasDuplicatas(nfe, fornecedor)
 
-  return nfe.duplicatas.map((d, i) => ({
-    descricao:      total > 1
-                      ? `${fornecedor} — NF ${nfe.numero} (${i + 1}/${total})`
-                      : `${fornecedor} — NF ${nfe.numero}`,
-    fornecedor,
-    vencimento:     d.vencimento,
-    // Parcela sem data não tem mês de vencimento: cai no mês da emissão.
-    competencia:    d.vencimento ? mesDe(d.vencimento) : mesEmissao,
-    valor:          d.valor,
-    numero_parcela: i + 1,
-    total_parcelas: total,
-  }))
+  // Todas as parcelas malformadas: não sobra conta nenhuma pra salvar. Devolver []
+  // aqui seria indistinguível do caso "forma de pagamento não gera boleto" (que
+  // também devolve [] de propósito) — o dono nunca saberia que uma nota de R$ 660 mil
+  // sumiu por causa de uma data ruim, e não por decisão de negócio. Lançar torna o
+  // problema barulhento em vez de invisível — e quem chama (gravarDeNota.ts) já
+  // espera e reembrulha exceções desta função com o número da nota.
+  if (contas.length === 0 && descartadas.length > 0) {
+    throw new Error(
+      `Nenhuma das ${descartadas.length} parcela(s) desta nota pôde virar conta: ` +
+      descartadas.map(p => `parcela ${p.numero} — ${p.motivo}`).join('; '),
+    )
+  }
+
+  return contas
+}
+
+// Refaz o mesmo cálculo de contasDaNota() para a mesma nota e devolve só as parcelas
+// que teriam sido descartadas (pura, sem estado — não reaproveita nada de chamadas
+// anteriores). Existe para quem grava as contas (ou avisa o dono) detectar quando uma
+// parcela BOA sumiu no meio de uma nota que, no geral, deu certo — contasDaNota()
+// sozinha não tem como avisar isso, é função pura e não loga.
+export function parcelasDescartadasDaNota(nfe: DadosParaConta): ParcelaDescartada[] {
+  if (motivoSemBoleto(nfe.formaPagamento)) return []
+  if (nfe.duplicatas.length === 0) return []
+  return tentarContasDasDuplicatas(nfe, nfe.emitenteNome).descartadas
 }
