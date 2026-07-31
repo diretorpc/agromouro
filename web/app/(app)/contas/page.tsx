@@ -17,22 +17,11 @@ import { FormularioContaAvulsa } from './formulario-conta-avulsa'
 import { DialogoVencimento } from './dialogo-vencimento'
 import { ListaContas, fmtBRL } from './lista-contas'
 import { ENCERRADAS, type Conta, type ContaAPI } from './tipos'
+import { hojeISO, diasEntre } from './datas'
 
 // ─── Cálculo dos três números (task-9-brief.md, verbatim — não alterar) ───────
 // Erra calada se mexido: um total que soma confirmado + estimado vira um
 // número que mente sem avisar. Ver brief da Task 9.
-
-// Hoje no fuso de São Paulo, como 'YYYY-MM-DD'.
-// NÃO usar toISOString(): devolve UTC e vira o dia seguinte depois das 21h.
-function hojeISO(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
-}
-
-function diasEntre(aISO: string, bISO: string): number {
-  const [ay, am, ad] = aISO.split('-').map(Number)
-  const [by, bm, bd] = bISO.split('-').map(Number)
-  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86_400_000)
-}
 
 export function calcularTotais(contas: Conta[], hoje: string) {
   let semanaConfirmado = 0, semanaEstimado = 0

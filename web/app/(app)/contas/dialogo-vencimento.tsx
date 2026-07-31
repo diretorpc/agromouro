@@ -7,18 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
 import type { ContaAPI } from './tipos'
-
-// Hoje no fuso de São Paulo. NÃO usar toISOString(): devolve UTC e vira o dia
-// seguinte depois das 21h — defeito que este projeto já teve no Financeiro.
-function hojeISO(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
-}
-
-function diasEntre(aISO: string, bISO: string): number {
-  const [ay, am, ad] = aISO.split('-').map(Number)
-  const [by, bm, bd] = bISO.split('-').map(Number)
-  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86_400_000)
-}
+import { hojeISO, diasEntre } from './datas'
 
 // Aviso, NUNCA bloqueio. Errar o ano ao digitar é comum, e travar o usuário
 // fora do próprio sistema é pior que o erro que se quer evitar.
