@@ -393,4 +393,24 @@ describe('processarNFe — "em N dias" usa hoje de verdade, não a data da nota 
     expect(mensagem).toContain('venceu há 2 dias')
     expect(mensagem).not.toContain('em 1 dia')
   })
+
+  // ─── Conserto 2 completo — o cabeçalho da mensagem escrevia dinheiro à mão ──
+  // (`R$ ${valorTotal.toFixed(2)}` → "R$ 1000.00") enquanto a linha do boleto,
+  // na MESMA mensagem, já usava a reais() centralizada em formato.ts
+  // ("R$ 1.000,00"). Duas grafias do mesmo valor na mesma mensagem de
+  // WhatsApp. Este teste falharia com o `toFixed(2)` antigo: o cabeçalho
+  // não continha 'R$ 1.000,00', e sim 'R$ 1000.00'.
+  it('cabeçalho e boleto usam a MESMA formatação de dinheiro (reais centralizado)', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-03T12:00:00-03:00'))
+
+    await processarNFe(nfeAtrasada, 'webhook', 'fazenda-fake-id')
+
+    const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
+    const ocorrenciasDoValor = mensagem.match(/R\$ 1\.000,00/g) ?? []
+    // valorTotal (cabeçalho) e o valor do boleto são os mesmos R$ 1.000,00
+    // nesta nota — as duas linhas têm que grafar igual.
+    expect(ocorrenciasDoValor.length).toBe(2)
+    expect(mensagem).not.toContain('R$ 1000.00')
+  })
 })

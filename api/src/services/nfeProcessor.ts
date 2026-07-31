@@ -5,7 +5,7 @@ import { enviarMensagem } from './zapi'
 import { gravarContasDaNota } from './contas/gravarDeNota'
 import { motivoSemBoleto, type ContaDeNota, type ParcelaDescartada } from './contas/deNotaFiscal'
 import { linhaBoleto } from './contas/avisoBoleto'
-import { hojeSaoPauloISO } from './contas/formato'
+import { hojeSaoPauloISO, reais } from './contas/formato'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -391,7 +391,12 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
     }
 
     const icone = origem === 'email' ? '📧' : '📄'
-    let mensagem = `${icone} *NF-e processada*\n👤 ${emitenteNome}\n💰 R$ ${valorTotal.toFixed(2)}\n\n`
+    // reais() — a mesma função usada na linha do boleto duas seções abaixo, na
+    // MESMA mensagem. Antes este cabeçalho escrevia `R$ ${valorTotal.toFixed(2)}`
+    // à mão ("R$ 1000.00", sem separador de milhar nem vírgula brasileira) e o
+    // boleto usava reais() ("R$ 1.000,00") — duas grafias do mesmo valor na
+    // mesma mensagem de WhatsApp.
+    let mensagem = `${icone} *NF-e processada*\n👤 ${emitenteNome}\n💰 ${reais(valorTotal)}\n\n`
 
     if (itensAtualizados.length > 0)
       mensagem += `✅ *Estoque atualizado:*\n${itensAtualizados.join('\n')}`
