@@ -2,14 +2,10 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
-    // O .env vive na raiz do projeto (agromouro-base/.env), não em api/ —
-    // é o mesmo arquivo que `npm run dev` já usa via `--env-file=../.env`.
-    // Sem isso, qualquer teste que importe um módulo que faz
-    // `import { supabase } from './supabase'` quebra no carregamento do
-    // arquivo (supabase.ts lança erro se as chaves não existem), mesmo que
-    // o teste nunca chame nada do banco — como é o caso de parseXmlNFe.
-    // `envDir` sozinho não basta: o Vite só expõe variáveis VITE_* em
-    // import.meta.env; process.env precisa do dotenv explícito abaixo.
+    // vitest.setup.ts preenche variáveis de ambiente FALSAS antes de cada
+    // suíte rodar — só para módulos como supabase.ts não lançarem erro na
+    // hora do import. Não carrega o .env real de propósito: a chave de
+    // serviço do Supabase ignora toda permissão do banco de produção.
     setupFiles: ['./vitest.setup.ts'],
   },
 })
