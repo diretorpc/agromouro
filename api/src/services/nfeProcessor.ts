@@ -3,7 +3,8 @@ import { XMLParser } from 'fast-xml-parser'
 import { supabase } from './supabase'
 import { enviarMensagem } from './zapi'
 import { gravarContasDaNota } from './contas/gravarDeNota'
-import { motivoSemBoleto, type ContaDeNota } from './contas/deNotaFiscal'
+import { motivoSemBoleto, type ContaDeNota, type ParcelaDescartada } from './contas/deNotaFiscal'
+import { linhaBoleto } from './contas/avisoBoleto'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -365,6 +366,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
     // foram gravados — só o boleto e o aviso do WhatsApp ficam pendentes, nunca a
     // nota inteira presa em 'processando' para sempre.
     let contasCriadas: ContaDeNota[] = []
+    let parcelasPerdidas: ParcelaDescartada[] = []
     let erroContas = false
     try {
       // nfeId já foi atribuído logo após o insert, no início da função. A guarda
@@ -372,11 +374,13 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
       // tipos de banco, então TypeScript enxerga `nfeId` como `string | null`
       // mesmo depois da atribuição — e gravarContasDaNota exige `string`.
       if (!nfeId) throw new Error('id da nota indisponível para gravar boletos')
-      contasCriadas = await gravarContasDaNota(
+      const resultado = await gravarContasDaNota(
         { numero, emitenteNome, dataEmissao, valorTotal, formaPagamento, duplicatas },
         nfeId,
         fazenda_id,
       )
+      contasCriadas    = resultado.contas
+      parcelasPerdidas = resultado.descartadas
     } catch (err) {
       erroContas = true
       console.error(
@@ -398,6 +402,14 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
       if (itensAtualizados.length > 0 || itensAutoCriados.length > 0) mensagem += '\n\n'
       mensagem += `📦 *Não estocados* (só financeiro):\n${itensNaoEstocados.join('\n')}`
     }
+
+    mensagem += linhaBoleto(
+      contasCriadas,
+      motivoSemBoleto(formaPagamento),
+      dataFormatada,
+      erroContas,
+      parcelasPerdidas,
+    )
 
     await enviarMensagem(phone, mensagem)
 

@@ -1,5 +1,17 @@
 import { supabase } from '../supabase'
-import { contasDaNota, type ContaDeNota, type DadosParaConta } from './deNotaFiscal'
+import {
+  contasDaNota, parcelasDescartadasDaNota,
+  type ContaDeNota, type DadosParaConta, type ParcelaDescartada,
+} from './deNotaFiscal'
+
+// O que gravarContasDaNota devolve: as contas que entraram no banco, e as
+// parcelas que ficaram de fora (data malformada) apesar da nota, no geral,
+// ter dado certo. Quem chama (nfeProcessor.ts) usa `descartadas` para nunca
+// deixar essa perda silenciosa — vira aviso na mensagem do WhatsApp.
+export type ResultadoGravacaoContas = {
+  contas:      ContaDeNota[]
+  descartadas: ParcelaDescartada[]
+}
 
 // Grava no banco os boletos de uma NF-e. Devolve o que foi criado.
 //
@@ -17,7 +29,7 @@ export async function gravarContasDaNota(
   nfe: DadosParaConta,
   notaFiscalId: string,
   fazendaId: string,
-): Promise<ContaDeNota[]> {
+): Promise<ResultadoGravacaoContas> {
   // contasDaNota pode estourar quando a data de emissão (ou de uma parcela) vem
   // vazia/inválida — mas a mensagem original só cita a data, não a nota. Quem
   // chama esta função só vê o `err.message` no log (nfeProcessor engole o erro
@@ -30,7 +42,16 @@ export async function gravarContasDaNota(
     const motivo = err instanceof Error ? err.message : String(err)
     throw new Error(`NF ${nfe.numero} (${nfe.emitenteNome}): ${motivo}`)
   }
-  if (contas.length === 0) return []
+
+  // Refaz o mesmo cálculo (função pura, sem estado) só para achar as parcelas que
+  // NÃO entraram em `contas` acima — uma nota que, no geral, deu certo ainda pode
+  // ter perdido 1 parcela no meio. Só chega a quem chama se o upsert abaixo NÃO
+  // lançar: se o banco falhar, a função inteira estoura e nfeProcessor.ts cai no
+  // aviso genérico de erro (que já manda o dono conferir em /contas por outro
+  // motivo) — não há double-report da mesma parcela nesse caso.
+  const descartadas = parcelasDescartadasDaNota(nfe)
+
+  if (contas.length === 0) return { contas: [], descartadas }
 
   const linhas = contas.map(c => ({
     descricao:      c.descricao,
@@ -70,5 +91,5 @@ export async function gravarContasDaNota(
   // Devolvemos o que a REGRA decidiu, não o que o banco aceitou: quem chama
   // usa isto para escrever a mensagem, e a mensagem deve descrever a nota.
   console.log(`[Contas] NF ${nfe.numero}: ${contas.length} boleto(s) previsto(s), ${data?.length ?? 0} gravado(s).`)
-  return contas
+  return { contas, descartadas }
 }
