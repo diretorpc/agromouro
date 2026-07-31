@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // ─── Simulação da borda com Supabase, Z-API e Claude Haiku ──────────────────
 // Usada só pelo describe "processarNFe — isolamento do bloco de boletos"
@@ -70,13 +70,26 @@ vi.mock('./supabase', () => {
   return {
     supabase: {
       from: vi.fn((table: string) => builder(table)),
-      rpc:  vi.fn(() => Promise.resolve({ data: null, error: null })),
+      // `incrementar_estoque` é quem de fato move o SALDO do estoque — a
+      // gravação em movimentacoes_estoque é só o registro histórico. Sem
+      // registrar esta chamada em `chamadas`, apagar o rpc() do código
+      // manteria o teste verde dizendo "estoque protegido" sem provar nada
+      // sobre o saldo.
+      rpc: vi.fn((fn: string, args: any) => {
+        chamadas.push({ table: '__rpc__', method: fn, payload: args })
+        return Promise.resolve({ data: null, error: null })
+      }),
     },
   }
 })
 
 vi.mock('./zapi', () => ({
-  enviarMensagem: vi.fn(() => Promise.resolve(true)),
+  // Marca o envio na mesma sequência `chamadas` que o Supabase — é assim que
+  // o teste de ORDEM abaixo confere que o WhatsApp sai DEPOIS dos boletos.
+  enviarMensagem: vi.fn(() => {
+    chamadas.push({ table: '__whatsapp__', method: 'send' })
+    return Promise.resolve(true)
+  }),
 }))
 
 vi.mock('@anthropic-ai/sdk', () => ({
@@ -244,6 +257,20 @@ describe('processarNFe — isolamento do bloco de boletos (Fase 2)', () => {
     vi.mocked(enviarMensagem).mockClear()
   })
 
+  // O espião de console.error (vi.spyOn dentro de cada `it`) nunca era
+  // restaurado antes desta correção, e este arquivo não tem `restoreMocks`
+  // global no vitest.config.ts — o segundo teste conferia AUSÊNCIA de log
+  // sobre um espião que o primeiro já tinha sujado. Confirmado empiricamente
+  // (ver relatório) que vi.restoreAllMocks() aqui NÃO reseta os mocks
+  // persistentes de ./supabase, ./zapi e @anthropic-ai/sdk: todos foram
+  // criados com a implementação já embutida em vi.fn(impl) — nunca trocada
+  // depois via mockImplementation() —, então "restaurar" volta pra essa
+  // mesma implementação. Só o spy de console.error é de fato restaurado ao
+  // console.error real, que é o efeito que queremos entre os testes.
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('boleto explodindo no banco nao impede itens, estoque, financeiro, status=processada e WhatsApp', async () => {
     const erroSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
@@ -252,6 +279,10 @@ describe('processarNFe — isolamento do bloco de boletos (Fase 2)', () => {
     expect(chamadas.some(c => c.table === 'itens_nfe' && c.method === 'insert')).toBe(true)
     expect(chamadas.some(c => c.table === 'movimentacoes_estoque' && c.method === 'insert')).toBe(true)
     expect(chamadas.some(c => c.table === 'lancamentos_financeiros' && c.method === 'insert')).toBe(true)
+    // A gravação em movimentacoes_estoque é só o registro histórico — quem
+    // move o SALDO de verdade é este rpc. Sem checar isto, apagar a chamada
+    // ao rpc no código mantinha este teste verde dizendo "estoque protegido".
+    expect(chamadas.some(c => c.table === '__rpc__' && c.method === 'incrementar_estoque')).toBe(true)
 
     const statusGravados = chamadas
       .filter(c => c.table === 'notas_fiscais' && c.method === 'update')
@@ -269,6 +300,29 @@ describe('processarNFe — isolamento do bloco de boletos (Fase 2)', () => {
       String(args[0]).includes('falha ao criar boletos'))?.[1]
     expect(String(mensagemErro)).toContain('NF 7777 (FORNECEDOR PROVA LTDA)')
     expect(String(mensagemErro)).toContain('42703')
+
+    // ─── ORDEM (achado da revisão, rodada 2) ───────────────────────────────
+    // `chamadas` registra em sequência. Sem isto, mover o
+    // update({status:'processada'}) para DEPOIS do bloco de boletos (o que
+    // o IMP-1 condenou) passa pelos testes ACIMA sem quebrar nada — e mover
+    // o enviarMensagem para ANTES dos boletos também passaria batido.
+    const indice = (tabela: string, metodo: string) =>
+      chamadas.findIndex(c => c.table === tabela && c.method === metodo)
+
+    const iStatusProcessada = indice('notas_fiscais', 'update')
+    const iBoleto           = indice('contas_a_pagar', 'upsert')
+    const iWhatsapp         = indice('__whatsapp__', 'send')
+
+    expect(iStatusProcessada).toBeGreaterThanOrEqual(0)
+    expect(iBoleto).toBeGreaterThanOrEqual(0)
+    expect(iWhatsapp).toBeGreaterThanOrEqual(0)
+
+    // Nota marcada 'processada' ANTES de tentar o boleto: se o boleto travar
+    // (não só estourar), a nota já não fica presa em 'processando' (IMP-1).
+    expect(iStatusProcessada).toBeLessThan(iBoleto)
+    // Boleto (sucesso ou falha) tentado ANTES do WhatsApp: a mensagem só sai
+    // depois que o bloco de boletos já rodou por inteiro.
+    expect(iBoleto).toBeLessThan(iWhatsapp)
   })
 
   it('sem a explosao, o boleto grava normalmente (contraprova: o mock nao mascara o caminho feliz)', async () => {
