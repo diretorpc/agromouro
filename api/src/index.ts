@@ -9,6 +9,7 @@ import { estoqueRoutes }  from './routes/estoque'
 import { operacaoRoutes } from './routes/operacoes'
 import { alertaRoutes }   from './routes/alertas'
 import { cartaoRoutes }   from './routes/cartoes'
+import { contaRoutes }    from './routes/contas'
 import { whatsappWebhook }   from './webhooks/whatsapp'
 import { nfeWebhook }        from './webhooks/nfe'
 import { nfeEmailWebhook }   from './webhooks/nfeEmailWebhook'
@@ -115,6 +116,7 @@ app.use('/estoque',   requireAuth, estoqueRoutes)
 app.use('/operacoes', requireAuth, operacaoRoutes)
 app.use('/alertas',   requireAuth, alertaRoutes)
 app.use('/cartoes',   requireAuth, cartaoRoutes)
+app.use('/contas',    requireAuth, contaRoutes)
 
 // ─── Admin — trigger manual de jobs (requer autenticação) ────────────────────
 const adminLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 3, standardHeaders: true, legacyHeaders: false })

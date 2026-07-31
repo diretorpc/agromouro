@@ -3,7 +3,7 @@
 ## LEITURA OBRIGATÓRIA AO INICIAR QUALQUER SESSÃO
 
 Antes de qualquer resposta, leia sempre estes arquivos:
-1. `C:/Users/Dib/.claude/projects/c--Agromouro-base/memory/MEMORY.md` — índice de memórias ativas
+1. `C:/Users/Dib/.claude/projects/c--Users-Dib-Projetos-pessoal-agromouro-base/memory/MEMORY.md` — índice de memórias ativas
 2. Cada arquivo listado no MEMORY.md (não ler a pasta inteira — só os listados)
 3. `PLAN.md` na raiz do projeto
 4. Este arquivo (CLAUDE.md)
@@ -51,7 +51,7 @@ api/src/
 ├── routes/       ← rotas Express (um arquivo por domínio: talhoes, estoque, operacoes, alertas)
 ├── services/     ← lógica de negócio (supabase.ts, zapi.ts)
 ├── webhooks/     ← eventos externos: whatsapp.ts, nfe.ts, ttn.ts (IoT sensores)
-├── jobs/         ← tarefas agendadas com node-cron (clima, NDVI, commodities, resumo diário)
+├── jobs/         ← tarefas agendadas com node-cron: nfeEmail (30min), clima (06:00), cotacoes (06:30)
 ├── middleware/   ← auth.ts, errorHandler.ts, requestLogger.ts
 └── index.ts      ← entrada da aplicação
 ```
@@ -59,24 +59,27 @@ api/src/
 ## Estrutura do Frontend
 
 ```
-web/src/
+web/
 ├── app/
 │   ├── (auth)/login/        ← página de login
-│   ├── dashboard/           ← página inicial com resumo
-│   ├── estoque/             ← gestão de estoque de insumos
-│   ├── operacoes/           ← histórico de operações no campo
-│   ├── nfe/                 ← notas fiscais recebidas e processadas
-│   └── alertas/             ← central de alertas
+│   └── (app)/               ← páginas autenticadas: dashboard, estoque, operacoes,
+│                               nfe, financeiro, custos, talhoes, alertas
 ├── components/              ← componentes reutilizáveis (shadcn/ui + customizados)
+├── context/
+│   └── fazenda-context.tsx  ← fazenda ativa (troca de fazenda no painel)
 ├── lib/
 │   └── supabase.ts          ← cliente Supabase para o frontend
-└── middleware.ts             ← proteção de rotas autenticadas
+└── middleware.ts            ← proteção de rotas autenticadas
 ```
 
-## Banco de dados (Supabase) — MVP
+## Banco de dados (Supabase)
 
-Tabelas ativas no MVP (10 + 1):
-- `fazenda` — dados da propriedade
+> **Fonte viva:** `api/src/database/schema.sql` está DESATUALIZADO — ele não conhece
+> multi-fazenda nem cartões. A verdade está em `supabase/migrations/` (multi-fazenda,
+> cartões) + `api/src/database/migrations/`. Confira lá antes de citar qualquer coisa
+> daqui. Para listar o que existe de verdade: `ls supabase/migrations api/src/database/migrations`
+
+- `fazendas` — propriedades (multi-fazenda; cada tabela abaixo tem `fazenda_id` + RLS de isolamento)
 - `talhoes` — talhões com cultura atual e status
 - `safras` — ciclo de cada cultura por talhão
 - `operacoes` — plantio, pulverização, adubação, colheita (fonte: whatsapp/manual/jd)
@@ -85,8 +88,11 @@ Tabelas ativas no MVP (10 + 1):
 - `movimentacoes_estoque` — entradas e saídas com origem rastreada
 - `notas_fiscais` — NF-e recebidas com status de processamento
 - `itens_nfe` — itens de cada NF-e vinculados ao insumo correspondente
-- `lancamentos_financeiros` — despesas geradas automaticamente via NF-e
+- `lancamentos_financeiros` — despesas via NF-e e via cartão de crédito
 - `alertas` — central de notificações (estoque baixo, operação detectada, erro)
+- `cartoes` — cartões de crédito empresariais (migration `supabase/002_cartoes.sql`)
+- `cotacoes_commodities` — cotações CEPEA de soja, milho e trigo
+- `confirmacoes_pendentes` — confirmações de conversão de unidade no WhatsApp
 
 ## Contexto do negócio
 
