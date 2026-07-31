@@ -21,8 +21,18 @@
 --   SELECT count(*) FROM lancamentos_financeiros;
 --
 -- A conferência automática no fim deste arquivo mostra esse mesmo número de
--- novo, na última linha. Se os dois números não baterem, PARE e avise — teria
--- sumido histórico financeiro, o que este arquivo nunca deveria fazer.
+-- novo, na linha "lancamentos financeiros (seu historico)". Se os dois
+-- números não baterem, PARE e avise — teria sumido histórico financeiro, o
+-- que este arquivo nunca deveria fazer.
+--
+-- SOBRE DESFAZER: esta migração é ADITIVA — cria tabelas novas e só ALARGA
+-- a lista de valores aceitos na coluna "origem" (de três para quatro).
+-- Alargar não quebra nada, mas desfazer sim: o comando que estreita a lista
+-- de volta FALHA se já existir algum lançamento com origem = 'conta', ou
+-- seja, se alguma conta já tiver sido paga pelo módulo. Por isso, na
+-- prática, quase nunca compensa reverter — deixar as tabelas paradas e não
+-- usar o módulo é mais seguro do que tentar desfazer. O roteiro de
+-- reversão, se um dia for mesmo necessário, está no comentário do PR #43.
 -- ============================================================
 
 -- 1. A REGRA que se repete ("Cemig, todo dia 10")
@@ -90,8 +100,8 @@ CREATE INDEX IF NOT EXISTS idx_recorrentes_faz   ON contas_recorrentes (fazenda_
 --    Só de SELECT faria a escrita do site falhar em silêncio.
 ALTER TABLE contas_recorrentes ENABLE ROW LEVEL SECURITY;
 -- CREATE POLICY não tem "IF NOT EXISTS" no Postgres: colar este arquivo uma
--- segunda vez pararia aqui com erro 42710 e desfaria o arquivo inteiro (o
--- Editor SQL do Supabase roda o que foi colado como uma única transação).
+-- segunda vez pararia aqui com erro 42710 e desfaria o arquivo inteiro (e
+-- provavelmente desfaria o que veio antes).
 -- O DROP abaixo garante que colar de novo é seguro.
 DROP POLICY IF EXISTS "contas_recorrentes_tenant" ON contas_recorrentes;
 CREATE POLICY "contas_recorrentes_tenant" ON contas_recorrentes
@@ -175,9 +185,16 @@ SELECT 'protecao por fazenda ligada', count(*)::text, '2'
    AND relname IN ('contas_recorrentes','contas_a_pagar')
    AND relrowsecurity
 UNION ALL
+-- Confere o FORMATO do índice (único e não-parcial), não só o nome: um
+-- CREATE UNIQUE INDEX IF NOT EXISTS casa pelo nome e pula em silêncio se já
+-- existir um índice com esse nome só que PARCIAL (com WHERE) — e um índice
+-- parcial não serve de árbitro para o ON CONFLICT do upsert (erro 42P10,
+-- nada é gravado). to_regclass devolve nulo em vez de erro se não existir.
 SELECT 'trava que impede conta duplicada', count(*)::text, '1'
-  FROM pg_indexes
- WHERE indexname = 'idx_conta_recorrente_competencia'
+  FROM pg_index
+ WHERE indexrelid = to_regclass('public.idx_conta_recorrente_competencia')
+   AND indisunique
+   AND indpred IS NULL
 UNION ALL
 SELECT 'Financeiro passou a aceitar conta paga', count(*)::text, '1'
   FROM pg_constraint
