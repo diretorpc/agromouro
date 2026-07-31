@@ -102,14 +102,23 @@ export function parseXmlNFe(xmlStr: string): NFeData | null {
 }
 
 // ─── Verificar duplicata ──────────────────────────────────────────────────────
-export async function nfeJaProcessada(numero: string, fazenda_id: string): Promise<boolean> {
+// A chave inclui o CNPJ do emitente porque o número da NF-e é sequencial POR
+// FORNECEDOR — não é único no mundo. Sem o CNPJ, a nota 4516 de um fornecedor
+// faz o sistema descartar em silêncio a nota 4516 de outro: some a compra,
+// some o gasto e, na Fase 2, some o boleto.
+export async function nfeJaProcessada(
+  numero: string,
+  emitenteCnpj: string,
+  fazenda_id: string,
+): Promise<boolean> {
   const { data } = await supabase
     .from('notas_fiscais')
     .select('id')
     .eq('numero', numero)
+    .eq('emitente_cnpj', emitenteCnpj)
     .eq('fazenda_id', fazenda_id)
     .limit(1)
-    .single()
+    .maybeSingle()
   return !!data
 }
 

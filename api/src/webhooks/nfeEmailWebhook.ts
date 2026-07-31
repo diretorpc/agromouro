@@ -39,7 +39,7 @@ nfeEmailWebhook.post('/', async (req, res) => {
       return
     }
 
-    if (await nfeJaProcessada(nfe.numero, fazenda.id)) {
+    if (await nfeJaProcessada(nfe.numero, nfe.emitenteCnpj, fazenda.id)) {
       console.log(`[NFeEmail] NF-e ${nfe.numero} já processada para ${fazenda_codigo} — ignorando.`)
       return
     }

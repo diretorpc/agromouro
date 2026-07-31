@@ -33,7 +33,7 @@ nfeWebhook.post('/', async (req, res) => {
       items = [],
     } = payload
 
-    if (await nfeJaProcessada(numero, fazenda.id)) {
+    if (await nfeJaProcessada(numero, emitenteCnpj, fazenda.id)) {
       console.log(`[NFeWebhook] NF-e ${numero} já processada — ignorando.`)
       return
     }
