@@ -43,7 +43,15 @@ export function motivoSemBoleto(formaPagamento: string | null): string | null {
 }
 
 // Mês de uma data 'YYYY-MM-DD' (ou ISO completo) como primeiro dia do mês.
+// Usada tanto para a data de emissão quanto para o vencimento de uma parcela — nos
+// dois casos a entrada precisa começar com 'YYYY-MM-DD'. Sem essa checagem, uma nota
+// sem data de emissão (dataEmissao === '') vira competência "NaN-undefined-01" sem
+// erro nenhum — e a coluna `competencia` no banco é DATE NOT NULL, então o defeito só
+// aparece lá na frente, como erro do Postgres que não diz que a causa foi a nota sem data.
 function mesDe(dataISO: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}/.test(dataISO)) {
+    throw new Error(`Data em formato inválido ao calcular competência da conta: ${JSON.stringify(dataISO)}`)
+  }
   const [ano, mes] = dataISO.slice(0, 10).split('-').map(Number)
   return competenciaDoMes(ano, mes)
 }

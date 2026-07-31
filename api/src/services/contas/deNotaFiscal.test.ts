@@ -114,4 +114,14 @@ describe('contasDaNota', () => {
     const r = contasDaNota({ ...base, dataEmissao: '2026-07-14', duplicatas: [] })
     expect(r[0].competencia).toBe('2026-07-01')
   })
+
+  it('dataEmissao vazia estoura com erro reconhecivel, nao gera competencia invalida', () => {
+    expect(() => contasDaNota({ ...base, dataEmissao: '', duplicatas: [] }))
+      .toThrow(/Data em formato inválido/)
+  })
+
+  it('dataEmissao em formato inesperado tambem estoura', () => {
+    expect(() => contasDaNota({ ...base, dataEmissao: '14/07/2026', duplicatas: [] }))
+      .toThrow(/Data em formato inválido/)
+  })
 })
