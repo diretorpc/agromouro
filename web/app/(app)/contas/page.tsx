@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import {
-  CalendarClock, AlertTriangle, Clock, CircleDollarSign, Ban, CheckCircle2, Plus,
+  CalendarClock, AlertTriangle, Clock, CircleDollarSign, Ban, CheckCircle2, Plus, Undo2,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -141,6 +141,9 @@ export default function ContasPage() {
   const [dispensarDialog, setDispensarDialog] = useState<ContaAPI | null>(null)
   const [dispensarErro, setDispensarErro]     = useState<string | null>(null)
 
+  const [desfazerDialog, setDesfazerDialog] = useState<ContaAPI | null>(null)
+  const [desfazerErro, setDesfazerErro]     = useState<string | null>(null)
+
   const [novaFixaOpen, setNovaFixaOpen]     = useState(false)
   const [novaAvulsaOpen, setNovaAvulsaOpen] = useState(false)
 
@@ -222,6 +225,26 @@ export default function ContasPage() {
     } catch (err) {
       console.error('[Contas] Erro ao marcar como paga:', err)
       setPagarErro('Não foi possível registrar o pagamento. Tente novamente.')
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  // ─── Ações: desfazer pagamento ───────────────────────────────────────────
+  // Sem esta ação, pagamento digitado com valor errado é definitivo para quem
+  // não sabe rodar SQL — e ele já criou um lançamento no Financeiro.
+
+  async function handleDesfazerPagamento() {
+    if (!desfazerDialog) return
+    setSalvando(true)
+    setDesfazerErro(null)
+    try {
+      await api.post(`/contas/${desfazerDialog.id}/desfazer-pagamento`, {})
+      setDesfazerDialog(null)
+      await load()
+    } catch (err) {
+      console.error('[Contas] Erro ao desfazer pagamento:', err)
+      setDesfazerErro('Não foi possível desfazer o pagamento. Tente novamente.')
     } finally {
       setSalvando(false)
     }
@@ -406,6 +429,15 @@ export default function ContasPage() {
                     destructive: true,
                   })
                 }
+                // Só conta paga: é a única que tem pagamento para desfazer.
+                if (conta.status === 'paga') {
+                  acoes.push({
+                    label: 'Desfazer pagamento',
+                    icon: <Undo2 className="h-3.5 w-3.5" aria-hidden="true" />,
+                    onClick: () => { setDesfazerErro(null); setDesfazerDialog(conta) },
+                    destructive: true,
+                  })
+                }
                 return (
                   <TableRow key={conta.id}>
                     <TableCell className="text-sm font-medium max-w-[160px] truncate" title={conta.fornecedor ?? ''}>
@@ -521,6 +553,32 @@ export default function ContasPage() {
               disabled={salvando || !pagarForm.valor_pago || !pagarForm.data_pagamento}
             >
               {salvando ? 'Salvando…' : 'Confirmar pagamento'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog: desfazer pagamento ── */}
+      <Dialog open={!!desfazerDialog} onOpenChange={open => { if (!open) { setDesfazerDialog(null); setDesfazerErro(null) } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Desfazer o pagamento?</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">{desfazerDialog?.descricao}</span>
+            {desfazerDialog?.fornecedor && <> ({desfazerDialog.fornecedor})</>} volta a ficar
+            aberta, e a data e o valor pagos são apagados.
+          </p>
+          <p className="text-sm text-muted-foreground">
+            O gasto que este pagamento lançou no Financeiro também será removido.
+            Use quando o valor ou a data foram digitados errado — depois é só marcar
+            como paga de novo, com os dados certos.
+          </p>
+          {desfazerErro && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{desfazerErro}</p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDesfazerDialog(null)}>Cancelar</Button>
+            <Button variant="destructive" onClick={handleDesfazerPagamento} disabled={salvando}>
+              {salvando ? 'Desfazendo…' : 'Desfazer pagamento'}
             </Button>
           </DialogFooter>
         </DialogContent>
