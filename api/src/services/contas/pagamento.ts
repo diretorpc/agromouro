@@ -14,6 +14,13 @@ export type DadosLancamento = {
   descricao:  string
   valor:      number
   tipo:       'despesa'
+  // A tela Financeiro só carrega lançamento com origem conhecida
+  // (`.in('origem', [...])`), e no SQL o IN nunca casa com nulo. Sem carimbar a
+  // origem aqui, o gasto some do Financeiro e continua contando no Dashboard —
+  // duas telas, dois totais para o mesmo mês.
+  // Origem própria, não 'manual': assim o Financeiro não deixa editar um valor
+  // que na verdade mora na conta a pagar.
+  origem:     'conta'
   categoria:  string | null
   fazenda_id: string
 }
@@ -28,6 +35,7 @@ export function montarLancamento(
     descricao:  conta.fornecedor ? `${conta.fornecedor} — ${conta.descricao}` : conta.descricao,
     valor:      valorPago,
     tipo:       'despesa',
+    origem:     'conta',
     categoria:  conta.categoria,
     fazenda_id: conta.fazenda_id,
   }

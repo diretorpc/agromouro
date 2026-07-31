@@ -78,3 +78,41 @@ CREATE POLICY "contas_a_pagar_tenant" ON contas_a_pagar
   FOR ALL
   USING      (auth.uid() IS NOT NULL AND fazenda_id = get_fazenda_ativa_id())
   WITH CHECK (auth.uid() IS NOT NULL AND fazenda_id = get_fazenda_ativa_id());
+
+-- 5. Nova origem 'conta' para os lançamentos criados pelo módulo de contas a pagar.
+--    Sem isso o lançamento nasce com origem nula e a tela Financeiro, que filtra
+--    por origem, nunca o mostra — enquanto o Dashboard, que não filtra, o conta.
+--    O nome da constraint foi gerado pelo Postgres, então é descoberto, não chutado.
+DO $$
+DECLARE nome_constraint text;
+BEGIN
+  SELECT conname INTO nome_constraint
+    FROM pg_constraint
+   WHERE conrelid = 'lancamentos_financeiros'::regclass
+     AND contype  = 'c'
+     AND pg_get_constraintdef(oid) ILIKE '%origem%';
+
+  IF nome_constraint IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE lancamentos_financeiros DROP CONSTRAINT %I', nome_constraint);
+  END IF;
+END $$;
+
+-- origem nula continua válida: as NF-e antigas nunca gravaram esse campo.
+ALTER TABLE lancamentos_financeiros
+  ADD CONSTRAINT lancamentos_financeiros_origem_check
+  CHECK (origem IS NULL OR origem IN ('nfe', 'cartao', 'manual', 'conta'));
+
+-- ── Conferência (Passo 3 do plano) ───────────────────────────────────────────
+-- As três primeiras consultas — (a) tabelas, (b) políticas FOR ALL, (c) índice
+-- único — estão em docs/superpowers/plans/2026-07-29-contas-a-pagar-fase1.md.
+-- Esta é a quarta: confirma que a origem 'conta' passou a ser aceita.
+--
+-- (d) a nova origem está na restrição
+-- SELECT conname, pg_get_constraintdef(oid) AS definicao
+--   FROM pg_constraint
+--  WHERE conrelid = 'lancamentos_financeiros'::regclass
+--    AND conname  = 'lancamentos_financeiros_origem_check';
+--
+-- Esperado: 1 linha, e a coluna `definicao` precisa conter 'conta'.
+-- Se não contiver, o banco vai RECUSAR o lançamento de toda conta paga à mão —
+-- o pagamento falha e o agricultor vê "Não foi possível registrar o pagamento".

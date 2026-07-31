@@ -26,6 +26,13 @@ describe('montarLancamento', () => {
     expect(montarLancamento(conta, '2026-08-11', 100).tipo).toBe('despesa')
   })
 
+  // A tela Financeiro carrega os lancamentos filtrando por origem
+  // (.in('origem', [...])) e o IN do SQL nunca casa com nulo. Origem vazia aqui
+  // = gasto invisivel no Financeiro e presente no Dashboard, no mesmo mes.
+  it('carimba origem "conta" — e por esse campo que o Financeiro filtra', () => {
+    expect(montarLancamento(conta, '2026-08-11', 100).origem).toBe('conta')
+  })
+
   it('descricao junta fornecedor e descricao', () => {
     expect(montarLancamento(conta, '2026-08-11', 100).descricao).toBe('Cemig — Energia')
   })

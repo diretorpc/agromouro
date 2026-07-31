@@ -42,7 +42,8 @@ type ItemFinanceiro = {
   emitente_nome: string
   data_emissao: string
   is_manual: boolean
-  origem: 'nfe' | 'cartao' | 'manual' | null
+  // 'conta' = gasto que veio de uma conta a pagar marcada como paga.
+  origem: 'nfe' | 'cartao' | 'manual' | 'conta' | null
   cartao_apelido: string | null
 }
 
@@ -232,7 +233,7 @@ export default function FinanceiroPage() {
   const [loading, setLoading] = useState(true)
   const [filtroCentro, setFiltroCentro] = useState('todos')
   const [filtroMes, setFiltroMes] = useState('todos')
-  const [filtroOrigem, setFiltroOrigem] = useState<'todos' | 'nfe' | 'cartao' | 'manual'>('todos')
+  const [filtroOrigem, setFiltroOrigem] = useState<'todos' | 'nfe' | 'cartao' | 'manual' | 'conta'>('todos')
   const [sortData, setSortData] = useState<'desc' | 'asc'>('desc')
 
   const [addDialog, setAddDialog] = useState(false)
@@ -252,7 +253,10 @@ export default function FinanceiroPage() {
       supabase
         .from('lancamentos_financeiros')
         .select('id, data, descricao, valor, categoria, origem, cartao_id, cartoes(apelido)')
-        .in('origem', ['cartao', 'manual'])
+        // 'conta' = pagamento de conta a pagar. O IN do SQL nunca casa com nulo,
+        // então toda origem nova PRECISA entrar aqui — senão o gasto some desta
+        // tela e continua contando no Dashboard, que lê a tabela inteira.
+        .in('origem', ['cartao', 'manual', 'conta'])
         .order('data', { ascending: false }),
     ])
 
@@ -294,7 +298,7 @@ export default function FinanceiroPage() {
       emitente_nome: '',
       data_emissao: row.data ?? '',
       is_manual: row.origem === 'manual',
-      origem: row.origem as 'cartao' | 'manual',
+      origem: row.origem as 'cartao' | 'manual' | 'conta',
       cartao_apelido: row.cartoes?.apelido ?? null,
     }))
 
@@ -308,10 +312,10 @@ export default function FinanceiroPage() {
     const params = new URLSearchParams(window.location.search)
     const mes = params.get('mes')
     const centro = params.get('centro')
-    const origem = params.get('origem') as 'todos' | 'nfe' | 'cartao' | 'manual' | null
+    const origem = params.get('origem') as 'todos' | 'nfe' | 'cartao' | 'manual' | 'conta' | null
     if (mes !== null && /^\d{4}-\d{2}$/.test(mes)) setFiltroMes(mes)
     if (centro !== null) setFiltroCentro(centro)
-    if (origem && ['todos', 'nfe', 'cartao', 'manual'].includes(origem)) setFiltroOrigem(origem)
+    if (origem && ['todos', 'nfe', 'cartao', 'manual', 'conta'].includes(origem)) setFiltroOrigem(origem)
   }, [])
 
   async function handleAdd() {
@@ -619,7 +623,7 @@ export default function FinanceiroPage() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center rounded-md border border-input overflow-hidden text-xs">
-              {(['todos', 'nfe', 'cartao', 'manual'] as const).map((o, i) => (
+              {(['todos', 'nfe', 'cartao', 'manual', 'conta'] as const).map((o, i) => (
                 <button
                   key={o}
                   onClick={() => { setFiltroOrigem(o); setUrlParam('origem', o) }}
@@ -631,7 +635,10 @@ export default function FinanceiroPage() {
                       : 'bg-background text-muted-foreground hover:text-foreground',
                   ].join(' ')}
                 >
-                  {{ todos: 'Todos', nfe: 'NF-e', cartao: 'Cartão', manual: 'Manual' }[o]}
+                  {/* Rótulo curto de propósito: são 5 botões numa fila só, e
+                      "Conta paga" estouraria a largura do cartão no celular.
+                      O crachá da coluna Origem traz o nome completo. */}
+                  {{ todos: 'Todos', nfe: 'NF-e', cartao: 'Cartão', manual: 'Manual', conta: 'Conta' }[o]}
                 </button>
               ))}
             </div>
@@ -722,6 +729,10 @@ export default function FinanceiroPage() {
                     {item.origem === 'cartao' ? (
                       <Badge variant="secondary" className="text-xs">
                         {item.cartao_apelido ?? 'Cartão'}
+                      </Badge>
+                    ) : item.origem === 'conta' ? (
+                      <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
+                        Conta paga
                       </Badge>
                     ) : item.origem === 'manual' ? (
                       <span className="text-xs text-muted-foreground italic">Manual</span>
@@ -824,9 +835,19 @@ export default function FinanceiroPage() {
           <DialogHeader><DialogTitle>Excluir lançamento?</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">
             <span className="font-medium text-foreground">{deleteItem?.descricao}</span> será removido permanentemente.
-            {!deleteItem?.is_manual && (
+            {/* Só item de nota fiscal mesmo. A condição antiga era só
+                `!is_manual`, e caía também em lançamento de cartão — e agora
+                cairia em conta paga — avisando de uma NF-e que não existe. */}
+            {deleteItem?.source_table === 'itens_nfe' && !deleteItem?.is_manual && (
               <span className="block mt-1 text-yellow-600">
                 Este item veio de uma NF-e. A nota em si não será excluída.
+              </span>
+            )}
+            {deleteItem?.origem === 'conta' && (
+              <span className="block mt-1 text-yellow-600">
+                Este gasto veio de uma conta marcada como paga em Contas a Pagar.
+                A conta continuará aparecendo como paga por lá — para desfazer de
+                verdade, use &quot;Desfazer pagamento&quot; na tela de contas.
               </span>
             )}
           </p>
