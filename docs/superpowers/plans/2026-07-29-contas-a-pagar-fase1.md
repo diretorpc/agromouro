@@ -507,9 +507,18 @@ CREATE TABLE IF NOT EXISTS contas_a_pagar (
 
 -- 3. Idempotência da tarefa diária: uma ocorrência por regra por competência.
 --    É ESTE índice que impede a tarefa de duplicar conta ao rodar todo dia.
+--
+--    SEM cláusula WHERE, de propósito. Um índice único PARCIAL não serve de
+--    árbitro para o ON CONFLICT que o upsert do supabase-js gera: o banco
+--    recusa com erro 42P10 e NADA é gravado, em silêncio. Este projeto já
+--    passou por isso nas cotações — ver o cabeçalho de
+--    api/src/database/migrations/011_cotacoes_commodities.sql.
+--
+--    Tirar o WHERE não custa nada: o Postgres já trata cada NULL como distinto
+--    de todos os outros num índice único, então conta avulsa (recorrente_id
+--    nulo) continua sem colidir com outra conta avulsa.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_conta_recorrente_competencia
-  ON contas_a_pagar (recorrente_id, competencia)
-  WHERE recorrente_id IS NOT NULL;
+  ON contas_a_pagar (recorrente_id, competencia);
 
 CREATE INDEX IF NOT EXISTS idx_contas_faz_venc   ON contas_a_pagar (fazenda_id, vencimento);
 CREATE INDEX IF NOT EXISTS idx_contas_faz_status ON contas_a_pagar (fazenda_id, status);
@@ -693,7 +702,7 @@ export async function sincronizarOcorrencias(fazendaId: string, hojeISO: string)
 
     // Valor da estimativa: o último valor realmente pago dessa regra.
     // Se nunca foi paga, cai no valor de referência do cadastro.
-    const { data: ultimaPaga } = await supabase
+    const { data: ultimaPaga, error: erroUltimaPaga } = await supabase
       .from('contas_a_pagar')
       .select('valor_pago')
       .eq('recorrente_id', regra.id)
@@ -701,6 +710,11 @@ export async function sincronizarOcorrencias(fazendaId: string, hojeISO: string)
       .order('competencia', { ascending: false })
       .limit(1)
       .maybeSingle()
+
+    // Erro de banco aqui NÃO pode virar "nunca foi paga" — isso trocaria o
+    // valor real por uma estimativa velha sem ninguém perceber. Banco com
+    // problema é falha de verdade: estoura e o job registra.
+    if (erroUltimaPaga) throw erroUltimaPaga
 
     const estimativa = estimativaDaOcorrencia(
       ultimaPaga?.valor_pago ?? null,
@@ -902,7 +916,10 @@ export function resumoVazio(r: Resumo): boolean {
 }
 
 function reais(v: number | null): string {
-  return v == null ? 'valor a definir' : `R$ ${v.toFixed(2).replace('.', ',')}`
+  if (v == null) return 'valor a definir'
+  // toLocaleString('pt-BR') para o separador de milhar: R$ 1.234,56.
+  // Um simples replace do ponto por vírgula escreveria "R$ 1234,56".
+  return `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 function ddmm(iso: string): string {
@@ -922,7 +939,8 @@ export function textoResumo(r: Resumo, hojeISO: string): string {
     for (const c of r.vencendo) linhas.push(`• ${c.descricao} — dia ${ddmm(c.vencimento)}, ${reais(c.valor)}`)
   }
   if (r.naoChegaram.length) {
-    linhas.push(`\n⏳ ${r.naoChegaram.length} ainda não chegou:`)
+    const n = r.naoChegaram.length
+    linhas.push(`\n⏳ ${n} ainda ${n > 1 ? 'não chegaram' : 'não chegou'}:`)
     for (const c of r.naoChegaram) linhas.push(`• ${c.descricao} — esperada dia ${ddmm(c.vencimento)}`)
   }
   return linhas.join('\n')
@@ -984,11 +1002,16 @@ export async function rodarContasDoDia(): Promise<void> {
       const criadas = await sincronizarOcorrencias(fazenda.id, hoje)
       if (criadas > 0) console.log(`[Contas] ${fazenda.nome}: ${criadas} ocorrência(s) criada(s).`)
 
-      const { data: contas } = await supabase
+      const { data: contas, error: erroContas } = await supabase
         .from('contas_a_pagar')
         .select('descricao, fornecedor, vencimento, valor, status, contas_recorrentes(avisar_dias_antes)')
         .eq('fazenda_id', fazenda.id)
         .in('status', ['aguardando', 'aberta'])
+
+      // Sem esta checagem, banco com problema devolve lista vazia e o job
+      // conclui "nada a avisar hoje" — falha de banco vira silêncio idêntico
+      // ao dia em que realmente não há nada. Justo o contrário do que queremos.
+      if (erroContas) throw erroContas
 
       const paraResumo: ContaResumo[] = (contas ?? []).map((c: any) => ({
         descricao:         c.descricao,
@@ -1008,13 +1031,14 @@ export async function rodarContasDoDia(): Promise<void> {
       const titulo = `Contas — ${hoje}`
 
       // Um alerta por fazenda por dia. Se a tarefa rodar de novo, não duplica.
-      const { data: existente } = await supabase
+      const { data: existente, error: erroExistente } = await supabase
         .from('alertas')
         .select('id')
         .eq('fazenda_id', fazenda.id)
         .eq('titulo', titulo)
         .maybeSingle()
 
+      if (erroExistente) throw erroExistente
       if (existente) { console.log(`[Contas] ${fazenda.nome}: aviso de hoje já existe.`); continue }
 
       const mensagem = textoResumo(resumo, hoje)
@@ -1037,15 +1061,21 @@ export async function rodarContasDoDia(): Promise<void> {
       let enviou = false
       for (const phone of telefones) {
         try {
-          await enviarMensagem(phone, mensagem, fazenda.codigo)
-          enviou = true
+          // enviarMensagem devolve false quando a Z-API RECUSA (ex.: celular
+          // desconectado da instância). Sem ler esse retorno, o painel diria
+          // "avisei no WhatsApp" para mensagem que nunca chegou.
+          const ok = await enviarMensagem(phone, mensagem, fazenda.codigo)
+          if (ok) enviou = true
+          else console.error(`[Contas] Z-API recusou o envio para ${phone}.`)
         } catch (err) {
           console.error(`[Contas] Falha ao enviar para ${phone}:`, err instanceof Error ? err.message : err)
         }
       }
 
       if (enviou) {
-        await supabase.from('alertas').update({ enviado_whatsapp: true }).eq('id', alerta.id)
+        const { error: erroFlag } = await supabase
+          .from('alertas').update({ enviado_whatsapp: true }).eq('id', alerta.id)
+        if (erroFlag) console.error(`[Contas] Não consegui marcar o alerta como enviado:`, erroFlag.message)
       }
     } catch (err) {
       console.error(`[Contas] Erro em ${fazenda.nome}:`, err instanceof Error ? err.message : err)
@@ -1261,7 +1291,9 @@ export const contaRoutes = Router()
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/
 
-const recorrenteSchema = z.object({
+// Base SEM .refine(): `.refine()` devolve um ZodEffects, que não tem `.partial()`.
+// O PATCH precisa do `.partial()`, então a regra cruzada é aplicada à parte.
+const recorrenteBase = z.object({
   descricao:         z.string().min(1),
   fornecedor:        z.string().min(1),
   categoria:         z.string().min(1),
@@ -1270,10 +1302,26 @@ const recorrenteSchema = z.object({
   mes_primeira:      z.number().int().min(1).max(12).nullable().optional(),
   valor_referencia:  z.number().nonnegative().nullable().optional(),
   avisar_dias_antes: z.number().int().min(0).max(30).default(3),
-}).refine(r => r.periodicidade === 'mensal' || r.mes_primeira != null, {
-  message: 'Conta que não é mensal precisa do mês da primeira ocorrência',
-  path: ['mes_primeira'],
+  // Sem este campo aqui, o Zod DESCARTA `ativa` do corpo em silêncio (modo
+  // "strip" é o padrão) e o banco aplica DEFAULT true. A caixinha "Ativa" do
+  // formulário viraria enfeite: desmarcar não teria efeito nenhum, sem erro.
+  ativa:             z.boolean().optional(),
 })
+
+const MSG_MES_PRIMEIRA = 'Conta que não é mensal precisa do mês da primeira ocorrência'
+
+const recorrenteSchema = recorrenteBase.refine(
+  r => r.periodicidade === 'mensal' || r.mes_primeira != null,
+  { message: MSG_MES_PRIMEIRA, path: ['mes_primeira'] },
+)
+
+// Regra cruzada para o PATCH: vale sobre o resultado da fusão do que veio no
+// corpo com o que já está gravado. Sem isso, trocar só a periodicidade para
+// 'anual' bate no CHECK do banco e o usuário recebe "Erro interno do servidor"
+// em vez de saber que faltou informar o mês.
+function mesPrimeiraOk(periodicidade: string, mesPrimeira: number | null | undefined): boolean {
+  return periodicidade === 'mensal' || mesPrimeira != null
+}
 
 const avulsaSchema = z.object({
   descricao:  z.string().min(1),
@@ -1369,7 +1417,25 @@ contaRoutes.patch('/recorrentes/:id', async (req, res, next) => {
     const fazendaId = fazendaDe(req)
     if (!fazendaId) return res.status(400).json({ error: 'Fazenda não identificada' })
 
-    const body = recorrenteSchema.partial().parse(req.body)
+    const body = recorrenteBase.partial().parse(req.body)
+
+    // Lê o estado atual para validar a regra cruzada sobre o resultado final.
+    const { data: atual, error: erroAtual } = await supabase
+      .from('contas_recorrentes')
+      .select('periodicidade, mes_primeira')
+      .eq('id', req.params.id)
+      .eq('fazenda_id', fazendaId)
+      .maybeSingle()
+
+    if (erroAtual) throw erroAtual
+    if (!atual) return res.status(404).json({ error: 'Conta fixa não encontrada' })
+
+    const periodicidadeFinal = body.periodicidade ?? atual.periodicidade
+    const mesPrimeiraFinal   = body.mes_primeira !== undefined ? body.mes_primeira : atual.mes_primeira
+
+    if (!mesPrimeiraOk(periodicidadeFinal, mesPrimeiraFinal)) {
+      return res.status(400).json({ error: MSG_MES_PRIMEIRA })
+    }
 
     const { data, error } = await supabase
       .from('contas_recorrentes')
