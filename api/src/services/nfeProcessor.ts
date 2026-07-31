@@ -2,6 +2,8 @@ import Anthropic from '@anthropic-ai/sdk'
 import { XMLParser } from 'fast-xml-parser'
 import { supabase } from './supabase'
 import { enviarMensagem } from './zapi'
+import { gravarContasDaNota } from './contas/gravarDeNota'
+import { motivoSemBoleto, type ContaDeNota } from './contas/deNotaFiscal'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -227,7 +229,7 @@ async function vincularOuCriarInsumo(
 
 // ─── Processador principal ────────────────────────────────────────────────────
 export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = 'webhook', fazenda_id: string): Promise<void> {
-  const { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items } = nfe
+  const { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items, duplicatas, formaPagamento } = nfe
 
   const itensSeguros  = items.slice(0, 200)
   const dataFormatada = dataEmissao?.split('T')[0] || new Date().toISOString().split('T')[0]
@@ -247,6 +249,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
         data_emissao:  dataEmissao,
         valor_total:   valorTotal,
         status:        'processando',
+        forma_pagamento: formaPagamento,
         fazenda_id,
       })
       .select('id')
@@ -343,6 +346,34 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
       nota_fiscal_id: nfeId,
       fazenda_id,
     })
+
+    // 4. Boletos da nota (Fase 2) — PARAFUSADO POR FORA, NUNCA PRÉ-REQUISITO.
+    //
+    // Este try/catch é a rede de proteção inteira da Fase 2. O processamento de
+    // NF-e alimenta estoque, financeiro e WhatsApp sem ninguém tocar; se a criação
+    // de boletos estourar (arquivo estranho, banco fora do ar, parcela em formato
+    // novo), a nota TEM que continuar entrando. Um boleto perdido custa um aviso;
+    // uma nota perdida custa estoque e financeiro errados por semanas.
+    let contasCriadas: ContaDeNota[] = []
+    let erroContas = false
+    try {
+      // nfeId já foi atribuído logo após o insert, no início da função. A guarda
+      // é só para o compilador: `notaFiscal.id` vem de um cliente Supabase sem
+      // tipos de banco, então TypeScript enxerga `nfeId` como `string | null`
+      // mesmo depois da atribuição — e gravarContasDaNota exige `string`.
+      if (!nfeId) throw new Error('id da nota indisponível para gravar boletos')
+      contasCriadas = await gravarContasDaNota(
+        { numero, emitenteNome, dataEmissao, valorTotal, formaPagamento, duplicatas },
+        nfeId,
+        fazenda_id,
+      )
+    } catch (err) {
+      erroContas = true
+      console.error(
+        `[NFeProcessor] NF-e ${numero}: falha ao criar boletos (a nota foi processada assim mesmo):`,
+        err instanceof Error ? err.message : err,
+      )
+    }
 
     await supabase.from('notas_fiscais').update({ status: 'processada' }).eq('id', nfeId)
 
