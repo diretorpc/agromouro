@@ -1,7 +1,28 @@
 -- ============================================================
 -- AgroMouro — Contas a Pagar, Fase 1
--- Executar no Supabase SQL Editor. Apenas uma vez.
+-- Executar no Supabase SQL Editor: colar o arquivo INTEIRO e clicar em Run.
 -- Spec: docs/superpowers/specs/2026-07-29-contas-a-pagar-design.md
+--
+-- O QUE ESTE ARQUIVO TOCA:
+--   • Seções 1 a 4 só CRIAM coisa nova (duas tabelas, quatro índices,
+--     permissões). Não encostam em nenhum dado que já existe no banco.
+--   • A Seção 5 ALTERA a tabela lancamentos_financeiros — a que guarda o
+--     HISTÓRICO FINANCEIRO real da fazenda, com dados de verdade. Ela troca
+--     só a restrição de quais valores a coluna "origem" aceita. Nenhuma
+--     linha existente é apagada, criada ou modificada por essa seção.
+--
+-- É SEGURO colar este arquivo inteiro quantas vezes for preciso — na segunda,
+-- terceira vez, etc. nada quebra e nada se perde. Cada comando foi desenhado
+-- para isso (ver comentários de cada seção).
+--
+-- ANTES DE RODAR, ANOTE este número à parte (não precisa fazer nada com ele
+-- agora — é só para conferir depois):
+--
+--   SELECT count(*) FROM lancamentos_financeiros;
+--
+-- A conferência automática no fim deste arquivo mostra esse mesmo número de
+-- novo, na última linha. Se os dois números não baterem, PARE e avise — teria
+-- sumido histórico financeiro, o que este arquivo nunca deveria fazer.
 -- ============================================================
 
 -- 1. A REGRA que se repete ("Cemig, todo dia 10")
@@ -89,41 +110,80 @@ CREATE POLICY "contas_a_pagar_tenant" ON contas_a_pagar
 -- 5. Nova origem 'conta' para os lançamentos criados pelo módulo de contas a pagar.
 --    Sem isso o lançamento nasce com origem nula e a tela Financeiro, que filtra
 --    por origem, nunca o mostra — enquanto o Dashboard, que não filtra, o conta.
---    O nome da constraint foi gerado pelo Postgres, então é descoberto, não chutado.
---    É um LOOP, não um SELECT ... INTO: se um dia existir mais de uma constraint
---    de origem (patch manual, backup restaurado), SELECT ... INTO pegaria uma
---    e descartaria as outras em silêncio — a sobrevivente continuaria recusando
---    o pagamento, e o erro só apareceria na hora de pagar uma conta, não aqui.
---    O loop derruba todas as que encontrar.
+--
+--    O nome da restrição atual é DESCOBERTO em pg_constraint, não chutado no
+--    código: o Postgres gera esse nome sozinho quando a restrição é criada
+--    sem CONSTRAINT nomeado, e ele pode variar entre bancos.
+--
+--    Derrubar a restrição antiga e criar a nova são UM SÓ comando ALTER TABLE
+--    (DROP e ADD na mesma instrução, separados por vírgula) — de propósito.
+--    Um ALTER TABLE inteiro é sempre atômico no Postgres: ou passa tudo, ou
+--    não passa nada, independente de como o SQL Editor do Supabase agrupa os
+--    comandos colados. Antes, derrubar e recriar eram DOIS comandos separados
+--    (um bloco DO que só derrubava, e um ALTER TABLE que só recriava depois).
+--    Nesse desenho antigo, colar SÓ o bloco DO — por engano, ou copiando um
+--    trecho isolado — derrubava a trava, devolvia "Success" e não repunha
+--    nada: a tabela financeira ficava PERMANENTEMENTE sem restrição, em
+--    silêncio, e ninguém era avisado. Com o comando único esse recorte
+--    perigoso deixou de existir: o bloco não tem mais um "meio" que funcione
+--    sozinho, então colar só um pedaço dele continua seguro.
+--
+--    origem IS NULL continua aceito de propósito: as NF-e antigas nunca
+--    preencheram esse campo, e a restrição não pode barrar o histórico delas.
+--
+--    string_agg junta TODAS as restrições de origem encontradas (não só a
+--    primeira) numa lista só de "DROP CONSTRAINT", para o caso de existir
+--    mais de uma (patch manual, backup restaurado) — nenhuma fica pra trás.
 DO $$
-DECLARE nome_constraint text;
+DECLARE derrubar text;
 BEGIN
-  FOR nome_constraint IN
-    SELECT conname FROM pg_constraint
-     WHERE conrelid = 'lancamentos_financeiros'::regclass
-       AND contype  = 'c'
-       AND pg_get_constraintdef(oid) ILIKE '%origem%'
-  LOOP
-    EXECUTE format('ALTER TABLE lancamentos_financeiros DROP CONSTRAINT %I', nome_constraint);
-  END LOOP;
+  SELECT string_agg(format('DROP CONSTRAINT %I', conname), ', ')
+    INTO derrubar
+    FROM pg_constraint
+   WHERE conrelid = 'lancamentos_financeiros'::regclass
+     AND contype  = 'c'
+     AND pg_get_constraintdef(oid) ILIKE '%origem%';
+
+  EXECUTE 'ALTER TABLE lancamentos_financeiros '
+       || COALESCE(derrubar || ', ', '')
+       || 'ADD CONSTRAINT lancamentos_financeiros_origem_check '
+       || 'CHECK (origem IS NULL OR origem IN (''nfe'',''cartao'',''manual'',''conta''))';
 END $$;
 
--- origem nula continua válida: as NF-e antigas nunca gravaram esse campo.
-ALTER TABLE lancamentos_financeiros
-  ADD CONSTRAINT lancamentos_financeiros_origem_check
-  CHECK (origem IS NULL OR origem IN ('nfe', 'cartao', 'manual', 'conta'));
-
--- ── Conferência (Passo 3 do plano) ───────────────────────────────────────────
--- As três primeiras consultas — (a) tabelas, (b) políticas FOR ALL, (c) índice
--- único — estão em docs/superpowers/plans/2026-07-29-contas-a-pagar-fase1.md.
--- Esta é a quarta: confirma que a origem 'conta' passou a ser aceita.
+-- ── Conferência automática ───────────────────────────────────────────────────
+-- Roda junto com o arquivo, sem precisar copiar nada à parte. As seis linhas
+-- abaixo precisam bater com a coluna "esperado". Uma linha que não bate
+-- significa PARAR, não seguir.
 --
--- (d) a nova origem está na restrição
--- SELECT conname, pg_get_constraintdef(oid) AS definicao
---   FROM pg_constraint
---  WHERE conrelid = 'lancamentos_financeiros'::regclass
---    AND conname  = 'lancamentos_financeiros_origem_check';
---
--- Esperado: 1 linha, e a coluna `definicao` precisa conter 'conta'.
--- Se não contiver, o banco vai RECUSAR o lançamento de toda conta paga à mão —
--- o pagamento falha e o agricultor vê "Não foi possível registrar o pagamento".
+-- A MAIS CRÍTICA é a quinta ("Financeiro passou a aceitar conta paga"): se ela
+-- vier 0, TODO pagamento de conta vai falhar — e isso só se descobre na hora
+-- de pagar uma conta de verdade, quando o agricultor vir a mensagem de erro.
+SELECT 'tabelas novas criadas' AS o_que, count(*)::text AS resultado, '2' AS esperado
+  FROM information_schema.tables
+ WHERE table_schema = 'public'
+   AND table_name IN ('contas_recorrentes','contas_a_pagar')
+UNION ALL
+SELECT 'permissao de ESCRITA (nao so leitura)', count(*)::text, '2'
+  FROM pg_policies
+ WHERE schemaname = 'public'
+   AND tablename IN ('contas_recorrentes','contas_a_pagar')
+   AND cmd = 'ALL'
+UNION ALL
+SELECT 'protecao por fazenda ligada', count(*)::text, '2'
+  FROM pg_class
+ WHERE relnamespace = 'public'::regnamespace
+   AND relname IN ('contas_recorrentes','contas_a_pagar')
+   AND relrowsecurity
+UNION ALL
+SELECT 'trava que impede conta duplicada', count(*)::text, '1'
+  FROM pg_indexes
+ WHERE indexname = 'idx_conta_recorrente_competencia'
+UNION ALL
+SELECT 'Financeiro passou a aceitar conta paga', count(*)::text, '1'
+  FROM pg_constraint
+ WHERE conrelid = 'lancamentos_financeiros'::regclass
+   AND conname  = 'lancamentos_financeiros_origem_check'
+   AND pg_get_constraintdef(oid) LIKE '%conta%'
+UNION ALL
+SELECT 'lancamentos financeiros (seu historico)', count(*)::text, 'o MESMO numero de antes'
+  FROM lancamentos_financeiros;
