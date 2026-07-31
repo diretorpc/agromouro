@@ -40,6 +40,14 @@ export interface NFeItem {
   ncm:          string   // ← NOVO: código NCM (8 dígitos), ex: "38089329"
 }
 
+// Uma parcela do quadro de cobrança da NF-e (bloco <cobr><dup>).
+// vencimento é null quando o fornecedor não preencheu — caso ERCAL, medido em 31/07/2026.
+export interface NFeDuplicata {
+  numero:     string
+  vencimento: string | null   // 'YYYY-MM-DD'
+  valor:      number | null
+}
+
 export interface NFeData {
   numero:       string
   dataEmissao:  string
@@ -47,6 +55,8 @@ export interface NFeData {
   emitenteCnpj: string
   valorTotal:   number
   items:        NFeItem[]
+  duplicatas:     NFeDuplicata[]
+  formaPagamento: string | null   // tPag: '15' boleto, '03' cartão crédito, '05' crédito loja...
 }
 
 // ─── Parser de XML NF-e SEFAZ ────────────────────────────────────────────────
@@ -92,9 +102,35 @@ export function parseXmlNFe(xmlStr: string): NFeData | null {
       }
     }).filter((i: NFeItem) => i.description)
 
+    // ─── Quadro de cobrança (os boletos) ─────────────────────────────────────
+    // ARMADILHA: o leitor devolve OBJETO quando existe uma única <dup> e LISTA
+    // quando existem várias — exatamente como já acontece com <det> acima.
+    // As três amostras reais de 31/07/2026 têm uma parcela só, então o caminho
+    // de várias parcelas não tem prova em produção. Tratar os dois casos.
+    const dupRaw = inf.cobr?.dup ?? []
+    const dups   = Array.isArray(dupRaw) ? dupRaw : [dupRaw]
+
+    const duplicatas: NFeDuplicata[] = dups
+      .filter((d: any) => d && typeof d === 'object')
+      .map((d: any, i: number) => ({
+        numero:     String(d.nDup ?? i + 1),
+        // slice(0,10) porque há fornecedor que manda data com horário junto.
+        vencimento: d.dVenc ? String(d.dVenc).slice(0, 10) : null,
+        valor:      d.vDup != null ? parseFloat(String(d.vDup)) : null,
+      }))
+
+    // ─── Forma de pagamento ──────────────────────────────────────────────────
+    // Só tPag. indPag ("à vista"/"a prazo") NÃO é confiável: nas amostras reais
+    // a ERCAL marcou "à vista" e boleto ao mesmo tempo, e a Triângulo Diesel nem
+    // preencheu. padStart porque o leitor transforma "05" no número 5.
+    const detPagRaw = inf.pag?.detPag ?? []
+    const detPags   = Array.isArray(detPagRaw) ? detPagRaw : [detPagRaw]
+    const primeiroPag = detPags.find((p: any) => p && typeof p === 'object' && p.tPag != null)
+    const formaPagamento = primeiroPag ? String(primeiroPag.tPag).padStart(2, '0') : null
+
     if (!numero || !emitenteNome || items.length === 0) return null
 
-    return { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items }
+    return { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items, duplicatas, formaPagamento }
   } catch (err) {
     console.error('[NFeProcessor] Erro ao parsear XML:', err instanceof Error ? err.message : err)
     return null

@@ -60,6 +60,10 @@ nfeWebhook.post('/', async (req, res) => {
         unitTrib:     item.unitTrib     ?? item.unit,
         ncm:          String(item.ncm ?? '').replace(/\D/g, ''),
       })),
+      // Payload do NFE.io não traz quadro de cobrança nem forma de pagamento
+      // (é JSON próprio do serviço, não o XML da SEFAZ que parseXmlNFe lê).
+      duplicatas:     [],
+      formaPagamento: null,
     }
 
     await processarNFe(nfe, 'webhook', fazenda.id)
