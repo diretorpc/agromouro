@@ -1,5 +1,92 @@
-import { describe, it, expect } from 'vitest'
-import { parseXmlNFe } from './nfeProcessor'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+// ─── Simulação da borda com Supabase, Z-API e Claude Haiku ──────────────────
+// Usada só pelo describe "processarNFe — isolamento do bloco de boletos"
+// no fim deste arquivo. As suítes de `parseXmlNFe` acima não tocam nenhuma
+// destas (são funções puras), então a simulação não muda o comportamento delas.
+//
+// vi.hoisted: vi.mock() é hoisted para o topo do arquivo pelo Vitest, então a
+// fábrica do mock não pode referenciar variável comum declarada abaixo dela —
+// só o que vier de vi.hoisted (executado antes de qualquer vi.mock).
+const { chamadas, estadoBanco } = vi.hoisted(() => ({
+  chamadas: [] as { table: string; method: string; payload?: any }[],
+  // Controla se o upsert de 'contas_a_pagar' devolve erro — ligado/desligado
+  // por teste em vi.hoisted porque a fábrica do mock precisa enxergar o valor.
+  estadoBanco: { falharUpsertContas: false },
+}))
+
+vi.mock('./supabase', () => {
+  function builder(table: string): any {
+    // Estado por CADEIA (por chamada de .from()) — não vaza entre chamadas.
+    let ultimoInsert: any = null
+    let resultadoPendente: { data: any; error: any } = { data: null, error: null }
+
+    const obj: any = {
+      insert: vi.fn((payload: any) => {
+        ultimoInsert = payload
+        chamadas.push({ table, method: 'insert', payload })
+        return obj
+      }),
+      update: vi.fn((payload: any) => {
+        chamadas.push({ table, method: 'update', payload })
+        return obj
+      }),
+      upsert: vi.fn((payload: any) => {
+        chamadas.push({ table, method: 'upsert', payload })
+        if (table === 'contas_a_pagar' && estadoBanco.falharUpsertContas) {
+          resultadoPendente = {
+            data:  null,
+            error: { message: 'column "numero_parcela" of relation "contas_a_pagar" does not exist', code: '42703' },
+          }
+        }
+        return obj
+      }),
+      select:      vi.fn(() => obj),
+      ilike:       vi.fn(() => obj),
+      eq:          vi.fn(() => obj),
+      limit:       vi.fn(() => obj),
+      maybeSingle: vi.fn(() => Promise.resolve({ data: null, error: null })),
+      single:      vi.fn(() => {
+        if (table === 'notas_fiscais') return Promise.resolve({ data: { id: 'nfe-id-fake' }, error: null })
+        // 'insumos': se veio de um .insert() nesta mesma cadeia, é o "criar e
+        // devolver"; sem insert antes, é a busca por insumo existente — este
+        // mock sempre responde "não existe" para forçar o caminho de auto-criação.
+        if (table === 'insumos' && ultimoInsert) {
+          return Promise.resolve({
+            data:  { id: 'insumo-id-fake', nome: ultimoInsert.nome, unidade: ultimoInsert.unidade },
+            error: null,
+          })
+        }
+        return Promise.resolve({ data: null, error: null })
+      }),
+      // Awaited sem .single() (ex.: .update().eq(), .insert() puro, ou o
+      // .upsert().select() de contas_a_pagar): o builder precisa ser "thenable"
+      // para o `await` resolver com o resultado combinado nesta cadeia.
+      then: (resolve: any) => resolve(resultadoPendente),
+    }
+    return obj
+  }
+
+  return {
+    supabase: {
+      from: vi.fn((table: string) => builder(table)),
+      rpc:  vi.fn(() => Promise.resolve({ data: null, error: null })),
+    },
+  }
+})
+
+vi.mock('./zapi', () => ({
+  enviarMensagem: vi.fn(() => Promise.resolve(true)),
+}))
+
+vi.mock('@anthropic-ai/sdk', () => ({
+  default: vi.fn().mockImplementation(() => ({
+    messages: { create: vi.fn(() => Promise.resolve({ content: [{ type: 'text', text: 'fertilizante_n' }] })) },
+  })),
+}))
+
+import { parseXmlNFe, processarNFe, type NFeData } from './nfeProcessor'
+import { enviarMensagem } from './zapi'
 
 // Monta uma NF-e mínima. `extra` entra dentro de <infNFe>, depois dos itens.
 function nfeXml(extra = ''): string {
@@ -119,5 +206,82 @@ describe('parseXmlNFe — forma de pagamento', () => {
       <detPag><tPag>01</tPag><vPag>50.00</vPag></detPag>
     </pag>`
     expect(parseXmlNFe(nfeXml(dois))!.formaPagamento).toBe('15')
+  })
+})
+
+// ─── STEP 5 do brief da Task 5 — prova de isolamento, agora PERMANENTE ──────
+//
+// Esta é a propriedade em que a Fase 2 inteira se apoia: se a criação de
+// boletos (gravarContasDaNota) estourar, o resto do processamento de NF-e
+// (itens, estoque, financeiro, status da nota, WhatsApp) TEM que continuar.
+// Sem este teste, alguém poderia mover o `await gravarContasDaNota(...)` para
+// fora do try/catch em nfeProcessor.ts, os 88 testes de antes continuariam
+// verdes, e nada avisaria — a Task 6 mexe exatamente neste bloco.
+describe('processarNFe — isolamento do bloco de boletos (Fase 2)', () => {
+  const nfeCompleta: NFeData = {
+    numero:         '7777',
+    dataEmissao:    '2026-07-31T10:00:00-03:00',
+    emitenteNome:   'FORNECEDOR PROVA LTDA',
+    emitenteCnpj:   '11111111000199',
+    valorTotal:     5000,
+    items: [{
+      description:  'ADUBO NPK 04-14-08',
+      quantity:     1000,
+      unit:         'kg',
+      unitValue:    5,
+      totalValue:   5000,
+      quantityTrib: 1000,
+      unitTrib:     'kg',
+      ncm:          '31051000',   // cai na fronteira determinística (cap. 31) — não depende do Haiku
+    }],
+    duplicatas:     [{ numero: '001', vencimento: '2026-08-30', valor: 5000 }],
+    formaPagamento: '15',
+  }
+
+  beforeEach(() => {
+    chamadas.length = 0
+    estadoBanco.falharUpsertContas = true
+    vi.mocked(enviarMensagem).mockClear()
+  })
+
+  it('boleto explodindo no banco nao impede itens, estoque, financeiro, status=processada e WhatsApp', async () => {
+    const erroSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await processarNFe(nfeCompleta, 'webhook', 'fazenda-fake-id')
+
+    expect(chamadas.some(c => c.table === 'itens_nfe' && c.method === 'insert')).toBe(true)
+    expect(chamadas.some(c => c.table === 'movimentacoes_estoque' && c.method === 'insert')).toBe(true)
+    expect(chamadas.some(c => c.table === 'lancamentos_financeiros' && c.method === 'insert')).toBe(true)
+
+    const statusGravados = chamadas
+      .filter(c => c.table === 'notas_fiscais' && c.method === 'update')
+      .map(c => c.payload.status)
+    expect(statusGravados).toEqual(['processada'])   // nunca 'erro'
+
+    expect(enviarMensagem).toHaveBeenCalledTimes(1)
+
+    const logouIsolamento = erroSpy.mock.calls.some(args =>
+      String(args[0]).includes('falha ao criar boletos (a nota foi processada assim mesmo)'))
+    expect(logouIsolamento).toBe(true)
+
+    // A mensagem de erro do banco (IMP-2) chega com nota + fornecedor, não crua.
+    const mensagemErro = erroSpy.mock.calls.find(args =>
+      String(args[0]).includes('falha ao criar boletos'))?.[1]
+    expect(String(mensagemErro)).toContain('NF 7777 (FORNECEDOR PROVA LTDA)')
+    expect(String(mensagemErro)).toContain('42703')
+  })
+
+  it('sem a explosao, o boleto grava normalmente (contraprova: o mock nao mascara o caminho feliz)', async () => {
+    estadoBanco.falharUpsertContas = false
+    const erroSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await processarNFe(nfeCompleta, 'webhook', 'fazenda-fake-id')
+
+    const upsertContas = chamadas.filter(c => c.table === 'contas_a_pagar' && c.method === 'upsert')
+    expect(upsertContas).toHaveLength(1)
+
+    const logouIsolamento = erroSpy.mock.calls.some(args =>
+      String(args[0]).includes('falha ao criar boletos'))
+    expect(logouIsolamento).toBe(false)
   })
 })

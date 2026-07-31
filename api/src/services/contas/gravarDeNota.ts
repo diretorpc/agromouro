@@ -3,8 +3,16 @@ import { contasDaNota, type ContaDeNota, type DadosParaConta } from './deNotaFis
 
 // Grava no banco os boletos de uma NF-e. Devolve o que foi criado.
 //
-// Idempotente: rodar duas vezes para a mesma nota não duplica, porque o índice
-// único (nota_fiscal_id, numero_parcela) arbitra o conflito.
+// O índice único (nota_fiscal_id, numero_parcela) da migração 006 só cobre UM
+// cenário de duplicidade: reprocessar o MESMO notaFiscalId (ex.: reprocessamento
+// manual da mesma linha de notas_fiscais). Ele NÃO protege o cenário real deste
+// projeto — as duas portas de entrada (Make e o job de 30 min) podem gerar duas
+// linhas de notas_fiscais DIFERENTES para a mesma nota do fornecedor, cada uma
+// com seu próprio notaFiscalId, e para esse índice as duas são notas distintas.
+// Quem impede essa duplicata de verdade é a migração 005
+// (idx_nfe_numero_emitente_fazenda, chave numero+emitente_cnpj+fazenda_id) —
+// se ela barrar a segunda linha em notas_fiscais, esta função nunca chega a
+// rodar para a nota repetida.
 export async function gravarContasDaNota(
   nfe: DadosParaConta,
   notaFiscalId: string,
@@ -47,7 +55,16 @@ export async function gravarContasDaNota(
     .upsert(linhas, { onConflict: 'nota_fiscal_id,numero_parcela', ignoreDuplicates: true })
     .select('id')
 
-  if (error) throw error
+  // PostgrestError estende Error, então quem loga só com `err.message` perde
+  // `code`, `details` e `hint` — e a mensagem crua de um erro de banco (ex.:
+  // 42703, coluna inexistente) não diz de qual nota nem de qual fornecedor.
+  // Mesmo padrão do erro de competência acima: reembrulhar com contexto antes
+  // de deixar subir, para o log de isolamento em nfeProcessor.ts ser rastreável.
+  if (error) {
+    throw new Error(
+      `NF ${nfe.numero} (${nfe.emitenteNome}): falha ao gravar boleto no banco — ${error.message} (code: ${error.code})`,
+    )
+  }
 
   // Quando o upsert ignora duplicata, `data` volta menor que `linhas`.
   // Devolvemos o que a REGRA decidiu, não o que o banco aceitou: quem chama

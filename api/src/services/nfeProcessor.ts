@@ -347,13 +347,23 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
       fazenda_id,
     })
 
+    await supabase.from('notas_fiscais').update({ status: 'processada' }).eq('id', nfeId)
+
     // 4. Boletos da nota (Fase 2) — PARAFUSADO POR FORA, NUNCA PRÉ-REQUISITO.
     //
-    // Este try/catch é a rede de proteção inteira da Fase 2. O processamento de
-    // NF-e alimenta estoque, financeiro e WhatsApp sem ninguém tocar; se a criação
-    // de boletos estourar (arquivo estranho, banco fora do ar, parcela em formato
-    // novo), a nota TEM que continuar entrando. Um boleto perdido custa um aviso;
-    // uma nota perdida custa estoque e financeiro errados por semanas.
+    // Este try/catch protege contra ERRO LANÇADO na criação de boletos (arquivo
+    // estranho, upsert rejeitado, parcela em formato novo) — a nota TEM que
+    // continuar entrando mesmo assim. Um boleto perdido custa um aviso; uma nota
+    // perdida custa estoque e financeiro errados por semanas.
+    //
+    // O QUE ELE NÃO PROTEGE: demora. O cliente do Supabase não tem timeout
+    // configurado (o fetch do Node só desiste sozinho depois de ~300s), então se
+    // o banco aceitar a conexão e simplesmente não responder, este bloco fica
+    // parado do mesmo jeito — try/catch não pega travamento, só exceção. É por
+    // isso que ele roda AQUI, DEPOIS de marcar a nota como 'processada' e antes
+    // da mensagem: se travar, a nota já está processada e o estoque/financeiro já
+    // foram gravados — só o boleto e o aviso do WhatsApp ficam pendentes, nunca a
+    // nota inteira presa em 'processando' para sempre.
     let contasCriadas: ContaDeNota[] = []
     let erroContas = false
     try {
@@ -374,8 +384,6 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
         err instanceof Error ? err.message : err,
       )
     }
-
-    await supabase.from('notas_fiscais').update({ status: 'processada' }).eq('id', nfeId)
 
     const icone = origem === 'email' ? '📧' : '📄'
     let mensagem = `${icone} *NF-e processada*\n👤 ${emitenteNome}\n💰 R$ ${valorTotal.toFixed(2)}\n\n`
