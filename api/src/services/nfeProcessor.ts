@@ -2,6 +2,10 @@ import Anthropic from '@anthropic-ai/sdk'
 import { XMLParser } from 'fast-xml-parser'
 import { supabase } from './supabase'
 import { enviarMensagem } from './zapi'
+import { gravarContasDaNota } from './contas/gravarDeNota'
+import { motivoSemBoleto, type ContaDeNota, type ParcelaDescartada } from './contas/deNotaFiscal'
+import { linhaBoleto } from './contas/avisoBoleto'
+import { hojeSaoPauloISO, reais } from './contas/formato'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -40,6 +44,14 @@ export interface NFeItem {
   ncm:          string   // ← NOVO: código NCM (8 dígitos), ex: "38089329"
 }
 
+// Uma parcela do quadro de cobrança da NF-e (bloco <cobr><dup>).
+// vencimento é null quando o fornecedor não preencheu — caso ERCAL, medido em 31/07/2026.
+export interface NFeDuplicata {
+  numero:     string
+  vencimento: string | null   // 'YYYY-MM-DD'
+  valor:      number | null
+}
+
 export interface NFeData {
   numero:       string
   dataEmissao:  string
@@ -47,6 +59,8 @@ export interface NFeData {
   emitenteCnpj: string
   valorTotal:   number
   items:        NFeItem[]
+  duplicatas:     NFeDuplicata[]
+  formaPagamento: string | null   // tPag: '15' boleto, '03' cartão crédito, '05' crédito loja...
 }
 
 // ─── Parser de XML NF-e SEFAZ ────────────────────────────────────────────────
@@ -92,9 +106,35 @@ export function parseXmlNFe(xmlStr: string): NFeData | null {
       }
     }).filter((i: NFeItem) => i.description)
 
+    // ─── Quadro de cobrança (os boletos) ─────────────────────────────────────
+    // ARMADILHA: o leitor devolve OBJETO quando existe uma única <dup> e LISTA
+    // quando existem várias — exatamente como já acontece com <det> acima.
+    // As três amostras reais de 31/07/2026 têm uma parcela só, então o caminho
+    // de várias parcelas não tem prova em produção. Tratar os dois casos.
+    const dupRaw = inf.cobr?.dup ?? []
+    const dups   = Array.isArray(dupRaw) ? dupRaw : [dupRaw]
+
+    const duplicatas: NFeDuplicata[] = dups
+      .filter((d: any) => d && typeof d === 'object')
+      .map((d: any, i: number) => ({
+        numero:     String(d.nDup ?? i + 1),
+        // slice(0,10) porque há fornecedor que manda data com horário junto.
+        vencimento: d.dVenc ? String(d.dVenc).slice(0, 10) : null,
+        valor:      d.vDup != null ? parseFloat(String(d.vDup)) : null,
+      }))
+
+    // ─── Forma de pagamento ──────────────────────────────────────────────────
+    // Só tPag. indPag ("à vista"/"a prazo") NÃO é confiável: nas amostras reais
+    // a ERCAL marcou "à vista" e boleto ao mesmo tempo, e a Triângulo Diesel nem
+    // preencheu. padStart porque o leitor transforma "05" no número 5.
+    const detPagRaw = inf.pag?.detPag ?? []
+    const detPags   = Array.isArray(detPagRaw) ? detPagRaw : [detPagRaw]
+    const primeiroPag = detPags.find((p: any) => p && typeof p === 'object' && p.tPag != null)
+    const formaPagamento = primeiroPag ? String(primeiroPag.tPag).padStart(2, '0') : null
+
     if (!numero || !emitenteNome || items.length === 0) return null
 
-    return { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items }
+    return { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items, duplicatas, formaPagamento }
   } catch (err) {
     console.error('[NFeProcessor] Erro ao parsear XML:', err instanceof Error ? err.message : err)
     return null
@@ -102,14 +142,29 @@ export function parseXmlNFe(xmlStr: string): NFeData | null {
 }
 
 // ─── Verificar duplicata ──────────────────────────────────────────────────────
-export async function nfeJaProcessada(numero: string, fazenda_id: string): Promise<boolean> {
-  const { data } = await supabase
+// A chave inclui o CNPJ do emitente porque o número da NF-e é sequencial POR
+// FORNECEDOR — não é único no mundo. Sem o CNPJ, a nota 4516 de um fornecedor
+// faz o sistema descartar em silêncio a nota 4516 de outro: some a compra,
+// some o gasto e, na Fase 2, some o boleto.
+export async function nfeJaProcessada(
+  numero: string,
+  emitenteCnpj: string,
+  fazenda_id: string,
+): Promise<boolean> {
+  const { data, error } = await supabase
     .from('notas_fiscais')
     .select('id')
     .eq('numero', numero)
+    .eq('emitente_cnpj', emitenteCnpj)
     .eq('fazenda_id', fazenda_id)
     .limit(1)
-    .single()
+    .maybeSingle()
+
+  // Falha de banco NÃO pode virar "não é duplicata" — senão a nota é gravada
+  // de novo, e o estoque e o gasto são contados em dobro, em silêncio.
+  // Mesmo padrão de `jobs/contas.ts`: erro de consulta é relançado, nunca engolido.
+  if (error) throw error
+
   return !!data
 }
 
@@ -176,7 +231,7 @@ async function vincularOuCriarInsumo(
 
 // ─── Processador principal ────────────────────────────────────────────────────
 export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = 'webhook', fazenda_id: string): Promise<void> {
-  const { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items } = nfe
+  const { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items, duplicatas, formaPagamento } = nfe
 
   const itensSeguros  = items.slice(0, 200)
   const dataFormatada = dataEmissao?.split('T')[0] || new Date().toISOString().split('T')[0]
@@ -196,6 +251,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
         data_emissao:  dataEmissao,
         valor_total:   valorTotal,
         status:        'processando',
+        forma_pagamento: formaPagamento,
         fazenda_id,
       })
       .select('id')
@@ -295,8 +351,52 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
 
     await supabase.from('notas_fiscais').update({ status: 'processada' }).eq('id', nfeId)
 
+    // 4. Boletos da nota (Fase 2) — PARAFUSADO POR FORA, NUNCA PRÉ-REQUISITO.
+    //
+    // Este try/catch protege contra ERRO LANÇADO na criação de boletos (arquivo
+    // estranho, upsert rejeitado, parcela em formato novo) — a nota TEM que
+    // continuar entrando mesmo assim. Um boleto perdido custa um aviso; uma nota
+    // perdida custa estoque e financeiro errados por semanas.
+    //
+    // O QUE ELE NÃO PROTEGE: demora. O cliente do Supabase não tem timeout
+    // configurado (o fetch do Node só desiste sozinho depois de ~300s), então se
+    // o banco aceitar a conexão e simplesmente não responder, este bloco fica
+    // parado do mesmo jeito — try/catch não pega travamento, só exceção. É por
+    // isso que ele roda AQUI, DEPOIS de marcar a nota como 'processada' e antes
+    // da mensagem: se travar, a nota já está processada e o estoque/financeiro já
+    // foram gravados — só o boleto e o aviso do WhatsApp ficam pendentes, nunca a
+    // nota inteira presa em 'processando' para sempre.
+    let contasCriadas: ContaDeNota[] = []
+    let parcelasPerdidas: ParcelaDescartada[] = []
+    let erroContas = false
+    try {
+      // nfeId já foi atribuído logo após o insert, no início da função. A guarda
+      // é só para o compilador: `notaFiscal.id` vem de um cliente Supabase sem
+      // tipos de banco, então TypeScript enxerga `nfeId` como `string | null`
+      // mesmo depois da atribuição — e gravarContasDaNota exige `string`.
+      if (!nfeId) throw new Error('id da nota indisponível para gravar boletos')
+      const resultado = await gravarContasDaNota(
+        { numero, emitenteNome, dataEmissao, valorTotal, formaPagamento, duplicatas },
+        nfeId,
+        fazenda_id,
+      )
+      contasCriadas    = resultado.contas
+      parcelasPerdidas = resultado.descartadas
+    } catch (err) {
+      erroContas = true
+      console.error(
+        `[NFeProcessor] NF-e ${numero}: falha ao criar boletos (a nota foi processada assim mesmo):`,
+        err instanceof Error ? err.message : err,
+      )
+    }
+
     const icone = origem === 'email' ? '📧' : '📄'
-    let mensagem = `${icone} *NF-e processada*\n👤 ${emitenteNome}\n💰 R$ ${valorTotal.toFixed(2)}\n\n`
+    // reais() — a mesma função usada na linha do boleto duas seções abaixo, na
+    // MESMA mensagem. Antes este cabeçalho escrevia `R$ ${valorTotal.toFixed(2)}`
+    // à mão ("R$ 1000.00", sem separador de milhar nem vírgula brasileira) e o
+    // boleto usava reais() ("R$ 1.000,00") — duas grafias do mesmo valor na
+    // mesma mensagem de WhatsApp.
+    let mensagem = `${icone} *NF-e processada*\n👤 ${emitenteNome}\n💰 ${reais(valorTotal)}\n\n`
 
     if (itensAtualizados.length > 0)
       mensagem += `✅ *Estoque atualizado:*\n${itensAtualizados.join('\n')}`
@@ -308,6 +408,19 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
       if (itensAtualizados.length > 0 || itensAutoCriados.length > 0) mensagem += '\n\n'
       mensagem += `📦 *Não estocados* (só financeiro):\n${itensNaoEstocados.join('\n')}`
     }
+
+    // hojeSaoPauloISO(), NUNCA dataFormatada (data de EMISSÃO da nota): o "em N
+    // dias"/"venceu há N dias" da mensagem compara o vencimento contra HOJE, não
+    // contra uma data congelada no passado. Bug medido em 31/07/2026 — ver
+    // conserto 1 da revisão final da Fase 2 (nota processada em atraso mostrava
+    // "vence em 1 dia" para um boleto que já tinha vencido há 2).
+    mensagem += linhaBoleto(
+      contasCriadas,
+      motivoSemBoleto(formaPagamento),
+      hojeSaoPauloISO(),
+      erroContas,
+      parcelasPerdidas,
+    )
 
     await enviarMensagem(phone, mensagem)
 

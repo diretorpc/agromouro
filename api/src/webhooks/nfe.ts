@@ -28,12 +28,18 @@ nfeWebhook.post('/', async (req, res) => {
       number:     numero,
       issuedOn:   dataEmissao,
       issuerName: emitenteNome,
-      issuerCnpj: emitenteCnpj,
+      issuerCnpj: issuerCnpjRaw,
       grandTotal: valorTotal,
       items = [],
     } = payload
 
-    if (await nfeJaProcessada(numero, fazenda.id)) {
+    // req.body é livre (Express não tipa webhook externo) — sem esta coerção,
+    // um payload sem issuerCnpj gera emitente_cnpj nulo. Índice único comum trata
+    // cada NULL como distinto: duas notas de mesmo número passariam pela trava.
+    // Mesmo comportamento do caminho de e-mail (parseXmlNFe usa CNPJ ?? CPF ?? '').
+    const emitenteCnpj = String(issuerCnpjRaw ?? '')
+
+    if (await nfeJaProcessada(numero, emitenteCnpj, fazenda.id)) {
       console.log(`[NFeWebhook] NF-e ${numero} já processada — ignorando.`)
       return
     }
@@ -54,6 +60,10 @@ nfeWebhook.post('/', async (req, res) => {
         unitTrib:     item.unitTrib     ?? item.unit,
         ncm:          String(item.ncm ?? '').replace(/\D/g, ''),
       })),
+      // Payload do NFE.io não traz quadro de cobrança nem forma de pagamento
+      // (é JSON próprio do serviço, não o XML da SEFAZ que parseXmlNFe lê).
+      duplicatas:     [],
+      formaPagamento: null,
     }
 
     await processarNFe(nfe, 'webhook', fazenda.id)

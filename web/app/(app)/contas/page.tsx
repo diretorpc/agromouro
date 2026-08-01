@@ -2,58 +2,37 @@
 
 import { useEffect, useState } from 'react'
 import {
-  CalendarClock, AlertTriangle, Clock, CircleDollarSign, Ban, CheckCircle2, Plus, Undo2,
+  CalendarClock, AlertTriangle, Clock, Plus,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table'
-import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ActionMenu, type ActionMenuItem } from '@/components/ui/action-menu'
 import { api } from '@/lib/api'
 import { FormularioContaFixa } from './formulario-conta-fixa'
 import { FormularioContaAvulsa } from './formulario-conta-avulsa'
+import { DialogoVencimento } from './dialogo-vencimento'
+import { ListaContas, fmtBRL } from './lista-contas'
+import { ENCERRADAS, type Conta, type ContaAPI } from './tipos'
+import { hojeISO, diasEntre } from './datas'
 
 // ─── Cálculo dos três números (task-9-brief.md, verbatim — não alterar) ───────
 // Erra calada se mexido: um total que soma confirmado + estimado vira um
 // número que mente sem avisar. Ver brief da Task 9.
-
-type Conta = {
-  id: string
-  descricao: string
-  fornecedor: string | null
-  categoria: string | null
-  vencimento: string          // 'YYYY-MM-DD'
-  valor: number | null
-  valor_estimado: boolean
-  status: 'aguardando' | 'aberta' | 'paga' | 'dispensada'
-}
-
-// Hoje no fuso de São Paulo, como 'YYYY-MM-DD'.
-// NÃO usar toISOString(): devolve UTC e vira o dia seguinte depois das 21h.
-function hojeISO(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
-}
-
-function diasEntre(aISO: string, bISO: string): number {
-  const [ay, am, ad] = aISO.split('-').map(Number)
-  const [by, bm, bd] = bISO.split('-').map(Number)
-  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86_400_000)
-}
-
-const ENCERRADAS = new Set(['paga', 'dispensada'])
 
 export function calcularTotais(contas: Conta[], hoje: string) {
   let semanaConfirmado = 0, semanaEstimado = 0
   let atrasadoTotal = 0, atrasadoQtd = 0, aguardandoQtd = 0
 
   for (const c of contas) {
+    // Conta sem vencimento não entra em nenhum dos três números: não há data
+    // para dizer se está atrasada nem se vence esta semana. Ela é cobrada pelo
+    // filtro próprio e pelo aviso diário, não por um total que mentiria.
+    if (!c.vencimento) continue
+
     if (ENCERRADAS.has(c.status)) continue
 
     const dias  = diasEntre(hoje, c.vencimento)
@@ -77,47 +56,25 @@ export function calcularTotais(contas: Conta[], hoje: string) {
 
 // ─── Tipos da página ────────────────────────────────────────────────────────
 
-type ContaAPI = Conta & {
-  data_pagamento: string | null
-  valor_pago: number | null
-  observacao: string | null
-  contas_recorrentes: { avisar_dias_antes: number; periodicidade: string } | null
-}
-
-type FiltroStatus = 'todas' | 'aguardando' | 'aberta' | 'atrasada' | 'paga'
+type FiltroStatus = 'todas' | 'sem-vencimento' | 'aguardando' | 'aberta' | 'atrasada' | 'paga'
+type FiltroTipo   = 'todos' | 'fixas' | 'nota'
 
 const FILTROS: { value: FiltroStatus; label: string }[] = [
-  { value: 'todas',      label: 'Todas' },
-  { value: 'aguardando', label: 'Aguardando' },
-  { value: 'aberta',     label: 'Abertas' },
-  { value: 'atrasada',   label: 'Atrasadas' },
-  { value: 'paga',       label: 'Pagas' },
+  { value: 'todas',          label: 'Todas' },
+  { value: 'sem-vencimento', label: 'Falta vencimento' },
+  { value: 'aguardando',     label: 'Aguardando' },
+  { value: 'aberta',         label: 'Abertas' },
+  { value: 'atrasada',       label: 'Atrasadas' },
+  { value: 'paga',           label: 'Pagas' },
 ]
 
-const STATUS_LABEL: Record<Conta['status'], string> = {
-  aguardando: 'Aguardando',
-  aberta:     'Aberta',
-  paga:       'Paga',
-  dispensada: 'Dispensada',
-}
-
-const STATUS_STYLE: Record<Conta['status'], string> = {
-  aguardando: 'bg-amber-100 text-amber-700 border-amber-200',
-  aberta:     'bg-blue-100 text-blue-700 border-blue-200',
-  paga:       'bg-green-100 text-green-700 border-green-200',
-  dispensada: 'bg-gray-100 text-gray-600 border-gray-200',
-}
-
-// ─── Formatação (mesmo padrão do resto do site — ver financeiro/page.tsx) ─────
-
-function fmtBRL(value: number) {
-  return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-}
-
-function fmtDate(dateStr: string) {
-  const [year, month, day] = dateStr.slice(0, 10).split('-').map(Number)
-  return new Date(year, month - 1, day).toLocaleDateString('pt-BR')
-}
+// Conta fixa veio de uma regra recorrente; boleto veio de uma nota fiscal.
+// Nenhuma coluna nova no banco: a informação já existe nas duas chaves.
+const FILTROS_TIPO: { value: FiltroTipo; label: string }[] = [
+  { value: 'todos', label: 'Todas' },
+  { value: 'fixas', label: 'Contas fixas' },
+  { value: 'nota',  label: 'Boletos de nota' },
+]
 
 // ─── Formulários auxiliares (estado local dos diálogos) ───────────────────────
 
@@ -128,6 +85,7 @@ export default function ContasPage() {
   const [loading, setLoading]         = useState(true)
   const [erroCarregar, setErroCarregar] = useState<string | null>(null)
   const [filtro, setFiltro]           = useState<FiltroStatus>('todas')
+  const [filtroTipo, setFiltroTipo]   = useState<FiltroTipo>('todos')
   const [salvando, setSalvando]       = useState(false)
 
   const [valorDialog, setValorDialog] = useState<ContaAPI | null>(null)
@@ -147,6 +105,8 @@ export default function ContasPage() {
   const [novaFixaOpen, setNovaFixaOpen]     = useState(false)
   const [novaAvulsaOpen, setNovaAvulsaOpen] = useState(false)
 
+  const [dataDialog, setDataDialog] = useState<ContaAPI | null>(null)
+
   async function load() {
     setErroCarregar(null)
     try {
@@ -162,14 +122,38 @@ export default function ContasPage() {
 
   useEffect(() => { load() }, [])
 
+  // O aviso do WhatsApp manda /contas?filtro=sem-vencimento — a tela já abre filtrada.
+  useEffect(() => {
+    const f = new URLSearchParams(window.location.search).get('filtro')
+    if (f && FILTROS.some(o => o.value === f)) setFiltro(f as FiltroStatus)
+  }, [])
+
   const hoje = hojeISO()
   const totais = calcularTotais(contas, hoje)
 
-  const contasFiltradas = contas.filter(c => {
-    if (filtro === 'todas')    return true
-    if (filtro === 'atrasada') return !ENCERRADAS.has(c.status) && diasEntre(hoje, c.vencimento) < 0
-    return c.status === filtro
-  })
+  const contasFiltradas = contas
+    .filter(c => {
+      const okTipo =
+        filtroTipo === 'todos' ? true :
+        filtroTipo === 'fixas' ? c.nota_fiscal_id === null :
+                                 c.nota_fiscal_id !== null
+
+      if (!okTipo) return false
+
+      if (filtro === 'todas')          return true
+      if (filtro === 'sem-vencimento') return !ENCERRADAS.has(c.status) && !c.vencimento
+      if (filtro === 'atrasada')       return !ENCERRADAS.has(c.status) && !!c.vencimento && diasEntre(hoje, c.vencimento) < 0
+      return c.status === filtro
+    })
+    // Conta sem data sobe para o topo: é a única que exige ação do Matheus
+    // para o sistema voltar a funcionar sozinho. Enterrada no meio da lista,
+    // ela some — e é justamente a que o sistema não consegue vigiar.
+    .sort((a, b) => {
+      const aSemData = !a.vencimento && !ENCERRADAS.has(a.status)
+      const bSemData = !b.vencimento && !ENCERRADAS.has(b.status)
+      if (aSemData !== bSemData) return aSemData ? -1 : 1
+      return (a.vencimento ?? '').localeCompare(b.vencimento ?? '')
+    })
 
   // ─── Ações: registrar valor real ─────────────────────────────────────────
 
@@ -234,6 +218,11 @@ export default function ContasPage() {
   // Sem esta ação, pagamento digitado com valor errado é definitivo para quem
   // não sabe rodar SQL — e ele já criou um lançamento no Financeiro.
 
+  function abrirDesfazerDialog(conta: ContaAPI) {
+    setDesfazerErro(null)
+    setDesfazerDialog(conta)
+  }
+
   async function handleDesfazerPagamento() {
     if (!desfazerDialog) return
     setSalvando(true)
@@ -251,6 +240,11 @@ export default function ContasPage() {
   }
 
   // ─── Ações: dispensar ────────────────────────────────────────────────────
+
+  function abrirDispensarDialog(conta: ContaAPI) {
+    setDispensarErro(null)
+    setDispensarDialog(conta)
+  }
 
   async function handleDispensar() {
     if (!dispensarDialog) return
@@ -366,126 +360,48 @@ export default function ContasPage() {
               {contasFiltradas.length} de {contas.length}
             </span>
           </CardTitle>
-          <div className="flex items-center rounded-md border border-input overflow-hidden text-xs w-fit">
-            {FILTROS.map((f, i) => (
-              <button
-                key={f.value}
-                onClick={() => setFiltro(f.value)}
-                className={[
-                  'px-3 py-1.5 font-medium transition-colors',
-                  i > 0 ? 'border-l border-input' : '',
-                  filtro === f.value
-                    ? 'bg-foreground text-background'
-                    : 'bg-background text-muted-foreground hover:text-foreground',
-                ].join(' ')}
-              >
-                {f.label}
-              </button>
-            ))}
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-2">
+              {FILTROS_TIPO.map(o => (
+                <Button
+                  key={o.value}
+                  size="sm"
+                  variant={filtroTipo === o.value ? 'default' : 'outline'}
+                  onClick={() => setFiltroTipo(o.value)}
+                >
+                  {o.label}
+                </Button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {FILTROS.map(o => {
+                const n = o.value === 'sem-vencimento'
+                  ? contas.filter(c => !ENCERRADAS.has(c.status) && !c.vencimento).length
+                  : 0
+                return (
+                  <Button
+                    key={o.value}
+                    size="sm"
+                    variant={filtro === o.value ? 'default' : 'outline'}
+                    onClick={() => setFiltro(o.value)}
+                  >
+                    {o.label}{n > 0 ? ` (${n})` : ''}
+                  </Button>
+                )
+              })}
+            </div>
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[160px]">Fornecedor</TableHead>
-                <TableHead>Descrição</TableHead>
-                <TableHead className="w-[110px]">Vencimento</TableHead>
-                <TableHead className="w-[150px] text-right">Valor</TableHead>
-                <TableHead className="w-[140px]">Categoria</TableHead>
-                <TableHead className="w-[110px]">Status</TableHead>
-                <TableHead className="w-[60px]" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {contasFiltradas.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-10">
-                    {contas.length === 0
-                      ? 'Nenhuma conta cadastrada ainda.'
-                      : 'Nenhuma conta para este filtro.'}
-                  </TableCell>
-                </TableRow>
-              ) : contasFiltradas.map(conta => {
-                const podeAgir = !ENCERRADAS.has(conta.status)
-                const acoes: ActionMenuItem[] = []
-                if (podeAgir && conta.valor_estimado) {
-                  acoes.push({
-                    label: 'Registrar valor real',
-                    icon: <CircleDollarSign className="h-3.5 w-3.5" aria-hidden="true" />,
-                    onClick: () => abrirValorDialog(conta),
-                  })
-                }
-                if (podeAgir) {
-                  acoes.push({
-                    label: 'Marcar como paga',
-                    icon: <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />,
-                    onClick: () => abrirPagarDialog(conta),
-                  })
-                  acoes.push({
-                    label: 'Dispensar',
-                    icon: <Ban className="h-3.5 w-3.5" aria-hidden="true" />,
-                    onClick: () => { setDispensarErro(null); setDispensarDialog(conta) },
-                    destructive: true,
-                  })
-                }
-                // Só conta paga: é a única que tem pagamento para desfazer.
-                if (conta.status === 'paga') {
-                  acoes.push({
-                    label: 'Desfazer pagamento',
-                    icon: <Undo2 className="h-3.5 w-3.5" aria-hidden="true" />,
-                    onClick: () => { setDesfazerErro(null); setDesfazerDialog(conta) },
-                    destructive: true,
-                  })
-                }
-                return (
-                  <TableRow key={conta.id}>
-                    <TableCell className="text-sm font-medium max-w-[160px] truncate" title={conta.fornecedor ?? ''}>
-                      {conta.fornecedor ?? '—'}
-                    </TableCell>
-                    <TableCell className="text-sm max-w-[220px] truncate" title={conta.descricao}>
-                      {conta.descricao}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                      {fmtDate(conta.vencimento)}
-                    </TableCell>
-                    <TableCell className="text-right text-sm">
-                      {conta.valor !== null ? (
-                        <div>
-                          <p className="font-semibold tabular-nums">{fmtBRL(conta.valor)}</p>
-                          {conta.valor_estimado && (
-                            <Badge
-                              variant="outline"
-                              className="text-[10px] mt-0.5 bg-amber-50 text-amber-700 border-amber-200"
-                            >
-                              estimado
-                            </Badge>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      <Badge variant="outline" className="text-xs">
-                        {conta.categoria ?? 'Sem categoria'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={`text-xs ${STATUS_STYLE[conta.status]}`}>
-                        {STATUS_LABEL[conta.status]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {acoes.length > 0 && (
-                        <ActionMenu label={`Ações — ${conta.descricao}`} items={acoes} />
-                      )}
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
+          <ListaContas
+            contas={contasFiltradas}
+            hoje={hoje}
+            onPagar={abrirPagarDialog}
+            onDispensar={abrirDispensarDialog}
+            onDesfazer={abrirDesfazerDialog}
+            onEditarValor={abrirValorDialog}
+            onInformarData={setDataDialog}
+          />
         </CardContent>
       </Card>
 
@@ -604,6 +520,13 @@ export default function ContasPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Dialog: informar data de vencimento ── */}
+      <DialogoVencimento
+        conta={dataDialog}
+        onFechar={() => setDataDialog(null)}
+        onSalvo={() => { setDataDialog(null); load() }}
+      />
 
       {/* ── Formulários: nova conta fixa / avulsa ── */}
       <FormularioContaFixa

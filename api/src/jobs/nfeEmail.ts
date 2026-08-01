@@ -86,7 +86,7 @@ export async function buscarNFesNoEmail(): Promise<void> {
             }
 
             // Evitar duplicatas
-            const jaExiste = await nfeJaProcessada(nfe.numero, fazenda.id)
+            const jaExiste = await nfeJaProcessada(nfe.numero, nfe.emitenteCnpj, fazenda.id)
             if (jaExiste) {
               console.log(`[NFeEmail] NF-e ${nfe.numero} já processada — ignorando.`)
               continue

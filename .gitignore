@@ -42,6 +42,9 @@ Thumbs.db
 .agents/
 skills-lock.json
 
+# Rascunho local — arquivos de nota fiscal têm CNPJ, valores e endereços reais
+.tmp/
+
 # Resumo para a família — gerado/local, contém dados reais (mantido só no computador)
 docs/features-agromouro.md
 docs/features-agromouro.pdf

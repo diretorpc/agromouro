@@ -2,14 +2,7 @@ import { supabase } from '../services/supabase'
 import { enviarMensagem, getAuthorizedPhones } from '../services/zapi'
 import { sincronizarOcorrencias } from '../services/contas/sincronizar'
 import { montarResumo, resumoVazio, textoResumo, type ContaResumo } from '../services/contas/resumo'
-
-// Data de hoje como 'YYYY-MM-DD' no fuso de São Paulo.
-// NÃO usar toISOString(): ele devolve UTC e vira o dia seguinte depois das 21h.
-function hojeSaoPauloISO(): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date())
-}
+import { hojeSaoPauloISO } from '../services/contas/formato'
 
 export async function rodarContasDoDia(): Promise<void> {
   const hoje = hojeSaoPauloISO()
@@ -24,7 +17,7 @@ export async function rodarContasDoDia(): Promise<void> {
 
       const { data: contas, error: erroContas } = await supabase
         .from('contas_a_pagar')
-        .select('descricao, fornecedor, vencimento, valor, status, contas_recorrentes(avisar_dias_antes)')
+        .select('descricao, fornecedor, vencimento, valor, status, created_at, contas_recorrentes(avisar_dias_antes)')
         .eq('fazenda_id', fazenda.id)
         .in('status', ['aguardando', 'aberta'])
 
@@ -40,6 +33,8 @@ export async function rodarContasDoDia(): Promise<void> {
         valor:             c.valor,
         status:            c.status,
         avisar_dias_antes: c.contas_recorrentes?.avisar_dias_antes ?? 3,
+        // created_at vem como timestamp completo; o escalonamento só quer o dia.
+        criada_em:         String(c.created_at ?? '').slice(0, 10),
       }))
 
       const resumo = montarResumo(paraResumo, hoje)
@@ -62,7 +57,9 @@ export async function rodarContasDoDia(): Promise<void> {
       if (existente) { console.log(`[Contas] ${fazenda.nome}: aviso de hoje já existe.`); continue }
 
       const mensagem = textoResumo(resumo, hoje)
-      const nivel    = resumo.atrasadas.length > 0 ? 'critico' : 'aviso'
+      const nivel    = (resumo.atrasadas.length > 0 || resumo.semVencimentoAntigas.length > 0)
+        ? 'critico'
+        : 'aviso'
 
       // O alerta é gravado SEMPRE. O WhatsApp é o extra — se a instância Z-API
       // estiver desconectada, o envio falha calado e a informação não pode sumir junto.

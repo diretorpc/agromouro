@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { supabase } from '../services/supabase'
 import { sincronizarOcorrencias } from '../services/contas/sincronizar'
 import { precisaCriarLancamento, montarLancamento } from '../services/contas/pagamento'
+import { competenciaDoMes } from '../services/contas/datas'
 
 export const contaRoutes = Router()
 
@@ -232,6 +233,30 @@ contaRoutes.patch('/:id', async (req, res, next) => {
     if (body.valor !== undefined) {
       patch.valor_estimado = false
       patch.status = 'aberta'
+    }
+
+    // Boleto de NF-e: informar o vencimento tem que recalcular a competência
+    // (1º dia do mês do vencimento) — senão a conta ERCAL nasce com competência
+    // de julho (mês da emissão) e continua em julho mesmo depois do dono
+    // informar 15/08, contradizendo o próprio desenho do módulo (ver conserto 3
+    // da revisão final da Fase 2). Conta FIXA recorrente (sem nota_fiscal_id)
+    // fica de fora de propósito: lá a competência é o mês da REGRA, decidido em
+    // sincronizar.ts — não o mês do vencimento informado aqui.
+    if (body.vencimento !== undefined) {
+      const { data: atual, error: erroAtual } = await supabase
+        .from('contas_a_pagar')
+        .select('nota_fiscal_id')
+        .eq('id', req.params.id)
+        .eq('fazenda_id', fazendaId)
+        .maybeSingle()
+
+      if (erroAtual) throw erroAtual
+      if (!atual) return res.status(404).json({ error: 'Conta não encontrada' })
+
+      if (atual.nota_fiscal_id) {
+        const [ano, mes] = body.vencimento.split('-').map(Number)
+        patch.competencia = competenciaDoMes(ano, mes)
+      }
     }
 
     const { data, error } = await supabase
