@@ -15,19 +15,25 @@
 // "remessa nunca gera boleto" perderia esse boleto, que é o erro mais caro.
 
 export type EfeitoItem = {
-  entraNoEstoque:  boolean
-  contaComoCompra: boolean
-  custoZero:       boolean   // entra no estoque, mas sem preço (não estraga o preço médio)
-  rotulo:          string    // português claro, para log e mensagem
+  readonly entraNoEstoque:  boolean
+  readonly contaComoCompra: boolean
+  readonly custoZero:       boolean   // entra no estoque, mas sem preço (não estraga o preço médio)
+  readonly rotulo:          string    // português claro, para log e mensagem
 }
 
-const COMPRA_NORMAL: EfeitoItem = {
+const COMPRA_NORMAL: EfeitoItem = Object.freeze({
   entraNoEstoque: true, contaComoCompra: true, custoZero: false, rotulo: 'compra',
-}
+})
 
 const TABELA: Record<string, EfeitoItem> = {}
 
 function registrar(cfops: string[], efeito: EfeitoItem) {
+  // Congela cada objeto de efeito para impedir corrupção silenciosa: toda família
+  // de CFOPs compartilha a mesma referência. Mexer nela afetaria todos os demais
+  // silenciosamente — o mesmo erro latente que causou R$ 1,2 mi de gasto fantasma.
+  // Object.freeze no compile-time (readonly) + runtime (Object.freeze) não deixa
+  // passar. Falhar ruidosamente é sempre melhor que silencioso.
+  Object.freeze(efeito)
   for (const c of cfops) TABELA[c] = efeito
 }
 

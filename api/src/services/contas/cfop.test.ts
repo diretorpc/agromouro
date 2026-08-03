@@ -101,3 +101,37 @@ describe('efeitoDoCfop — rotulo em portugues, para a mensagem do WhatsApp', ()
     expect(efeitoDoCfop('5910').rotulo).toMatch(/bonifica/i)
   })
 })
+
+describe('efeitoDoCfop — imutabilidade (garante que corrupção silenciosa nao vai acontecer)', () => {
+  it('tentar mutar um efeito retornado nao muda a proxima chamada (CFOP registrado)', () => {
+    const e1 = efeitoDoCfop('5117')
+    const rotulo1 = e1.rotulo
+
+    // Tenta mutar — deve falhar silenciosamente ou lancar em strict mode
+    try {
+      ;(e1 as any).rotulo = 'foi alterado!'
+    } catch {
+      // TypeError esperado em strict mode; OK
+    }
+
+    // Proxima chamada retorna o original intacto
+    const e2 = efeitoDoCfop('5117')
+    expect(e2.rotulo).toBe(rotulo1)
+  })
+
+  it('tentar mutar um efeito retornado nao muda a proxima chamada (fallback COMPRA_NORMAL)', () => {
+    const e1 = efeitoDoCfop('9999') // CFOP desconhecido
+    const contaComoCompra1 = e1.contaComoCompra
+
+    // Tenta mutar
+    try {
+      ;(e1 as any).contaComoCompra = false
+    } catch {
+      // TypeError esperado em strict mode; OK
+    }
+
+    // Proxima chamada retorna o original intacto
+    const e2 = efeitoDoCfop('8888') // outro desconhecido
+    expect(e2.contaComoCompra).toBe(contaComoCompra1)
+  })
+})
