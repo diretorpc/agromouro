@@ -108,7 +108,7 @@ function nfeXml(extra = ''): string {
   <ide><nNF>4516</nNF><dhEmi>2026-07-14T18:15:00-03:00</dhEmi></ide>
   <emit><xNome>TRIANGULO DIESEL TRR LTDA</xNome><CNPJ>12345678000199</CNPJ></emit>
   <det><prod><xProd>OLEO DIESEL S10</xProd><qCom>3000</qCom><uCom>L</uCom>
-    <vUnCom>6.12</vUnCom><vProd>18360.00</vProd><NCM>27101259</NCM></prod></det>
+    <vUnCom>6.12</vUnCom><vProd>18360.00</vProd><NCM>27101259</NCM><CFOP>5102</CFOP></prod></det>
   <total><ICMSTot><vNF>30600.00</vNF></ICMSTot></total>
   ${extra}
 </infNFe></NFe></nfeProc>`
@@ -222,6 +222,40 @@ describe('parseXmlNFe — forma de pagamento', () => {
   })
 })
 
+describe('parseXmlNFe — CFOP por item', () => {
+  it('le o CFOP do item', () => {
+    const r = parseXmlNFe(nfeXml())!
+    expect(r.items[0].cfop).toBe('5102')
+  })
+
+  it('item sem CFOP devolve string vazia, nao quebra', () => {
+    const semCfop = nfeXml().replace(/<CFOP>\d+<\/CFOP>/, '')
+    expect(parseXmlNFe(semCfop)!.items[0].cfop).toBe('')
+  })
+
+  it('CFOP com pontuacao vira so digitos', () => {
+    const comPonto = nfeXml().replace(/<CFOP>\d+<\/CFOP>/, '<CFOP>5.117</CFOP>')
+    expect(parseXmlNFe(comPonto)!.items[0].cfop).toBe('5117')
+  })
+
+  it('nota com dois itens de CFOP diferente le os dois', () => {
+    const doisItens = nfeXml().replace(
+      '</det>',
+      `</det><det><prod><xProd>BRINDE</xProd><qCom>2</qCom><uCom>UN</uCom>
+       <vUnCom>0</vUnCom><vProd>0</vProd><NCM>31051000</NCM><CFOP>5910</CFOP></prod></det>`,
+    )
+    const r = parseXmlNFe(doisItens)!
+    expect(r.items.map(i => i.cfop)).toEqual(['5102', '5910'])
+  })
+
+  it('os campos que ja eram lidos continuam identicos', () => {
+    const r = parseXmlNFe(nfeXml())!
+    expect(r.numero).toBe('4516')
+    expect(r.items[0].description).toBe('OLEO DIESEL S10')
+    expect(r.items[0].ncm).toBe('27101259')
+  })
+})
+
 // ─── STEP 5 do brief da Task 5 — prova de isolamento, agora PERMANENTE ──────
 //
 // Esta é a propriedade em que a Fase 2 inteira se apoia: se a criação de
@@ -246,6 +280,7 @@ describe('processarNFe — isolamento do bloco de boletos (Fase 2)', () => {
       quantityTrib: 1000,
       unitTrib:     'kg',
       ncm:          '31051000',   // cai na fronteira determinística (cap. 31) — não depende do Haiku
+      cfop:         '5102',
     }],
     duplicatas:     [{ numero: '001', vencimento: '2026-08-30', valor: 5000 }],
     formaPagamento: '15',
@@ -365,6 +400,7 @@ describe('processarNFe — "em N dias" usa hoje de verdade, não a data da nota 
       quantityTrib: 1,
       unitTrib:     'un',
       ncm:          '84314900',   // peça de máquina — fronteira determinística, não passa pelo Haiku
+      cfop:         '5102',
     }],
     duplicatas:     [{ numero: '001', vencimento: '2026-08-01', valor: 1000 }],
     formaPagamento: '15',

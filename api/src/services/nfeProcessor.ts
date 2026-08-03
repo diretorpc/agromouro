@@ -42,6 +42,7 @@ export interface NFeItem {
   quantityTrib: number   // qTrib — quantidade em unidade tributável (ex: litros)
   unitTrib:     string   // uTrib — unidade tributável (ex: L, kg)
   ncm:          string   // ← NOVO: código NCM (8 dígitos), ex: "38089329"
+  cfop:         string   // código da operação, 4 dígitos. '' quando o item não traz
 }
 
 // Uma parcela do quadro de cobrança da NF-e (bloco <cobr><dup>).
@@ -103,6 +104,7 @@ export function parseXmlNFe(xmlStr: string): NFeData | null {
         quantityTrib: parseFloat(String(prod.qTrib  ?? prod.qCom ?? 0)),
         unitTrib:     String(prod.uTrib ?? prod.uCom ?? 'un'),
         ncm:          String(prod.NCM ?? '').replace(/\D/g, ''),  // ← NOVO: só dígitos
+        cfop:         String(prod.CFOP ?? '').replace(/\D/g, ''),
       }
     }).filter((i: NFeItem) => i.description)
 
