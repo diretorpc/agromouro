@@ -59,6 +59,9 @@ nfeWebhook.post('/', async (req, res) => {
         quantityTrib: item.quantityTrib ?? item.quantity,
         unitTrib:     item.unitTrib     ?? item.unit,
         ncm:          String(item.ncm ?? '').replace(/\D/g, ''),
+        // Payload do NFE.io não traz CFOP — assume compra normal (vazio).
+        // Task 2 (efeitoDoCfop) trata string vazia como compra normal.
+        cfop:         String(item.cfop ?? '').replace(/\D/g, ''),
       })),
       // Payload do NFE.io não traz quadro de cobrança nem forma de pagamento
       // (é JSON próprio do serviço, não o XML da SEFAZ que parseXmlNFe lê).
