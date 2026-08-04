@@ -668,3 +668,102 @@ describe('processarNFe — CFOP manda no estoque e no custo', () => {
     expect(mensagem).toContain('Boleto:')
   })
 })
+
+// ─── TASK 6.5 — a tela Financeiro precisa saber, POR ITEM, o que é gasto ────
+//
+// Tasks 1-5 consertaram o back-end: o CFOP já decide estoque e o valor do
+// LANÇAMENTO financeiro (lancamentos_financeiros). Mas a tela Financeiro soma
+// direto de itens_nfe, sem olhar CFOP nenhum — ela ficaria cega para sempre
+// se não gravássemos, EM CADA ITEM, a mesma resposta que a escada do
+// valorCompra já calcula. Esta suíte prova que `conta_como_compra` segue
+// exatamente a mesma escada (algumECompra → regra do item; senão →
+// temCobrancaReal), tanto na nota inteira quanto no misto item a item.
+describe('processarNFe — conta_como_compra grava a MESMA resposta da escada do valorCompra', () => {
+  beforeEach(() => {
+    chamadas.length = 0
+    estadoBanco.falharUpsertContas = false
+    vi.mocked(enviarMensagem).mockClear()
+  })
+
+  function item(overrides: Partial<NFeItem> = {}): NFeItem {
+    return {
+      description:  'CLORETO DE POTASSIO',
+      quantity:     400,
+      unit:         'TO',
+      unitValue:    2650,
+      totalValue:   1060000,
+      quantityTrib: 400,
+      unitTrib:     'TO',
+      ncm:          '31042000',
+      cfop:         '5102',
+      ...overrides,
+    }
+  }
+
+  function nota(overrides: Partial<NFeData> = {}): NFeData {
+    return {
+      numero:         '8001',
+      dataEmissao:    '2026-08-03T10:00:00-03:00',
+      emitenteNome:   'SYAGRI INSUMOS LTDA',
+      emitenteCnpj:   '33333333000199',
+      valorTotal:     1060000,
+      items:          [item()],
+      duplicatas:     [],
+      formaPagamento: '90',
+      ...overrides,
+    }
+  }
+
+  const insertsEm = (tabela: string) =>
+    chamadas.filter(c => c.table === tabela && c.method === 'insert')
+
+  it('compra normal (CFOP 5102) grava conta_como_compra = true', async () => {
+    await processarNFe(nota(), 'webhook', 'fazenda-fake-id')
+
+    const itens = insertsEm('itens_nfe')
+    expect(itens).toHaveLength(1)
+    expect(itens[0].payload.conta_como_compra).toBe(true)
+  })
+
+  it('remessa pura (CFOP 5117, sem duplicata) grava conta_como_compra = false', async () => {
+    await processarNFe(nota({ items: [item({ cfop: '5117' })] }), 'webhook', 'fazenda-fake-id')
+
+    const itens = insertsEm('itens_nfe')
+    expect(itens).toHaveLength(1)
+    expect(itens[0].payload.conta_como_compra).toBe(false)
+  })
+
+  it('nota mista (5102 + 5910): true para o item de compra, false para a bonificação', async () => {
+    await processarNFe(
+      nota({
+        items: [
+          item({ description: 'ADUBO NORMAL', cfop: '5102', totalValue: 1000 }),
+          item({ description: 'ADUBO BONIFICADO', cfop: '5910', totalValue: 200, unitValue: 5 }),
+        ],
+        valorTotal: 1200,
+      }),
+      'webhook', 'fazenda-fake-id',
+    )
+
+    const itens = insertsEm('itens_nfe')
+    expect(itens).toHaveLength(2)
+    const compra       = itens.find(i => i.payload.descricao === 'ADUBO NORMAL')
+    const bonificacao  = itens.find(i => i.payload.descricao === 'ADUBO BONIFICADO')
+    expect(compra?.payload.conta_como_compra).toBe(true)
+    expect(bonificacao?.payload.conta_como_compra).toBe(false)
+  })
+
+  it('remessa (5117) COM duplicata: escape hatch grava conta_como_compra = true (revenda que cobra na entrega)', async () => {
+    await processarNFe(
+      nota({
+        items:      [item({ cfop: '5117' })],
+        duplicatas: [{ numero: '001', vencimento: '2026-08-30', valor: 1060000 }],
+      }),
+      'webhook', 'fazenda-fake-id',
+    )
+
+    const itens = insertsEm('itens_nfe')
+    expect(itens).toHaveLength(1)
+    expect(itens[0].payload.conta_como_compra).toBe(true)
+  })
+})

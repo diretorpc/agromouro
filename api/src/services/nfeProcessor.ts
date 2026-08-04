@@ -276,7 +276,21 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
     const itensAutoCriados:  string[] = []
     const itensNaoEstocados: string[] = []
 
-    for (const item of itensSeguros) {
+    // Quais itens contam como gasto na tela Financeiro. Segue a MESMA escada do
+    // valorCompra lá embaixo — se divergir, a tela e o Dashboard mostram totais
+    // diferentes para a mesma nota.
+    //
+    // Quando ALGUM item é compra, vale a regra de cada item. Quando NENHUM é (nota
+    // de entrega pura), a nota inteira só conta se houver duplicata de verdade —
+    // é a revenda que embute a cobrança na própria remessa.
+    const efeitosDosItens = itensSeguros.map(i => efeitoDoCfop(i.cfop))
+    const todosSaoCompra  = efeitosDosItens.every(e => e.contaComoCompra)
+    const algumECompra    = efeitosDosItens.some(e => e.contaComoCompra)
+    const temCobrancaReal = duplicatas.length > 0
+    const contaComoCompraDoItem = (n: number): boolean =>
+      algumECompra ? efeitosDosItens[n].contaComoCompra : temCobrancaReal
+
+    for (const [index, item] of itensSeguros.entries()) {
       // Cascata: NCM decide a fronteira; o Haiku só desempata quando o NCM é mudo.
       const vereditoNCM = fronteiraPorNCM(item.ncm)
       const tipo        = await categorizarItem(item.description)  // ainda alimenta insumos.tipo
@@ -284,21 +298,22 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
 
       // O CFOP manda: ele diz se houve circulação física de mercadoria e se a
       // nota é a compra ou só a entrega de algo já faturado. Ver contas/cfop.ts.
-      const efeito = efeitoDoCfop(item.cfop)
+      const efeito = efeitosDosItens[index]
 
       // Não entra no estoque quando o NCM/tipo diz que não é estocável OU quando o
       // CFOP diz que não houve compra de mercadoria para o galpão (ex.: faturamento
       // de entrega futura — a mercadoria ainda não saiu do fornecedor).
       if (!estocavel || !efeito.entraNoEstoque) {
         await supabase.from('itens_nfe').insert({
-          nota_fiscal_id: nfeId,
-          descricao:      item.description.slice(0, 500),
-          quantidade:     item.quantity,
-          unidade:        item.unit,
-          valor_unitario: item.unitValue,
-          valor_total:    item.totalValue,
-          insumo_id:      null,
-          cfop:           item.cfop || null,
+          nota_fiscal_id:     nfeId,
+          descricao:          item.description.slice(0, 500),
+          quantidade:         item.quantity,
+          unidade:            item.unit,
+          valor_unitario:     item.unitValue,
+          valor_total:        item.totalValue,
+          insumo_id:          null,
+          cfop:               item.cfop || null,
+          conta_como_compra:  contaComoCompraDoItem(index),
           fazenda_id,
         })
         itensNaoEstocados.push(`• ${item.quantity}${item.unit} ${item.description.trim().slice(0, 60)}`)
@@ -316,14 +331,15 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
       const insumo = await vincularOuCriarInsumo(item.description, tipo, unidadeBase, fazenda_id)
 
       await supabase.from('itens_nfe').insert({
-        nota_fiscal_id: nfeId,
-        descricao:      item.description.slice(0, 500),
-        quantidade:     item.quantity,
-        unidade:        item.unit,
-        valor_unitario: item.unitValue,
-        valor_total:    item.totalValue,
-        insumo_id:      insumo.id,
-        cfop:           item.cfop || null,
+        nota_fiscal_id:     nfeId,
+        descricao:          item.description.slice(0, 500),
+        quantidade:         item.quantity,
+        unidade:            item.unit,
+        valor_unitario:     item.unitValue,
+        valor_total:        item.totalValue,
+        insumo_id:          insumo.id,
+        cfop:               item.cfop || null,
+        conta_como_compra:  contaComoCompraDoItem(index),
         fazenda_id,
       })
 
@@ -374,11 +390,10 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
     // o passo do faturamento e embute a cobrança na própria remessa. Só a duplicata
     // prova isso: o tPag da nota de remessa é herdado da venda e não prova nada
     // (ERCAL 82398: CFOP 5116 de entrega, com tPag 15 e zero duplicata).
-    const efeitosDosItens = itensSeguros.map(i => efeitoDoCfop(i.cfop))
-    const todosSaoCompra  = efeitosDosItens.every(e => e.contaComoCompra)
-    const algumECompra    = efeitosDosItens.some(e => e.contaComoCompra)
-    const temCobrancaReal = duplicatas.length > 0
-
+    //
+    // efeitosDosItens / todosSaoCompra / algumECompra / temCobrancaReal já foram
+    // calculados ANTES do loop (seção 2) — contaComoCompraDoItem() precisa deles
+    // por item, dentro do loop. Aqui só reaproveita, sem recalcular nada.
     const valorCompra =
         todosSaoCompra  ? valorTotal
       : algumECompra    ? itensSeguros

@@ -45,6 +45,10 @@ type ItemFinanceiro = {
   // 'conta' = gasto que veio de uma conta a pagar marcada como paga.
   origem: 'nfe' | 'cartao' | 'manual' | 'conta' | null
   cartao_apelido: string | null
+  // Gravado pelo processador da NF-e (migration 008), a partir de 04/08/2026.
+  // NULO = item de antes da coluna existir, ou lançamento manual/cartão — conta
+  // como gasto igual sempre contou. Só `false` explícito tira o item da soma.
+  conta_como_compra: boolean | null
 }
 
 type FormData = {
@@ -160,6 +164,20 @@ function tipoLabel(value: string) {
   return TIPOS.find(t => t.value === value)?.label ?? value
 }
 
+// Decide se um item entra nas somas de dinheiro da tela (Total de Despesas,
+// gráfico por categoria, etc). Gravado pelo processador da NF-e a partir de
+// 04/08/2026 (migration 008) — o CFOP de cada item já decidiu isso lá, esta
+// tela só lê a resposta.
+//
+// NULO/ausente PRECISA continuar contando: é como toda nota gravada antes
+// desta coluna existir aparece, e é o histórico inteiro de gasto do dono.
+// Só um `false` explícito — item já cobrado em outra nota, recebido sem
+// custo (bonificação/amostra), ou mercadoria de passagem que nunca virou
+// compra — tira o item da soma.
+function contaComoGasto(item: Pick<ItemFinanceiro, 'conta_como_compra'>): boolean {
+  return item.conta_como_compra !== false
+}
+
 function FormFields({ form, setForm }: { form: FormData; setForm: React.Dispatch<React.SetStateAction<FormData>> }) {
   return (
     <div className="space-y-3">
@@ -248,7 +266,7 @@ export default function FinanceiroPage() {
     const [nfeResult, lancResult] = await Promise.all([
       supabase
         .from('itens_nfe')
-        .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, centro_custo, insumo_id, insumos(tipo), notas_fiscais(numero, emitente_nome, data_emissao)')
+        .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, centro_custo, insumo_id, conta_como_compra, insumos(tipo), notas_fiscais(numero, emitente_nome, data_emissao)')
         .order('id', { ascending: false }),
       supabase
         .from('lancamentos_financeiros')
@@ -282,6 +300,7 @@ export default function FinanceiroPage() {
       is_manual: !row.notas_fiscais,
       origem: 'nfe' as const,
       cartao_apelido: null,
+      conta_como_compra: row.conta_como_compra ?? null,
     }))
 
     const lancItems: ItemFinanceiro[] = (lancResult.data ?? []).map((row: any) => ({
@@ -300,6 +319,9 @@ export default function FinanceiroPage() {
       is_manual: row.origem === 'manual',
       origem: row.origem as 'cartao' | 'manual' | 'conta',
       cartao_apelido: row.cartoes?.apelido ?? null,
+      // lancamentos_financeiros não tem CFOP — não existe razão para excluir
+      // um lançamento de cartão/manual/conta do total. Conta como sempre contou.
+      conta_como_compra: null,
     }))
 
     setItens([...nfeItems, ...lancItems])
@@ -463,8 +485,14 @@ export default function FinanceiroPage() {
       return sortData === 'desc' ? db.localeCompare(da) : da.localeCompare(db)
     })
 
-  const totalGeral = itensFiltrados.reduce((s, i) => s + i.valor_total, 0)
-  const porCategoria = itensFiltrados.reduce<Record<string, number>>((acc, i) => {
+  // Só os itens que CONTAM como gasto entram nas somas de dinheiro — um item
+  // com conta_como_compra === false (já cobrado em outra nota, bonificação,
+  // etc.) continua na lista abaixo, com o crachá explicando por quê, mas não
+  // soma no Total de Despesas nem no gráfico por categoria.
+  const itensQueContam = itensFiltrados.filter(contaComoGasto)
+
+  const totalGeral = itensQueContam.reduce((s, i) => s + i.valor_total, 0)
+  const porCategoria = itensQueContam.reduce<Record<string, number>>((acc, i) => {
     acc[i.centro_custo] = (acc[i.centro_custo] ?? 0) + i.valor_total
     return acc
   }, {})
@@ -504,7 +532,10 @@ export default function FinanceiroPage() {
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-bold">{fmtBRLKpi(totalGeral)}</p>
-            <p className="text-xs text-muted-foreground mt-1">{itensFiltrados.length} item(ns) no período</p>
+            {/* itensQueContam, não itensFiltrados: esta contagem descreve o
+                que está somado no valor acima — contar item que não entrou
+                na soma contradiria o próprio número ao lado. */}
+            <p className="text-xs text-muted-foreground mt-1">{itensQueContam.length} item(ns) no período</p>
           </CardContent>
         </Card>
 
@@ -718,12 +749,32 @@ export default function FinanceiroPage() {
                   <TableCell className="text-right text-sm tabular-nums">{fmtBRL(item.valor_unitario)}</TableCell>
                   <TableCell className="text-right text-sm font-semibold tabular-nums">{fmtBRL(item.valor_total)}</TableCell>
                   <TableCell>
-                    <Badge
-                      variant="outline"
-                      className={`capitalize text-xs ${CENTRO_CUSTO_STYLE[item.centro_custo] ?? CENTRO_CUSTO_STYLE.outro}`}
-                    >
-                      {tipoLabel(item.centro_custo)}
-                    </Badge>
+                    <div className="flex flex-col items-start gap-1">
+                      <Badge
+                        variant="outline"
+                        className={`capitalize text-xs ${CENTRO_CUSTO_STYLE[item.centro_custo] ?? CENTRO_CUSTO_STYLE.outro}`}
+                      >
+                        {tipoLabel(item.centro_custo)}
+                      </Badge>
+                      {/* conta_como_compra === false: o item fica na lista (o
+                          dono precisa continuar vendo que ele existe), mas não
+                          soma no Total de Despesas nem no gráfico — este crachá
+                          explica por quê, em português simples, sem código fiscal. */}
+                      {item.conta_como_compra === false && (
+                        <Tooltip>
+                          <TooltipTrigger className="cursor-default bg-transparent border-0 p-0">
+                            <Badge variant="outline" className="text-xs bg-slate-100 text-slate-600 border-slate-200">
+                              Não conta como gasto
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-xs text-xs">
+                            Este item não entra no total porque o valor já foi cobrado em
+                            outra nota, foi recebido sem custo (bonificação/amostra), ou é
+                            mercadoria que só passou pela fazenda sem virar compra.
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell className="text-sm w-[160px]">
                     {item.origem === 'cartao' ? (
@@ -785,8 +836,12 @@ export default function FinanceiroPage() {
             {itensFiltrados.length > 0 && (
               <TableFooter>
                 <TableRow>
+                  {/* itensQueContam, mesma razão do KPI lá em cima: o total em
+                      dinheiro é a soma só dos itens que contam como gasto —
+                      contar a lista inteira aqui diria um número que o valor
+                      ao lado não sustenta. */}
                   <TableCell colSpan={3} className="text-right text-sm font-semibold text-muted-foreground py-3">
-                    Total ({itensFiltrados.length} {itensFiltrados.length === 1 ? 'item' : 'itens'})
+                    Total ({itensQueContam.length} {itensQueContam.length === 1 ? 'item' : 'itens'})
                   </TableCell>
                   <TableCell className="text-right text-sm font-bold py-3 tabular-nums">
                     {fmtBRL(totalGeral)}
