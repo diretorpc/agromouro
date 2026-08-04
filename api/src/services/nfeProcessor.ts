@@ -104,7 +104,7 @@ export function parseXmlNFe(xmlStr: string): NFeData | null {
         totalValue:   parseFloat(String(prod.vProd  ?? 0)),
         quantityTrib: parseFloat(String(prod.qTrib  ?? prod.qCom ?? 0)),
         unitTrib:     String(prod.uTrib ?? prod.uCom ?? 'un'),
-        ncm:          String(prod.NCM ?? '').replace(/\D/g, ''),  // ← NOVO: só dígitos
+        ncm:          String(prod.NCM ?? '').replace(/\D/g, ''),
         cfop:         String(prod.CFOP ?? '').replace(/\D/g, ''),
       }
     }).filter((i: NFeItem) => i.description)
@@ -240,6 +240,42 @@ function listaEmPortugues(itens: string[]): string {
   return `${itens.slice(0, -1).join(', ')} e ${itens[itens.length - 1]}`
 }
 
+// Achado CRÍTICO da revisão final (03/08/2026): o boleto (`contas`, decidido
+// pelos campos de pagamento da nota) e o gasto (`valorCompra`, decidido pelo
+// CFOP de cada item) são calculados por regras INDEPENDENTES — de propósito,
+// porque perder um boleto de verdade é o erro mais caro que existe (ver
+// contas/cfop.ts). Isso abre uma brecha: uma nota de remessa pode gerar um
+// boleto cheio enquanto lança pouco ou nenhum gasto. Caso medido: ERCAL nota
+// 82398 — CFOP 5116, tPag 15, zero duplicata → boleto de R$ 8.258,40, gasto
+// R$ 0,00.
+//
+// O problema não para no WhatsApp: `precisaCriarLancamento` (contas/pagamento.ts)
+// assume que toda conta vinda de NF-e JÁ tem lançamento — então quando o dono
+// marcar esse boleto como pago, nenhum lançamento é criado e aquele dinheiro
+// nunca aparece como despesa em lugar nenhum (ver comentário no topo daquele
+// arquivo). Esta função não conserta essa lacuna — ela só garante que o dono
+// SAIBA, na hora, que a nota vai cobrar mais do que lançou como gasto, para
+// que ele possa ir atrás da nota de faturamento que provavelmente já contou
+// esse valor.
+function linhaCobrancaMaiorQueGasto(contas: ContaDeNota[], valorCompra: number): string {
+  const totalBoletos = contas.reduce((soma, c) => soma + (c.valor ?? 0), 0)
+  const diferenca     = totalBoletos - valorCompra
+
+  // Tolerância de 1 centavo: arredondamento de ponto flutuante não pode disparar
+  // um aviso sobre uma diferença que não existe de verdade.
+  if (diferenca <= 0.01) return ''
+
+  const descricaoBoleto = contas.length > 1
+    ? `boletos somando ${reais(totalBoletos)}`
+    : `um boleto de ${reais(totalBoletos)}`
+
+  if (valorCompra <= 0) {
+    return `\n\n⚠️ *Atenção:* esta nota vai gerar ${descricaoBoleto}, mas esse valor não entrou como gasto porque já foi cobrado em outra nota. Se você não achar essa outra nota, me avise.`
+  }
+
+  return `\n\n⚠️ *Atenção:* esta nota vai gerar ${descricaoBoleto}, mas só ${reais(valorCompra)} entrou como gasto — ${reais(diferenca)} pode já ter sido cobrado em outra nota. Se você não achar essa outra nota, me avise.`
+}
+
 // ─── Processador principal ────────────────────────────────────────────────────
 export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = 'webhook', fazenda_id: string): Promise<void> {
   const { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items, duplicatas, formaPagamento } = nfe
@@ -275,6 +311,12 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
     const itensAtualizados:  string[] = []
     const itensAutoCriados:  string[] = []
     const itensNaoEstocados: string[] = []
+    // Um `contaComoCompraDoItem(index)` por item de `itensNaoEstocados`, na mesma
+    // ordem — usado só para decidir a legenda "(só financeiro)" da mensagem do
+    // WhatsApp (seção 4, abaixo). Família 'remessa sem compra' (ex.: CFOP 5912)
+    // não estoca E não conta como gasto — rotular esses itens de "só financeiro"
+    // seria mentira (achado da revisão final).
+    const itensNaoEstocadosContam: boolean[] = []
 
     // Quais itens contam como gasto na tela Financeiro. Segue a MESMA escada do
     // valorCompra lá embaixo — se divergir, a tela e o Dashboard mostram totais
@@ -317,6 +359,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
           fazenda_id,
         })
         itensNaoEstocados.push(`• ${item.quantity}${item.unit} ${item.description.trim().slice(0, 60)}`)
+        itensNaoEstocadosContam.push(contaComoCompraDoItem(index))
         continue
       }
 
@@ -375,6 +418,17 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
       else                    itensAtualizados.push(linha)
     }
 
+    // Rótulos (em português já pronto) dos itens que a regra NÃO considerou compra.
+    // Calculado uma vez só e reaproveitado em três lugares: o log de "sem valor de
+    // compra" (seção 3), a linha "Não entrou como gasto" e a frase da nota de
+    // faturamento (seção 4, abaixo) — antes eram duas contas iguais escritas em
+    // separado (achado da revisão final), risco de divergir se alguém mexer numa
+    // e esquecer a outra. Nunca mexe no objeto congelado que efeitoDoCfop()
+    // devolve, só lê o campo `rotulo`.
+    const rotulosNaoCompra = [...new Set(
+      efeitosDosItens.filter(e => !e.contaComoCompra).map(e => e.rotulo),
+    )]
+
     // 3. Lançamento financeiro — só o que é compra de verdade.
     //
     // O CFOP de cada item manda no gasto. Ver contas/cfop.ts.
@@ -416,12 +470,17 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
         fazenda_id,
       })
     } else {
-      // Mesmo filtro da linha do WhatsApp (`motivosNaoCompra` mais abaixo): só os
+      // Mesmo filtro da linha do WhatsApp (`rotulosNaoCompra` acima): só os
       // rótulos de quem NÃO é compra. Usar todos os itens aqui já produziu log
       // contraditório — "sem valor de compra (compra, bonificação...)" — numa
       // nota mista cujos itens de compra somaram zero.
-      const motivos = [...new Set(efeitosDosItens.filter(e => !e.contaComoCompra).map(e => e.rotulo))].join(', ')
-      console.log(`[NFeProcessor] NF-e ${numero}: sem valor de compra (${motivos}) — nenhum lançamento criado.`)
+      //
+      // Quando `rotulosNaoCompra` vem vazio (nota 100% compra, mas com valor
+      // total zero — ex.: nota de amostra sem preço nenhum), NÃO monta o
+      // parêntese: "sem valor de compra () — ..." é log quebrado e engana quem lê
+      // achando que há um motivo que não existe (achado da revisão final).
+      const motivos = rotulosNaoCompra.length > 0 ? ` (${rotulosNaoCompra.join(', ')})` : ''
+      console.log(`[NFeProcessor] NF-e ${numero}: sem valor de compra${motivos} — nenhum lançamento criado.`)
     }
 
     await supabase.from('notas_fiscais').update({ status: 'processada' }).eq('id', nfeId)
@@ -481,19 +540,27 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
     }
     if (itensNaoEstocados.length > 0) {
       if (itensAtualizados.length > 0 || itensAutoCriados.length > 0) mensagem += '\n\n'
-      mensagem += `📦 *Não estocados* (só financeiro):\n${itensNaoEstocados.join('\n')}`
+      // "(só financeiro)" só é verdade quando TODOS estes itens de fato contam
+      // como gasto — para a família 'remessa sem compra' (ex.: CFOP 5912) o item
+      // não estoca E não conta como gasto, então dizer "só financeiro" seria
+      // mentira (achado da revisão final). Nota mista (parte conta, parte não)
+      // usa uma legenda neutra em vez de escolher um dos dois lados errado.
+      const todosContam  = itensNaoEstocadosContam.every(c => c)
+      const algumContam  = itensNaoEstocadosContam.some(c => c)
+      const legenda = todosContam ? ' (só financeiro)'
+        : algumContam ? ' (só parte é financeiro)'
+        : ' (nem estoque, nem financeiro)'
+      mensagem += `📦 *Não estocados*${legenda}:\n${itensNaoEstocados.join('\n')}`
     }
 
     // O cabeçalho já mostrou o valor de FACE da nota (reais(valorTotal)). Sem esta
     // linha, o dono vê um número grande e acha que gastou aquilo — quando o CFOP
     // (código que diz o tipo da operação, explicado em contas/cfop.ts) apontou que
-    // não é bem assim. `rotulosNaoCompra` vem dos `rotulo` (texto em português já
-    // pronto) dos itens que a regra não considerou compra — nunca mexe no objeto
-    // congelado que efeitoDoCfop() devolve, só lê o campo. Calculado uma vez só e
-    // usado nos dois ramos abaixo (valorCompra === 0 e valorCompra parcial).
-    const rotulosNaoCompra = [...new Set(
-      efeitosDosItens.filter(e => !e.contaComoCompra).map(e => e.rotulo),
-    )]
+    // não é bem assim. `rotulosNaoCompra` (calculado logo no início da seção 3,
+    // acima) vem dos `rotulo` (texto em português já pronto) dos itens que a
+    // regra não considerou compra — nunca mexe no objeto congelado que
+    // efeitoDoCfop() devolve, só lê o campo. Usado nos dois ramos abaixo
+    // (valorCompra === 0 e valorCompra parcial).
     const motivosNaoCompra = listaEmPortugues(rotulosNaoCompra)
 
     // A frase "o custo já foi lançado na nota de faturamento" só é verdade quando
@@ -508,7 +575,13 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
       : ''
 
     if (valorCompra === 0) {
-      mensagem += `\n\n💰 *Esta nota não entrou como gasto* — motivo: ${motivosNaoCompra}.${fraseFaturamento}`
+      // Nota 100% compra (todosSaoCompra) mas com valorTotal zero (ex.: amostra
+      // sem preço algum) cai aqui com `rotulosNaoCompra` vazio — não existe
+      // motivo nenhum porque nenhum item foi excluído pela regra, só o valor
+      // deu zero. Sem esta guarda a frase saía quebrada: "— motivo: ." (achado
+      // da revisão final).
+      const motivo = motivosNaoCompra ? ` — motivo: ${motivosNaoCompra}.` : '.'
+      mensagem += `\n\n💰 *Esta nota não entrou como gasto*${motivo}${fraseFaturamento}`
     } else if (valorCompra < valorTotal) {
       mensagem += `\n\n💰 *Só parte da nota virou gasto:* ${reais(valorCompra)} contou como despesa, ${reais(valorTotal - valorCompra)} não contou (motivo: ${motivosNaoCompra}).`
     }
@@ -525,6 +598,16 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
       erroContas,
       parcelasPerdidas,
     )
+
+    // Finding 1b (revisão final) — avisa quando o boleto que ACABOU de ser criado
+    // vale mais do que a nota lançou como gasto. Ver comentário de
+    // linhaCobrancaMaiorQueGasto() acima e contas/pagamento.ts:1-10 para a lacuna
+    // que este aviso existe para compensar (precisaCriarLancamento não cria
+    // lançamento nenhum quando o dono pagar este boleto). Usa `contasCriadas`
+    // (o que REALMENTE foi gravado), não `duplicatas` cru — se o bloco de
+    // boletos acima falhar (erroContas), `contasCriadas` fica vazio e este
+    // aviso não dispara por engano sobre um boleto que nem foi criado.
+    mensagem += linhaCobrancaMaiorQueGasto(contasCriadas, valorCompra)
 
     await enviarMensagem(phone, mensagem)
 

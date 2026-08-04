@@ -771,3 +771,182 @@ describe('processarNFe — conta_como_compra grava a MESMA resposta da escada do
     expect(itens[0].payload.conta_como_compra).toBe(true)
   })
 })
+
+// ─── Finding 1b (revisão final) — avisar quando o boleto vale mais que o gasto ──
+//
+// pagamento.ts:1-10 documenta a regra "toda conta vinda de NF-e já tem
+// lançamento" — e ela deixou de ser verdade nesta branch (ver comentário
+// reescrito lá). Este bloco só garante que o dono SAIBA na hora, pelo
+// WhatsApp, quando isso acontece — não conserta a lacuna em
+// `precisaCriarLancamento`, que continua aberta de propósito.
+describe('processarNFe — avisa quando o boleto vale mais que o gasto lançado (Finding 1b)', () => {
+  beforeEach(() => {
+    chamadas.length = 0
+    estadoBanco.falharUpsertContas = false
+    vi.mocked(enviarMensagem).mockClear()
+  })
+
+  function item(overrides: Partial<NFeItem> = {}): NFeItem {
+    return {
+      description:  'ADUBO NPK 04-14-08',
+      quantity:     1000,
+      unit:         'kg',
+      unitValue:    8.25840,
+      totalValue:   8258.40,
+      quantityTrib: 1000,
+      unitTrib:     'kg',
+      ncm:          '31051000',   // fronteira determinística (cap. 31) — não depende do Haiku
+      cfop:         '5102',
+      ...overrides,
+    }
+  }
+
+  function nota(overrides: Partial<NFeData> = {}): NFeData {
+    return {
+      numero:         '82398',
+      dataEmissao:    '2026-07-31T10:00:00-03:00',
+      emitenteNome:   'ERCAL INSUMOS LTDA',
+      emitenteCnpj:   '44444444000199',
+      valorTotal:     8258.40,
+      items:          [item()],
+      duplicatas:     [],
+      formaPagamento: '15',
+      ...overrides,
+    }
+  }
+
+  it('caso ERCAL real: remessa (CFOP 5116) sem duplicata gera boleto de R$ 8.258,40 com gasto R$ 0,00 — avisa no WhatsApp', async () => {
+    await processarNFe(nota({ items: [item({ cfop: '5116' })] }), 'webhook', 'fazenda-fake-id')
+
+    const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
+    expect(mensagem).toContain(
+      '*Atenção:* esta nota vai gerar um boleto de R$ 8.258,40, mas esse valor não entrou como gasto porque já foi cobrado em outra nota. Se você não achar essa outra nota, me avise.',
+    )
+  })
+
+  it('compra normal (cobrado == lançado) NÃO dispara o aviso', async () => {
+    await processarNFe(
+      nota({ duplicatas: [{ numero: '001', vencimento: '2026-08-15', valor: 8258.40 }] }),
+      'webhook', 'fazenda-fake-id',
+    )
+
+    const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
+    expect(mensagem).not.toContain('Atenção: esta nota vai gerar')
+  })
+})
+
+// ─── Finding 2 (revisão final) — buraco de cobertura na escada do valorCompra ──
+//
+// PROBLEMA CONHECIDO, NÃO RESOLVIDO AQUI: quando `algumECompra` é true (pelo
+// menos 1 item conta como compra) E a nota tem duplicata de verdade, a escada
+// do valorCompra (nfeProcessor.ts, seção 3) soma só os itens de compra —
+// nunca cai no `temCobrancaReal` (que usaria o valor TOTAL da nota). Se a
+// duplicata cobrar mais do que a soma dos itens de compra, a diferença some
+// do gasto para sempre (Finding 1 documenta por quê: "já tem lançamento" não
+// é mais verdade para nota de remessa). Este teste prova o comportamento
+// ATUAL — não diz que ele está certo. Mudar a escada é decisão do dono, fora
+// do escopo desta revisão.
+describe('processarNFe — algumECompra=true COM duplicata: parte da cobrança some do gasto (Finding 2, comportamento atual)', () => {
+  beforeEach(() => {
+    chamadas.length = 0
+    estadoBanco.falharUpsertContas = false
+    vi.mocked(enviarMensagem).mockClear()
+  })
+
+  function item(overrides: Partial<NFeItem> = {}): NFeItem {
+    return {
+      description:  'ITEM',
+      quantity:     1,
+      unit:         'un',
+      unitValue:    0,
+      totalValue:   0,
+      quantityTrib: 1,
+      unitTrib:     'un',
+      ncm:          '31051000',   // fronteira determinística (cap. 31) — não depende do Haiku
+      cfop:         '5102',
+      ...overrides,
+    }
+  }
+
+  const insertsEm = (tabela: string) =>
+    chamadas.filter(c => c.table === tabela && c.method === 'insert')
+  const upsertsEm = (tabela: string) =>
+    chamadas.filter(c => c.table === tabela && c.method === 'upsert')
+
+  it('item de compra (R$ 1.000) + item de remessa (R$ 10.000) + duplicata de R$ 11.000 → lançamento fica em R$ 1.000, boleto sai em R$ 11.000', async () => {
+    const nfe: NFeData = {
+      numero:         '9999',
+      dataEmissao:    '2026-08-03T10:00:00-03:00',
+      emitenteNome:   'FORNECEDOR MISTO LTDA',
+      emitenteCnpj:   '55555555000199',
+      valorTotal:     11000,
+      items: [
+        item({ description: 'ADUBO COMPRADO', cfop: '5102', unitValue: 1000, totalValue: 1000 }),
+        item({ description: 'ADUBO EM REMESSA', cfop: '5117', unitValue: 10000, totalValue: 10000 }),
+      ],
+      duplicatas:     [{ numero: '001', vencimento: '2026-09-01', valor: 11000 }],
+      formaPagamento: '15',
+    }
+
+    await processarNFe(nfe, 'webhook', 'fazenda-fake-id')
+
+    const lancamentos = insertsEm('lancamentos_financeiros')
+    expect(lancamentos).toHaveLength(1)
+    expect(lancamentos[0].payload.valor).toBe(1000)   // só o item de compra — os R$ 10.000 da remessa somem do gasto
+
+    const boletos = upsertsEm('contas_a_pagar')
+    expect(boletos).toHaveLength(1)
+    expect(boletos[0].payload[0].valor).toBe(11000)   // o boleto cobra a nota inteira
+
+    // Finding 1b tem que disparar aqui: é exatamente o caso que ele existe para avisar.
+    const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
+    expect(mensagem).toContain('*Atenção:* esta nota vai gerar um boleto de R$ 11.000,00')
+    expect(mensagem).toContain('só R$ 1.000,00 entrou como gasto')
+    expect(mensagem).toContain('R$ 10.000,00 pode já ter sido cobrado em outra nota')
+  })
+})
+
+// ─── Finding 4 (revisão final) — frase quebrada quando não há motivo nenhum ─────
+//
+// Nota 100% compra (todosSaoCompra) com valorTotal zero: `valorCompra` dá 0,
+// mas `rotulosNaoCompra` vem vazio porque nenhum item foi excluído pela regra
+// — o valor deu zero por outro motivo (ex.: nota de amostra sem preço). Antes
+// deste conserto a mensagem saía "— motivo: ." e o log saía "sem valor de
+// compra ()", os dois quebrados na frente do dono.
+describe('processarNFe — nota 100% compra com valorTotal zero não quebra a frase (Finding 4)', () => {
+  beforeEach(() => {
+    chamadas.length = 0
+    estadoBanco.falharUpsertContas = false
+    vi.mocked(enviarMensagem).mockClear()
+  })
+
+  it('valorTotal 0, todos os itens são compra: mensagem diz "não entrou como gasto." sem "motivo:" pendurado', async () => {
+    const nfe: NFeData = {
+      numero:         '1234',
+      dataEmissao:    '2026-08-03T10:00:00-03:00',
+      emitenteNome:   'FORNECEDOR AMOSTRA LTDA',
+      emitenteCnpj:   '66666666000199',
+      valorTotal:     0,
+      items: [{
+        description:  'AMOSTRA SEM PRECO',
+        quantity:     1,
+        unit:         'un',
+        unitValue:    0,
+        totalValue:   0,
+        quantityTrib: 1,
+        unitTrib:     'un',
+        ncm:          '31051000',
+        cfop:         '5102',   // compra normal — todosSaoCompra
+      }],
+      duplicatas:     [],
+      formaPagamento: '01',   // dinheiro — bloqueia boleto, mantém o teste focado só na frase de gasto
+    }
+
+    await processarNFe(nfe, 'webhook', 'fazenda-fake-id')
+
+    const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
+    expect(mensagem).toContain('*Esta nota não entrou como gasto*.')
+    expect(mensagem).not.toContain('motivo:')
+    expect(mensagem).not.toContain('— .')
+  })
+})

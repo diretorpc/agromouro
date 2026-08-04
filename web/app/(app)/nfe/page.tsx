@@ -249,6 +249,14 @@ export default function NfePage() {
           .single()
         if (errNota) { setAddErro(errNota.message); return }
         if (nota && xmlPreview.itens.length > 0) {
+          // ATENÇÃO: este upload manual lê o XML no NAVEGADOR e grava direto em
+          // itens_nfe — não passa pelo processador da API (api/src/services/nfeProcessor.ts).
+          // Por isso NÃO grava `cfop` nem `conta_como_compra` aqui: uma nota de
+          // entrega (remessa) enviada por este caminho continua contando como
+          // gasto na tela Financeiro, do jeito que a Fase 2 (leitura de CFOP)
+          // consertou para o caminho automático. É raro — a porta principal é a
+          // integração automática via Make — mas é uma lacuna real, pendente de
+          // tarefa própria. Não resolvida nesta revisão.
           const { error: errItens } = await supabase.from('itens_nfe').insert(
             xmlPreview.itens.map(item => ({
               nota_fiscal_id: nota.id,
