@@ -831,7 +831,7 @@ describe('processarNFe — avisa quando o boleto vale mais que o gasto lançado 
     )
 
     const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
-    expect(mensagem).not.toContain('Atenção: esta nota vai gerar')
+    expect(mensagem).not.toContain('*Atenção:*')
   })
 })
 
@@ -947,6 +947,11 @@ describe('processarNFe — nota 100% compra com valorTotal zero não quebra a fr
     const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
     expect(mensagem).toContain('*Esta nota não entrou como gasto*.')
     expect(mensagem).not.toContain('motivo:')
-    expect(mensagem).not.toContain('— .')
+    // O texto quebrado que existia antes do conserto era exatamente este —
+    // "— motivo: ." (não "— ." sozinho, que nunca foi o bug real). Checar a
+    // frase inteira em vez de um pedaço aleatório: essa é a string que a
+    // regressão de fato produziria se a guarda em nfeProcessor.ts fosse
+    // revertida.
+    expect(mensagem).not.toContain('— motivo: .')
   })
 })

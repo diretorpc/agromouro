@@ -15,8 +15,8 @@
 // 5116, tPag 15, zero duplicata → gasto R$ 0,00, conta a pagar de R$ 8.258,40
 // cheia. Quando o dono marcar essa conta como paga, `precisaCriarLancamento`
 // abaixo devolve `false` (porque `nota_fiscal_id` não é nulo) e NENHUM
-// lançamento é criado — o dinheiro sai do banco e nunca aparece em despesa
-// nenhuma tela.
+// lançamento é criado — o dinheiro sai do banco e nunca aparece como despesa
+// em lugar nenhum.
 //
 // O código abaixo AINDA ASSUME a regra antiga (nota de NF-e sempre já tem
 // lançamento) e continua assim de propósito — não foi corrigido nesta revisão.
