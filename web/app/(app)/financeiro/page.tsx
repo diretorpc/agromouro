@@ -8,7 +8,7 @@ function setUrlParam(key: string, value: string, dflt = 'todos') {
   else p.set(key, value)
   window.history.replaceState(null, '', p.toString() ? `?${p}` : window.location.pathname)
 }
-import { DollarSign, TrendingDown, Package, Filter, Plus, Pencil, Trash2, ArrowUp, ArrowDown } from 'lucide-react'
+import { DollarSign, TrendingDown, Package, Filter, Plus, Pencil, Trash2, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip,
   ResponsiveContainer, Cell, LabelList,
@@ -249,6 +249,13 @@ function FormFields({ form, setForm }: { form: FormData; setForm: React.Dispatch
 export default function FinanceiroPage() {
   const [itens, setItens] = useState<ItemFinanceiro[]>([])
   const [loading, setLoading] = useState(true)
+  // Achado da revisão: uma falha de carregamento (ex.: migration 008 não
+  // rodou ainda no banco, e o select de conta_como_compra quebra a query
+  // inteira) deixava `itens` em [] e a tela renderizava "R$ 0,00" e "Nenhum
+  // lançamento encontrado" — silêncio indistinguível de "não há gasto". Este
+  // estado garante que uma falha de banco SEMPRE aparece como falha, nunca
+  // como tela vazia.
+  const [erroCarregamento, setErroCarregamento] = useState(false)
   const [filtroCentro, setFiltroCentro] = useState('todos')
   const [filtroMes, setFiltroMes] = useState('todos')
   const [filtroOrigem, setFiltroOrigem] = useState<'todos' | 'nfe' | 'cartao' | 'manual' | 'conta'>('todos')
@@ -263,6 +270,8 @@ export default function FinanceiroPage() {
   const [form, setForm] = useState<FormData>(FORM_VAZIO)
 
   async function load() {
+    setLoading(true)
+    setErroCarregamento(false)
     const [nfeResult, lancResult] = await Promise.all([
       supabase
         .from('itens_nfe')
@@ -280,6 +289,7 @@ export default function FinanceiroPage() {
 
     if (nfeResult.error || lancResult.error) {
       console.error('[Financeiro] Erro ao carregar:', nfeResult.error ?? lancResult.error)
+      setErroCarregamento(true)
       setLoading(false)
       return
     }
@@ -503,6 +513,10 @@ export default function FinanceiroPage() {
     .sort((a, b) => b.value - a.value)
 
   if (loading) return <PageSkeleton />
+  // Precisa vir ANTES de qualquer render de conteúdo — inclusive antes do
+  // "Nenhum lançamento encontrado" que o array vazio geraria mais abaixo.
+  // Uma falha de carregamento nunca pode se parecer com "não há gasto".
+  if (erroCarregamento) return <ErroCarregamento onRetry={load} />
 
   const filtroAtivo = filtroMes !== 'todos' || filtroCentro !== 'todos' || filtroOrigem !== 'todos'
   const filtroMesLabel = filtroMes === 'todos'
@@ -931,6 +945,29 @@ function PageSkeleton() {
         {Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-28 bg-muted rounded-xl" />)}
       </div>
       <div className="h-72 bg-muted rounded-xl" />
+    </div>
+  )
+}
+
+// Renderizado no lugar da tela inteira quando o carregamento falha — nunca
+// junto dos cartões de KPI, para não deixar "R$ 0,00" aparecer ao lado do
+// aviso. Um dado incerto sobre dinheiro é pior que nenhum dado.
+function ErroCarregamento({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="p-6">
+      <Card className="border-amber-200">
+        <CardContent className="flex flex-col items-center text-center gap-3 py-12">
+          <AlertTriangle className="h-8 w-8 text-amber-500" aria-hidden="true" />
+          <div className="space-y-1">
+            <p className="font-semibold text-foreground">Não foi possível carregar o Financeiro</p>
+            <p className="text-sm text-muted-foreground max-w-md">
+              Os lançamentos não carregaram agora. Nenhum valor desta tela pode ser
+              considerado correto até carregar de novo — não é que não há gastos.
+            </p>
+          </div>
+          <Button size="sm" onClick={onRetry}>Tentar novamente</Button>
+        </CardContent>
+      </Card>
     </div>
   )
 }

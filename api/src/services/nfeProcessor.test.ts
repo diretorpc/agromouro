@@ -564,6 +564,10 @@ describe('processarNFe — CFOP manda no estoque e no custo', () => {
     const itens = insertsEm('itens_nfe')
     expect(itens).toHaveLength(1)
     expect(itens[0].payload.cfop).toBe('5922')
+    // Insert "não estocado" — o outro dos dois pontos de gravação de
+    // conta_como_compra. 5922 (faturamento) conta como compra, então
+    // algumECompra é true e a regra do próprio item manda: true.
+    expect(itens[0].payload.conta_como_compra).toBe(true)
   })
 
   it('P1 — ERCAL: CFOP 5116, tPag 15, ZERO duplicatas → NAO cria lançamento (tPag não prova cobrança)', async () => {
