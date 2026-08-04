@@ -645,4 +645,26 @@ describe('processarNFe — CFOP manda no estoque e no custo', () => {
     expect(mensagem).toContain('bonificação (produto de graça)')
     expect(mensagem).not.toContain('nota de faturamento')
   })
+
+  // Task 5 — armadilha achada pelo controlador (não estava no brief original):
+  // linhaBoleto() checa `motivo` ANTES de olhar quantos boletos foram criados.
+  // Se nfeProcessor.ts continuasse passando o motivoSemBoleto "cru" (sem saber
+  // da duplicata), uma nota com tPag 90 + duplicata criaria um boleto de
+  // verdade E a mensagem diria "Sem boleto" — o dono nunca ia conferir.
+  it('tPag 90 COM duplicata: cria o boleto de verdade e a mensagem NAO diz "Sem boleto"', async () => {
+    await processarNFe(
+      nota({
+        formaPagamento: '90',
+        duplicatas: [{ numero: '001', vencimento: '2026-09-15', valor: 1060000 }],
+      }),
+      'webhook', 'fazenda-fake-id',
+    )
+
+    const upsertContas = chamadas.filter(c => c.table === 'contas_a_pagar' && c.method === 'upsert')
+    expect(upsertContas).toHaveLength(1)
+
+    const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
+    expect(mensagem).not.toContain('Sem boleto')
+    expect(mensagem).toContain('Boleto:')
+  })
 })

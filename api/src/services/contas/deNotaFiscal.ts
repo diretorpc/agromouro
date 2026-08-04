@@ -40,14 +40,43 @@ const MOTIVO_SEM_BOLETO: Record<string, string> = {
   '03': 'a nota diz cartão de crédito',
   '04': 'a nota diz cartão de débito',
   '05': 'a nota diz crédito da loja',
+  '90': 'a nota diz que não há pagamento',
 }
 
 // Devolve o motivo em português quando a nota NÃO deve gerar boleto, ou null quando deve.
 // Na dúvida (código desconhecido ou ausente), GERA: um boleto a mais é dispensado
 // num toque; um boleto a menos vence sem ninguém avisar.
+//
+// Responde só "o que este código sozinho significa" — não sabe nada sobre
+// duplicata. Continua exportada porque outro código depende desta pergunta
+// isolada; quem decide se a nota gera boleto de verdade é motivoSemBoletoDaNota
+// logo abaixo.
 export function motivoSemBoleto(formaPagamento: string | null): string | null {
   if (!formaPagamento) return null
   return MOTIVO_SEM_BOLETO[formaPagamento] ?? null
+}
+
+// Códigos que CEDEM à duplicata preenchida.
+// '90' ("sem pagamento") é a nota declarando que não há cobrança. Mas se ela vem
+// com quadro de duplicatas, o boleto é real e vence o código: existe revenda que
+// pula o passo do faturamento e embute a cobrança na própria nota de remessa —
+// perder esse boleto é o erro mais caro possível.
+// Cartão e dinheiro NÃO cedem: ali a cobrança vem pela fatura do cartão ou o
+// dinheiro já saiu, e a duplicata do XML é só o espelho da venda. Prova medida em
+// 04/08/2026: METAL AGRÍCOLA nota 51843 tem tPag '05' E duplicata preenchida.
+const CODIGOS_QUE_CEDEM_A_DUPLICATA = new Set(['90'])
+
+// Decide se a nota gera boleto levando em conta a duplicata — é esta função,
+// não motivoSemBoleto() sozinha, que contasDaNota() e parcelasDescartadasDaNota()
+// devem usar: as duas precisam concordar sobre a mesma nota.
+export function motivoSemBoletoDaNota(
+  formaPagamento: string | null,
+  temDuplicata: boolean,
+): string | null {
+  const motivo = motivoSemBoleto(formaPagamento)
+  if (!motivo) return null
+  if (temDuplicata && CODIGOS_QUE_CEDEM_A_DUPLICATA.has(formaPagamento ?? '')) return null
+  return motivo
 }
 
 // Mês de uma data 'YYYY-MM-DD' (ou ISO completo) como primeiro dia do mês.
@@ -126,7 +155,7 @@ function tentarContasDasDuplicatas(
 }
 
 export function contasDaNota(nfe: DadosParaConta): ContaDeNota[] {
-  if (motivoSemBoleto(nfe.formaPagamento)) return []
+  if (motivoSemBoletoDaNota(nfe.formaPagamento, nfe.duplicatas.length > 0)) return []
 
   const fornecedor = nfe.emitenteNome
 
@@ -170,7 +199,7 @@ export function contasDaNota(nfe: DadosParaConta): ContaDeNota[] {
 // parcela BOA sumiu no meio de uma nota que, no geral, deu certo — contasDaNota()
 // sozinha não tem como avisar isso, é função pura e não loga.
 export function parcelasDescartadasDaNota(nfe: DadosParaConta): ParcelaDescartada[] {
-  if (motivoSemBoleto(nfe.formaPagamento)) return []
+  if (motivoSemBoletoDaNota(nfe.formaPagamento, nfe.duplicatas.length > 0)) return []
   if (nfe.duplicatas.length === 0) return []
   return tentarContasDasDuplicatas(nfe, nfe.emitenteNome).descartadas
 }

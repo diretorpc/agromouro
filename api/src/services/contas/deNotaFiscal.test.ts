@@ -29,6 +29,66 @@ describe('motivoSemBoleto', () => {
   it('sem forma informada gera — ausencia nao e recusa', () => {
     expect(motivoSemBoleto(null)).toBeNull()
   })
+  it('90 (sem pagamento) NAO gera boleto', () => {
+    expect(motivoSemBoleto('90')).toBe('a nota diz que não há pagamento')
+  })
+})
+
+describe('contasDaNota — nota de entrega futura (tPag 90)', () => {
+  it('tPag 90 e sem duplicata: nao gera conta nenhuma (caso real SYAGRI 62402)', () => {
+    const r = contasDaNota({ ...base, formaPagamento: '90', duplicatas: [] })
+    expect(r).toEqual([])
+  })
+
+  it('tPag 90 MAS com duplicata: o boleto e real e a conta nasce (revenda que cobra na remessa)', () => {
+    const r = contasDaNota({
+      ...base, formaPagamento: '90',
+      duplicatas: [{ numero: '001', vencimento: '2026-09-15', valor: 5000 }],
+    })
+    expect(r).toHaveLength(1)
+    expect(r[0].vencimento).toBe('2026-09-15')
+  })
+
+  it('regressao do cartao: tPag 05 com duplicata continua sem gerar conta (METAL AGRICOLA 51843)', () => {
+    const r = contasDaNota({
+      ...base, formaPagamento: '05',
+      duplicatas: [{ numero: '001', vencimento: '2026-08-01', valor: 355 }],
+    })
+    expect(r).toEqual([])
+  })
+
+  it('regressao do cartao: tPag 03 com duplicata continua sem gerar conta', () => {
+    const r = contasDaNota({
+      ...base, formaPagamento: '03',
+      duplicatas: [{ numero: '001', vencimento: '2026-08-01', valor: 355 }],
+    })
+    expect(r).toEqual([])
+  })
+})
+
+describe('parcelasDescartadasDaNota — tPag 90 concorda com contasDaNota', () => {
+  it('tPag 90 com duplicata malformada: reporta a parcela descartada (nao recusa mais de saida)', () => {
+    const nfe = {
+      ...base, formaPagamento: '90',
+      duplicatas: [{ numero: '001', vencimento: '2026-13-40', valor: 100 }], // malformada
+    }
+    // contasDaNota estoura (unica parcela, malformada, nada sobra pra salvar) —
+    // e parcelasDescartadasDaNota concorda mostrando a parcela perdida.
+    expect(() => contasDaNota(nfe)).toThrow(/Nenhuma das 1 parcela\(s\)/)
+    const r = parcelasDescartadasDaNota(nfe)
+    expect(r).toHaveLength(1)
+    expect(r[0].numero).toBe('001')
+    expect(r[0].motivo).toMatch(/Data em formato inválido/)
+  })
+
+  it('tPag 05 com duplicata: lista vazia, igual contasDaNota (cartao nao cede a duplicata)', () => {
+    const nfe = {
+      ...base, formaPagamento: '05',
+      duplicatas: [{ numero: '001', vencimento: '2026-08-01', valor: 355 }],
+    }
+    expect(contasDaNota(nfe)).toEqual([])
+    expect(parcelasDescartadasDaNota(nfe)).toEqual([])
+  })
 })
 
 describe('contasDaNota', () => {

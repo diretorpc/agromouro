@@ -4,7 +4,7 @@ import { supabase } from './supabase'
 import { enviarMensagem } from './zapi'
 import { efeitoDoCfop } from './contas/cfop'
 import { gravarContasDaNota } from './contas/gravarDeNota'
-import { motivoSemBoleto, type ContaDeNota, type ParcelaDescartada } from './contas/deNotaFiscal'
+import { motivoSemBoletoDaNota, type ContaDeNota, type ParcelaDescartada } from './contas/deNotaFiscal'
 import { linhaBoleto } from './contas/avisoBoleto'
 import { hojeSaoPauloISO, reais } from './contas/formato'
 
@@ -505,7 +505,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
     // "vence em 1 dia" para um boleto que já tinha vencido há 2).
     mensagem += linhaBoleto(
       contasCriadas,
-      motivoSemBoleto(formaPagamento),
+      motivoSemBoletoDaNota(formaPagamento, duplicatas.length > 0),
       hojeSaoPauloISO(),
       erroContas,
       parcelasPerdidas,
