@@ -466,9 +466,10 @@ describe('processarNFe — CFOP manda no estoque e no custo', () => {
     vi.mocked(enviarMensagem).mockClear()
   })
 
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
+  // Sem afterEach(vi.restoreAllMocks): o beforeEach acima já reseta tudo que
+  // este describe usa. Os describes vizinhos não têm esse afterEach, e mantê-lo
+  // aqui só protegeria um describe que fosse anexado DEPOIS deste — hoje não
+  // existe nenhum.
 
   // Fábrica de item — NCM cap. 31 (fertilizante) cai na fronteira
   // determinística de fronteiraPorNCM(), então "estocável" nunca depende do
@@ -549,6 +550,10 @@ describe('processarNFe — CFOP manda no estoque e no custo', () => {
     const lancamentos = insertsEm('lancamentos_financeiros')
     expect(lancamentos).toHaveLength(1)
     expect(lancamentos[0].payload.valor).toBe(1060000)
+    // O item estocável também grava o cfop (o outro dos dois pontos de
+    // gravação) — sem isto, apagar `cfop: item.cfop || null` no insert
+    // "estocável" de itens_nfe deixaria a suíte inteira verde.
+    expect(insertsEm('itens_nfe')[0].payload.cfop).toBe('5102')
   })
 
   it('o item é gravado em itens_nfe em TODOS os casos, com o cfop — inclusive quando não entra no estoque', async () => {
@@ -601,6 +606,12 @@ describe('processarNFe — CFOP manda no estoque e no custo', () => {
     const lancamentos = insertsEm('lancamentos_financeiros')
     expect(lancamentos).toHaveLength(1)
     expect(lancamentos[0].payload.valor).toBe(1000)
+
+    // P3 — a mensagem do WhatsApp precisa contar os dois valores da nota mista:
+    // quanto contou como gasto e quanto não contou (ramo "Só parte da nota").
+    const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
+    expect(mensagem).toContain('R$ 1.000,00')
+    expect(mensagem).toContain('R$ 200,00')
   })
 
   it('P3 — nota que NAO virou gasto (remessa 5117, sem duplicata) avisa o motivo na mensagem do WhatsApp', async () => {
@@ -617,5 +628,21 @@ describe('processarNFe — CFOP manda no estoque e no custo', () => {
     const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
     expect(mensagem).not.toContain('não entrou como gasto')
     expect(mensagem).not.toContain('virou gasto')
+  })
+
+  // Finding 1 (rodada de revisão) — bonificação não tem nota de faturamento
+  // nenhuma em lugar nenhum: mandar o dono "avisar se ela não chegou" o
+  // colocaria atrás de um documento que nunca vai existir. Essa frase só faz
+  // sentido para a família 'entrega de pedido já faturado' (CFOP 5116/5117).
+  it('P3 — bonificação avisa que não virou gasto mas NAO promete nota de faturamento', async () => {
+    await processarNFe(
+      nota({ items: [item({ cfop: '5910', unitValue: 5, totalValue: 2000 })] }),
+      'webhook', 'fazenda-fake-id',
+    )
+
+    const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
+    expect(mensagem).toContain('não entrou como gasto')
+    expect(mensagem).toContain('bonificação (produto de graça)')
+    expect(mensagem).not.toContain('nota de faturamento')
   })
 })

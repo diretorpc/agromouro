@@ -401,7 +401,11 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
         fazenda_id,
       })
     } else {
-      const motivos = [...new Set(efeitosDosItens.map(e => e.rotulo))].join(', ')
+      // Mesmo filtro da linha do WhatsApp (`motivosNaoCompra` mais abaixo): só os
+      // rótulos de quem NÃO é compra. Usar todos os itens aqui já produziu log
+      // contraditório — "sem valor de compra (compra, bonificação...)" — numa
+      // nota mista cujos itens de compra somaram zero.
+      const motivos = [...new Set(efeitosDosItens.filter(e => !e.contaComoCompra).map(e => e.rotulo))].join(', ')
       console.log(`[NFeProcessor] NF-e ${numero}: sem valor de compra (${motivos}) — nenhum lançamento criado.`)
     }
 
@@ -468,18 +472,29 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
     // O cabeçalho já mostrou o valor de FACE da nota (reais(valorTotal)). Sem esta
     // linha, o dono vê um número grande e acha que gastou aquilo — quando o CFOP
     // (código que diz o tipo da operação, explicado em contas/cfop.ts) apontou que
-    // não é bem assim. `motivosNaoCompra` vem dos `rotulo` (texto em português já
+    // não é bem assim. `rotulosNaoCompra` vem dos `rotulo` (texto em português já
     // pronto) dos itens que a regra não considerou compra — nunca mexe no objeto
-    // congelado que efeitoDoCfop() devolve, só lê o campo.
+    // congelado que efeitoDoCfop() devolve, só lê o campo. Calculado uma vez só e
+    // usado nos dois ramos abaixo (valorCompra === 0 e valorCompra parcial).
+    const rotulosNaoCompra = [...new Set(
+      efeitosDosItens.filter(e => !e.contaComoCompra).map(e => e.rotulo),
+    )]
+    const motivosNaoCompra = listaEmPortugues(rotulosNaoCompra)
+
+    // A frase "o custo já foi lançado na nota de faturamento" só é verdade quando
+    // existe de fato uma nota de faturamento em algum lugar — ou seja, quando o
+    // motivo é 'entrega de pedido já faturado' (CFOP 5116/5117). Para bonificação,
+    // amostra grátis, remessa sem compra ou consignação NÃO existe nota de
+    // faturamento nenhuma — mandar o dono "avisar se ela não chegou" o colocaria
+    // atrás de um documento que nunca vai existir.
+    const temNotaDeFaturamento = rotulosNaoCompra.includes('entrega de pedido já faturado')
+    const fraseFaturamento = temNotaDeFaturamento
+      ? ' O custo já foi lançado na nota de faturamento. Se essa nota de faturamento nunca chegou, me avise.'
+      : ''
+
     if (valorCompra === 0) {
-      const motivosNaoCompra = listaEmPortugues([...new Set(
-        efeitosDosItens.filter(e => !e.contaComoCompra).map(e => e.rotulo),
-      )])
-      mensagem += `\n\n💰 *Esta nota não entrou como gasto* — motivo: ${motivosNaoCompra}. O custo já foi lançado na nota de faturamento. Se essa nota de faturamento nunca chegou, me avise.`
+      mensagem += `\n\n💰 *Esta nota não entrou como gasto* — motivo: ${motivosNaoCompra}.${fraseFaturamento}`
     } else if (valorCompra < valorTotal) {
-      const motivosNaoCompra = listaEmPortugues([...new Set(
-        efeitosDosItens.filter(e => !e.contaComoCompra).map(e => e.rotulo),
-      )])
       mensagem += `\n\n💰 *Só parte da nota virou gasto:* ${reais(valorCompra)} contou como despesa, ${reais(valorTotal - valorCompra)} não contou (motivo: ${motivosNaoCompra}).`
     }
 
