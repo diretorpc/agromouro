@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { XMLParser } from 'fast-xml-parser'
 import { supabase } from './supabase'
 import { enviarMensagem } from './zapi'
+import { efeitoDoCfop } from './contas/cfop'
 import { gravarContasDaNota } from './contas/gravarDeNota'
 import { motivoSemBoleto, type ContaDeNota, type ParcelaDescartada } from './contas/deNotaFiscal'
 import { linhaBoleto } from './contas/avisoBoleto'
@@ -231,6 +232,14 @@ async function vincularOuCriarInsumo(
   return { ...novoInsumo, autoCreated: true }
 }
 
+// Junta uma lista de motivos em português corrido, para a mensagem do WhatsApp:
+// "a", "a e b", "a, b e c". Usado com os `rotulo` de efeitoDoCfop — nunca
+// mexe no objeto EfeitoItem em si (ele vem congelado, ver contas/cfop.ts).
+function listaEmPortugues(itens: string[]): string {
+  if (itens.length <= 1) return itens[0] ?? ''
+  return `${itens.slice(0, -1).join(', ')} e ${itens[itens.length - 1]}`
+}
+
 // ─── Processador principal ────────────────────────────────────────────────────
 export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = 'webhook', fazenda_id: string): Promise<void> {
   const { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items, duplicatas, formaPagamento } = nfe
@@ -273,9 +282,14 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
       const tipo        = await categorizarItem(item.description)  // ainda alimenta insumos.tipo
       const estocavel   = vereditoNCM !== null ? vereditoNCM : TIPOS_ESTOCAVEIS.has(tipo)
 
-      // Itens não-estocáveis (peça, serviço, frete, combustível, RH, etc.):
-      // registra só na nota — sem criar insumo, estoque ou movimentação.
-      if (!estocavel) {
+      // O CFOP manda: ele diz se houve circulação física de mercadoria e se a
+      // nota é a compra ou só a entrega de algo já faturado. Ver contas/cfop.ts.
+      const efeito = efeitoDoCfop(item.cfop)
+
+      // Não entra no estoque quando o NCM/tipo diz que não é estocável OU quando o
+      // CFOP diz que não houve compra de mercadoria para o galpão (ex.: faturamento
+      // de entrega futura — a mercadoria ainda não saiu do fornecedor).
+      if (!estocavel || !efeito.entraNoEstoque) {
         await supabase.from('itens_nfe').insert({
           nota_fiscal_id: nfeId,
           descricao:      item.description.slice(0, 500),
@@ -284,6 +298,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
           valor_unitario: item.unitValue,
           valor_total:    item.totalValue,
           insumo_id:      null,
+          cfop:           item.cfop || null,
           fazenda_id,
         })
         itensNaoEstocados.push(`• ${item.quantity}${item.unit} ${item.description.trim().slice(0, 60)}`)
@@ -308,10 +323,14 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
         valor_unitario: item.unitValue,
         valor_total:    item.totalValue,
         insumo_id:      insumo.id,
+        cfop:           item.cfop || null,
         fazenda_id,
       })
 
-      if (precoUnitario > 0) {
+      // custoZero (bonificação, amostra grátis): o produto entra no galpão, mas
+      // sem custo — gravar o preço médio estragaria o custo do insumo com um
+      // valor que ninguém pagou (STJ, Súmula 457).
+      if (precoUnitario > 0 && !efeito.custoZero) {
         await supabase.from('estoque')
           .update({ preco_medio_unitario: parseFloat(precoUnitario.toFixed(4)) })
           .eq('insumo_id', insumo.id)
@@ -340,16 +359,51 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
       else                    itensAtualizados.push(linha)
     }
 
-    // 3. Lançamento financeiro
-    await supabase.from('lancamentos_financeiros').insert({
-      data:           dataFormatada,
-      descricao:      `NF-e ${numero} — ${emitenteNome}`,
-      valor:          valorTotal,
-      tipo:           'despesa',
-      categoria:      'insumos',
-      nota_fiscal_id: nfeId,
-      fazenda_id,
-    })
+    // 3. Lançamento financeiro — só o que é compra de verdade.
+    //
+    // O CFOP de cada item manda no gasto. Ver contas/cfop.ts.
+    //
+    // Nota normal (tudo é compra) usa o valor total da nota, NÃO a soma dos itens:
+    // o total traz frete, seguro e impostos que não aparecem em nenhum item. Trocar
+    // por soma de itens faria o gasto sair menor que o real, em silêncio.
+    //
+    // Nota misturada (parte compra, parte bonificação) soma só os itens de compra.
+    //
+    // A EXCEÇÃO que salva boleto: se nenhum item conta como compra MAS a nota traz
+    // quadro de duplicatas, ela está cobrando de verdade — existe revenda que pula
+    // o passo do faturamento e embute a cobrança na própria remessa. Só a duplicata
+    // prova isso: o tPag da nota de remessa é herdado da venda e não prova nada
+    // (ERCAL 82398: CFOP 5116 de entrega, com tPag 15 e zero duplicata).
+    const efeitosDosItens = itensSeguros.map(i => efeitoDoCfop(i.cfop))
+    const todosSaoCompra  = efeitosDosItens.every(e => e.contaComoCompra)
+    const algumECompra    = efeitosDosItens.some(e => e.contaComoCompra)
+    const temCobrancaReal = duplicatas.length > 0
+
+    const valorCompra =
+        todosSaoCompra  ? valorTotal
+      : algumECompra    ? itensSeguros
+                            .filter((_, n) => efeitosDosItens[n].contaComoCompra)
+                            .reduce((soma, i) => soma + (i.totalValue || 0), 0)
+      : temCobrancaReal ? valorTotal
+      :                   0
+
+    // Nota sem itens: `every` numa lista vazia é `true`, então cai em
+    // `todosSaoCompra` e usa valorTotal — é o comportamento de sempre, mantido
+    // de propósito (nunca houve item para decidir o contrário).
+    if (valorCompra > 0) {
+      await supabase.from('lancamentos_financeiros').insert({
+        data:           dataFormatada,
+        descricao:      `NF-e ${numero} — ${emitenteNome}`,
+        valor:          valorCompra,
+        tipo:           'despesa',
+        categoria:      'insumos',
+        nota_fiscal_id: nfeId,
+        fazenda_id,
+      })
+    } else {
+      const motivos = [...new Set(efeitosDosItens.map(e => e.rotulo))].join(', ')
+      console.log(`[NFeProcessor] NF-e ${numero}: sem valor de compra (${motivos}) — nenhum lançamento criado.`)
+    }
 
     await supabase.from('notas_fiscais').update({ status: 'processada' }).eq('id', nfeId)
 
@@ -409,6 +463,24 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
     if (itensNaoEstocados.length > 0) {
       if (itensAtualizados.length > 0 || itensAutoCriados.length > 0) mensagem += '\n\n'
       mensagem += `📦 *Não estocados* (só financeiro):\n${itensNaoEstocados.join('\n')}`
+    }
+
+    // O cabeçalho já mostrou o valor de FACE da nota (reais(valorTotal)). Sem esta
+    // linha, o dono vê um número grande e acha que gastou aquilo — quando o CFOP
+    // (código que diz o tipo da operação, explicado em contas/cfop.ts) apontou que
+    // não é bem assim. `motivosNaoCompra` vem dos `rotulo` (texto em português já
+    // pronto) dos itens que a regra não considerou compra — nunca mexe no objeto
+    // congelado que efeitoDoCfop() devolve, só lê o campo.
+    if (valorCompra === 0) {
+      const motivosNaoCompra = listaEmPortugues([...new Set(
+        efeitosDosItens.filter(e => !e.contaComoCompra).map(e => e.rotulo),
+      )])
+      mensagem += `\n\n💰 *Esta nota não entrou como gasto* — motivo: ${motivosNaoCompra}. O custo já foi lançado na nota de faturamento. Se essa nota de faturamento nunca chegou, me avise.`
+    } else if (valorCompra < valorTotal) {
+      const motivosNaoCompra = listaEmPortugues([...new Set(
+        efeitosDosItens.filter(e => !e.contaComoCompra).map(e => e.rotulo),
+      )])
+      mensagem += `\n\n💰 *Só parte da nota virou gasto:* ${reais(valorCompra)} contou como despesa, ${reais(valorTotal - valorCompra)} não contou (motivo: ${motivosNaoCompra}).`
     }
 
     // hojeSaoPauloISO(), NUNCA dataFormatada (data de EMISSÃO da nota): o "em N

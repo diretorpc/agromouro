@@ -98,7 +98,7 @@ vi.mock('@anthropic-ai/sdk', () => ({
   })),
 }))
 
-import { parseXmlNFe, processarNFe, type NFeData } from './nfeProcessor'
+import { parseXmlNFe, processarNFe, type NFeData, type NFeItem } from './nfeProcessor'
 import { enviarMensagem } from './zapi'
 
 // Monta uma NF-e mínima. `extra` entra dentro de <infNFe>, depois dos itens.
@@ -448,5 +448,174 @@ describe('processarNFe — "em N dias" usa hoje de verdade, não a data da nota 
     // nesta nota — as duas linhas têm que grafar igual.
     expect(ocorrenciasDoValor.length).toBe(2)
     expect(mensagem).not.toContain('R$ 1000.00')
+  })
+})
+
+// ─── TASK 4 — o CFOP manda no estoque e no custo ────────────────────────────
+//
+// Tasks 1-3 (commits ecc546e, 9dae886, bbaad64) deram ao sistema o dado (CFOP
+// lido do XML) e a regra pura (efeitoDoCfop, sem banco). Esta suíte prova que
+// processarNFe de fato OBEDECE a regra — sem isto, a nota de ENTREGA (CFOP
+// 5117) continuaria somando estoque e gasto, exatamente como o caso real da
+// SYAGRI de 400 t de cloreto de potássio (KCl) que gerou R$ 1,2 mi de gasto
+// fantasma (ver docs/superpowers/plans/2026-08-03-nfe-cfop-entrega-futura.md).
+describe('processarNFe — CFOP manda no estoque e no custo', () => {
+  beforeEach(() => {
+    chamadas.length = 0
+    estadoBanco.falharUpsertContas = false
+    vi.mocked(enviarMensagem).mockClear()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  // Fábrica de item — NCM cap. 31 (fertilizante) cai na fronteira
+  // determinística de fronteiraPorNCM(), então "estocável" nunca depende do
+  // mock do Haiku aqui. Só o CFOP muda entre os testes.
+  function item(overrides: Partial<NFeItem> = {}): NFeItem {
+    return {
+      description:  'CLORETO DE POTASSIO',
+      quantity:     400,
+      unit:         'TO',
+      unitValue:    2650,
+      totalValue:   1060000,
+      quantityTrib: 400,
+      unitTrib:     'TO',
+      ncm:          '31042000',
+      cfop:         '5102',
+      ...overrides,
+    }
+  }
+
+  function nota(overrides: Partial<NFeData> = {}): NFeData {
+    return {
+      numero:         '8001',
+      dataEmissao:    '2026-08-03T10:00:00-03:00',
+      emitenteNome:   'SYAGRI INSUMOS LTDA',
+      emitenteCnpj:   '33333333000199',
+      valorTotal:     1060000,
+      items:          [item()],
+      duplicatas:     [],
+      formaPagamento: '90',
+      ...overrides,
+    }
+  }
+
+  const insertsEm = (tabela: string) =>
+    chamadas.filter(c => c.table === tabela && c.method === 'insert')
+  const updatesEm = (tabela: string) =>
+    chamadas.filter(c => c.table === tabela && c.method === 'update')
+  const rpcChamado = (fn: string) =>
+    chamadas.some(c => c.table === '__rpc__' && c.method === fn)
+
+  it('remessa (CFOP 5117, sem duplicata, tPag 90 — caso SYAGRI real) soma estoque e NAO cria lançamento', async () => {
+    await processarNFe(nota({ items: [item({ cfop: '5117' })] }), 'webhook', 'fazenda-fake-id')
+
+    expect(insertsEm('movimentacoes_estoque')).toHaveLength(1)
+    expect(rpcChamado('incrementar_estoque')).toBe(true)
+    expect(insertsEm('lancamentos_financeiros')).toHaveLength(0)
+  })
+
+  it('faturamento (CFOP 5922) cria lançamento e NAO soma estoque', async () => {
+    await processarNFe(nota({ items: [item({ cfop: '5922' })] }), 'webhook', 'fazenda-fake-id')
+
+    expect(insertsEm('lancamentos_financeiros')).toHaveLength(1)
+    expect(insertsEm('movimentacoes_estoque')).toHaveLength(0)
+    expect(rpcChamado('incrementar_estoque')).toBe(false)
+  })
+
+  it('bonificação (CFOP 5910) soma estoque, NAO cria lançamento e NAO grava preço médio', async () => {
+    await processarNFe(
+      nota({ items: [item({ cfop: '5910', unitValue: 5, totalValue: 2000 })] }),
+      'webhook', 'fazenda-fake-id',
+    )
+
+    expect(insertsEm('movimentacoes_estoque')).toHaveLength(1)
+    expect(rpcChamado('incrementar_estoque')).toBe(true)
+    expect(insertsEm('lancamentos_financeiros')).toHaveLength(0)
+    // custoZero: mesmo com preço unitário > 0, o preço médio do insumo não pode
+    // ser mexido — bonificação não é compra (STJ, Súmula 457).
+    const atualizouPrecoMedio = updatesEm('estoque')
+      .some(u => u.payload && Object.prototype.hasOwnProperty.call(u.payload, 'preco_medio_unitario'))
+    expect(atualizouPrecoMedio).toBe(false)
+  })
+
+  it('venda normal (CFOP 5102) continua fazendo tudo como antes — proteção contra regressão', async () => {
+    await processarNFe(nota(), 'webhook', 'fazenda-fake-id')
+
+    expect(insertsEm('movimentacoes_estoque')).toHaveLength(1)
+    expect(rpcChamado('incrementar_estoque')).toBe(true)
+    const lancamentos = insertsEm('lancamentos_financeiros')
+    expect(lancamentos).toHaveLength(1)
+    expect(lancamentos[0].payload.valor).toBe(1060000)
+  })
+
+  it('o item é gravado em itens_nfe em TODOS os casos, com o cfop — inclusive quando não entra no estoque', async () => {
+    // CFOP 5922 (faturamento) não entra no estoque — passa pelo insert "não
+    // estocado" de itens_nfe, o outro dos dois pontos que precisam do cfop.
+    await processarNFe(nota({ items: [item({ cfop: '5922' })] }), 'webhook', 'fazenda-fake-id')
+
+    const itens = insertsEm('itens_nfe')
+    expect(itens).toHaveLength(1)
+    expect(itens[0].payload.cfop).toBe('5922')
+  })
+
+  it('P1 — ERCAL: CFOP 5116, tPag 15, ZERO duplicatas → NAO cria lançamento (tPag não prova cobrança)', async () => {
+    // Amostra real: .tmp/notas-exemplo/...823981...-nfe.xml — CFOP 5116,
+    // tPag=15 (boleto), zero <dup>, observação livre "NFe Mae:000080930".
+    await processarNFe(
+      nota({ items: [item({ cfop: '5116' })], duplicatas: [], formaPagamento: '15' }),
+      'webhook', 'fazenda-fake-id',
+    )
+
+    expect(insertsEm('lancamentos_financeiros')).toHaveLength(0)
+  })
+
+  it('P1 — escape hatch: remessa (5117) COM duplicata cria lançamento pelo valor total (revenda que cobra na entrega)', async () => {
+    await processarNFe(
+      nota({
+        items:      [item({ cfop: '5117' })],
+        duplicatas: [{ numero: '001', vencimento: '2026-08-30', valor: 1060000 }],
+      }),
+      'webhook', 'fazenda-fake-id',
+    )
+
+    const lancamentos = insertsEm('lancamentos_financeiros')
+    expect(lancamentos).toHaveLength(1)
+    expect(lancamentos[0].payload.valor).toBe(1060000)
+  })
+
+  it('P4 — nota mista soma só os itens de compra, não o total da nota', async () => {
+    await processarNFe(
+      nota({
+        items: [
+          item({ description: 'ADUBO NORMAL', cfop: '5102', totalValue: 1000 }),
+          item({ description: 'ADUBO BONIFICADO', cfop: '5910', totalValue: 200 }),
+        ],
+        valorTotal: 1200,
+      }),
+      'webhook', 'fazenda-fake-id',
+    )
+
+    const lancamentos = insertsEm('lancamentos_financeiros')
+    expect(lancamentos).toHaveLength(1)
+    expect(lancamentos[0].payload.valor).toBe(1000)
+  })
+
+  it('P3 — nota que NAO virou gasto (remessa 5117, sem duplicata) avisa o motivo na mensagem do WhatsApp', async () => {
+    await processarNFe(nota({ items: [item({ cfop: '5117' })] }), 'webhook', 'fazenda-fake-id')
+
+    const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
+    expect(mensagem).toContain('não entrou como gasto')
+    expect(mensagem).toContain('entrega de pedido já faturado')
+  })
+
+  it('P3 — nota de compra normal NAO ganha a linha extra sobre gasto', async () => {
+    await processarNFe(nota(), 'webhook', 'fazenda-fake-id')
+
+    const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
+    expect(mensagem).not.toContain('não entrou como gasto')
+    expect(mensagem).not.toContain('virou gasto')
   })
 })
