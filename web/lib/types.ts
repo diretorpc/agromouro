@@ -20,6 +20,7 @@ export interface Estoque {
   quantidade_atual: number
   quantidade_minima_alerta: number
   preco_medio_unitario: number
+  created_at: string
   insumos: Insumo
 }
 
