@@ -609,7 +609,24 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' | '
     // aviso não dispara por engano sobre um boleto que nem foi criado.
     mensagem += linhaCobrancaMaiorQueGasto(contasCriadas, valorCompra)
 
-    await enviarMensagem(phone, mensagem)
+    // ACHADO 1 (segunda revisão do Apolo, 05/08/2026): este envio ficava FORA
+    // de qualquer try/catch próprio — se o Z-API caísse na rede ou estourasse
+    // o timeout de 15s (zapi.ts rejeita a promessa nesses dois casos), o erro
+    // subia até o catch de baixo, que marca a nota inteira como 'erro' e
+    // relança. Depois que o upload manual passou a limpar a nota quando
+    // processarNFe falha (para não envenenar o caminho automático), isso virou
+    // grave: uma importação 100% certa — estoque, gasto e boleto já gravados —
+    // era APAGADA inteira só porque o aviso do WhatsApp não saiu. Mesmo
+    // princípio do bloco de boletos logo acima: um aviso perdido custa um
+    // aviso; a nota já está processada e não pode ser derrubada por causa dele.
+    try {
+      await enviarMensagem(phone, mensagem)
+    } catch (errZapi) {
+      console.error(
+        `[NFeProcessor] NF-e ${numero}: nota processada, mas o aviso do WhatsApp falhou:`,
+        errZapi instanceof Error ? errZapi.message : errZapi,
+      )
+    }
 
   } catch (err) {
     console.error(`[NFeProcessor] Erro ao processar NF-e ${numero}:`, err instanceof Error ? err.message : err)
