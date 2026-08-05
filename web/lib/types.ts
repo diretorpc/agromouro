@@ -125,3 +125,7 @@ export interface Cartao {
   ativo: boolean
   created_at: string
 }
+
+export type ResultadoImportacaoXml =
+  | { status: 'criada'; numero: string; emitenteNome: string; valorTotal: number }
+  | { status: 'duplicada'; nota: { id: string; numero: string; data_emissao: string; emitente_nome: string } }
