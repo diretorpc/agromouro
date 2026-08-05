@@ -955,3 +955,39 @@ describe('processarNFe — nota 100% compra com valorTotal zero não quebra a fr
     expect(mensagem).not.toContain('— motivo: .')
   })
 })
+
+describe('processarNFe — origem manual', () => {
+  const nfeMinima: NFeData = {
+    numero:         '9001',
+    dataEmissao:    '2026-08-05T10:00:00-03:00',
+    emitenteNome:   'CHEGOU STORE COMERCIO E DISTRIBUICAO LTDA',
+    emitenteCnpj:   '34839053000112',
+    valorTotal:     1199,
+    items: [{
+      description:  'Kit 4 Cartuchos Hp 950xl 951xl Original',
+      quantity:     1,
+      unit:         'UN',
+      unitValue:    1199,
+      totalValue:   1199,
+      quantityTrib: 1,
+      unitTrib:     'UN',
+      ncm:          '84433100',
+      cfop:         '5102',
+    }],
+    duplicatas:     [],
+    formaPagamento: null,
+  }
+
+  beforeEach(() => {
+    chamadas.length = 0
+    estadoBanco.falharUpsertContas = false
+    vi.mocked(enviarMensagem).mockClear()
+  })
+
+  it('mensagem do WhatsApp usa o ícone de upload manual, não o de e-mail nem webhook', async () => {
+    await processarNFe(nfeMinima, 'manual', 'fazenda-fake-id')
+
+    const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
+    expect(mensagem.startsWith('💻')).toBe(true)
+  })
+})
