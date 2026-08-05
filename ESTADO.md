@@ -125,7 +125,7 @@ Antes do CFOP isso era impossível: o sistema não distinguia "comprei" de "rece
   por pedido — agrupar por fornecedor + insumo é o que é confiável hoje.
 - O **retorno** de depósito (`5906`/`6906`) ainda não está mapeado (item acima).
 
-## 🟡 Segunda porta cega: upload manual de XML — PR #46 aberto, aguardando merge (05/08)
+## 🟢 Segunda porta cega: upload manual de XML — PR #46 aberto, TESTADO PONTA A PONTA (05/08)
 
 Consertada em `worktree-nfe-upload-manual`: upload de XML e "Excluir nota" passam a
 usar rotas novas no servidor (`POST /nfe/importar-xml`, `DELETE /nfe/:id`), que
@@ -145,11 +145,21 @@ pelo próprio Apolo.
 colada no SQL Editor do Supabase **antes** do código subir — sem ela, excluir nota
 responde 500. Instruções e consulta de verificação estão no fim do arquivo.
 
-⚠️ **Ainda não testado clique-a-clique num navegador logado** — precisa de credencial
-de produção, e isso não é digitado por IA. `tsc` limpo e 187 testes automatizados
-passam, mas falta a prova real: importar um XML pequeno e conferir na tela.
+✅ **Testado por ele mesmo, ao vivo, contra o banco de produção** (05/08, servidor
+local com a migration já rodada): XML de nota de serviço → rejeitado com aviso claro.
+XML já processado → "nota já está no sistema", sem erro técnico. XML de nota nova
+(sintética, "EMPRESA TESTE") → importou, CFOP lido, insumo criado e vinculado,
+estoque foi a 10 KG. Excluiu a nota → estoque voltou a **exatamente 0** (achado 3,
+transação atômica) e o gasto de R$ 50 **sumiu do Financeiro** (achado 1, lançamento
+fantasma) — sem sobrar rastro nos dois casos. Os 5 críticos + 2 bloqueantes das
+revisões do Apolo estão confirmados na prática, não só em teste automatizado.
 
-PR: https://github.com/diretorpc/agromouro/pull/46
+**Pronto para mergear.** PR: https://github.com/diretorpc/agromouro/pull/46
+
+📝 **Achado durante o teste, fora de escopo:** a tela `/estoque` está com a
+organização ruim — ele reclamou que um item aparece "no meio da página" em vez do
+topo. Não mexido agora (decisão dele: terminar os testes primeiro). Vira tarefa
+própria.
 
 ## 🟡 Nota de serviço (NFS-e) não é lida por NENHUM caminho automático — achado em 05/08/2026
 
