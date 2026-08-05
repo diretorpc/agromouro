@@ -11,6 +11,7 @@ import { ActionMenu, type ActionMenuItem } from '@/components/ui/action-menu'
 import { Trash2 } from 'lucide-react'
 import type { Estoque } from '@/lib/types'
 import { TIPOS, UNIDADES_BASE, SELECT_CLASS } from '../constants'
+import { formatTipoInsumo } from '@/lib/insumos'
 import type { useFiltrosProdutos } from '../hooks/use-filtros-produtos'
 
 type Filtros = ReturnType<typeof useFiltrosProdutos>
@@ -179,7 +180,7 @@ export function TabelaProdutos({
                       </TableCell>
                       <TableCell>
                         <span className="text-xs text-muted-foreground">
-                          {TIPOS.find(([v]) => v === item.insumos.tipo)?.[1] ?? item.insumos.tipo}
+                          {formatTipoInsumo(item.insumos.tipo)}
                         </span>
                       </TableCell>
                       <TableCell className={qtdClass}>
@@ -211,7 +212,7 @@ export function TabelaProdutos({
                       <div className="min-w-0">
                         <p className={`font-medium truncate ${negativo ? 'font-bold' : ''}`}>{item.insumos.nome}</p>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          {TIPOS.find(([v]) => v === item.insumos.tipo)?.[1] ?? item.insumos.tipo}
+                          {formatTipoInsumo(item.insumos.tipo)}
                         </p>
                       </div>
                       {situacaoBadge(negativo, critico)}
