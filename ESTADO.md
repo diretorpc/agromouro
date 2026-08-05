@@ -125,18 +125,31 @@ Antes do CFOP isso era impossível: o sistema não distinguia "comprei" de "rece
   por pedido — agrupar por fornecedor + insumo é o que é confiável hoje.
 - O **retorno** de depósito (`5906`/`6906`) ainda não está mapeado (item acima).
 
-## 🟡 Segunda porta cega: upload manual de XML
+## 🟡 Segunda porta cega: upload manual de XML — PR #46 aberto, aguardando merge (05/08)
 
-`web/app/(app)/nfe/page.tsx` faz a leitura do XML **no navegador** e insere em
-`itens_nfe` sem `cfop` e sem `conta_como_compra`. Toda nota que entrar por esse caminho
-volta a ter o defeito que o PR #45 consertou. Tarefa própria, ainda não aberta.
+Consertada em `worktree-nfe-upload-manual`: upload de XML e "Excluir nota" passam a
+usar rotas novas no servidor (`POST /nfe/importar-xml`, `DELETE /nfe/:id`), que
+reaproveitam o mesmo processador do e-mail. Modo "Manual" passa a criar o item do
+gasto. Exclusão virou função atômica no Postgres — devolve estoque, apaga boleto e
+lançamento financeiro, ou nada acontece.
 
-⚠️ **Achado investigando essa porta (05/08):** ela pode ENVENENAR o caminho automático.
-`nfeJaProcessada` (`api/src/services/nfeProcessor.ts:152`) só confere se a nota EXISTE
-em `notas_fiscais` — não se foi processada. Subir pela tela cria essa linha; quando a
-nota real chega por e-mail depois, o sistema acha que já foi feita e ignora **para
-sempre** (o botão "Reprocessar" não resolve — é o P5, só muda o status). Isso pesa
-contra manter a porta como está.
+**Duas rodadas de revisão do Apolo** — achou 15 + 2 problemas no total (lançamento
+fantasma ao excluir, exclusão sem transação, boleto pago apagado sem rastro,
+envenenamento no caminho de erro do upload, fazenda vinda do corpo do pedido em vez do
+login, WhatsApp derrubando importação boa quando a rede falha, função do banco sem
+trava de permissão). Todos os críticos/altos e os 2 bloqueantes foram corrigidos.
+Ficaram 7 achados médios/baixos, documentados no PR, decididos como não-bloqueantes
+pelo próprio Apolo.
+
+⚠️ **Antes do deploy:** `supabase/migrations/009_excluir_nota_fiscal.sql` precisa ser
+colada no SQL Editor do Supabase **antes** do código subir — sem ela, excluir nota
+responde 500. Instruções e consulta de verificação estão no fim do arquivo.
+
+⚠️ **Ainda não testado clique-a-clique num navegador logado** — precisa de credencial
+de produção, e isso não é digitado por IA. `tsc` limpo e 187 testes automatizados
+passam, mas falta a prova real: importar um XML pequeno e conferir na tela.
+
+PR: https://github.com/diretorpc/agromouro/pull/46
 
 ## 🟡 Nota de serviço (NFS-e) não é lida por NENHUM caminho automático — achado em 05/08/2026
 
