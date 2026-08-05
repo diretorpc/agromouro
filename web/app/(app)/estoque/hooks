@@ -1,0 +1,176 @@
+'use client'
+
+import { useCallback, useEffect, useState } from 'react'
+import { supabase } from '@/lib/supabase'
+import { api } from '@/lib/api'
+import type { Estoque, MovimentacaoEstoque } from '@/lib/types'
+
+export type MovimentacaoComFornecedor = MovimentacaoEstoque & {
+  fornecedor_nome?: string
+  talhao_nome?: string
+}
+
+type ResultadoExclusao = { ok: true } | { ok: false; erro: string }
+
+// Duplicado antes em handleEditMov e handleDeleteMov: lê o saldo atual do
+// banco (não confia em estado do React, que pode estar desatualizado),
+// soma o delta e nunca deixa passar de zero pra negativo por engano de
+// arredondamento — igual ao comportamento original nos dois lugares.
+async function ajustarSaldoPorDelta(insumoId: string, delta: number) {
+  if (delta === 0) return
+  const { data: row } = await supabase
+    .from('estoque').select('id, quantidade_atual').eq('insumo_id', insumoId).single()
+  if (!row) return
+  await supabase.from('estoque')
+    .update({ quantidade_atual: Math.max(0, row.quantidade_atual + delta) })
+    .eq('id', row.id)
+}
+
+export function useEstoqueData() {
+  const [estoque, setEstoque] = useState<Estoque[]>([])
+  const [movimentacoes, setMovimentacoes] = useState<MovimentacaoComFornecedor[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const recarregar = useCallback(async () => {
+    const [e, movs] = await Promise.all([
+      api.get<Estoque[]>('/estoque').catch(() => [] as Estoque[]),
+      supabase
+        .from('movimentacoes_estoque')
+        .select('*, insumos(nome, unidade), operacoes(talhoes(nome))')
+        .order('created_at', { ascending: false })
+        .limit(100)
+        .then(({ data }) => (data ?? []) as MovimentacaoEstoque[]),
+    ])
+
+    const nfeIds = [...new Set(movs.filter(m => m.nota_fiscal_id).map(m => m.nota_fiscal_id!))]
+    let fornecedorMap: Record<string, string> = {}
+    if (nfeIds.length > 0) {
+      const { data: notas } = await supabase
+        .from('notas_fiscais').select('id, emitente_nome').in('id', nfeIds)
+      fornecedorMap = Object.fromEntries((notas ?? []).map(n => [n.id, n.emitente_nome]))
+    }
+
+    setEstoque(e)
+    setMovimentacoes(movs.map(m => ({
+      ...m,
+      fornecedor_nome: m.nota_fiscal_id ? fornecedorMap[m.nota_fiscal_id] : undefined,
+      talhao_nome: m.operacoes?.talhoes?.nome ?? undefined,
+    })))
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { recarregar() }, [recarregar])
+
+  async function ajustarEstoque(item: Estoque, novaQuantidade: number, novoPreco: number | null) {
+    const diff = novaQuantidade - item.quantidade_atual
+    const tipo = diff >= 0 ? 'entrada' : 'saida'
+    await supabase.from('movimentacoes_estoque').insert({
+      insumo_id: item.insumo_id,
+      tipo,
+      quantidade: Math.abs(diff),
+      data: new Date().toISOString(),
+      origem: 'manual',
+    })
+    const updatePayload: Record<string, unknown> = { quantidade_atual: novaQuantidade }
+    if (novoPreco !== null && novoPreco >= 0) updatePayload.preco_medio_unitario = novoPreco
+    await supabase.from('estoque').update(updatePayload).eq('id', item.id)
+    await recarregar()
+  }
+
+  async function editarMovimentacao(
+    mov: MovimentacaoComFornecedor,
+    novoTipo: 'entrada' | 'saida',
+    novaQuantidade: number,
+    novaData: string,
+  ) {
+    let delta = mov.tipo === 'entrada' ? -mov.quantidade : mov.quantidade
+    delta += novoTipo === 'entrada' ? novaQuantidade : -novaQuantidade
+
+    await supabase.from('movimentacoes_estoque').update({
+      tipo: novoTipo,
+      quantidade: novaQuantidade,
+      data: novaData,
+    }).eq('id', mov.id)
+
+    await ajustarSaldoPorDelta(mov.insumo_id, delta)
+    await recarregar()
+  }
+
+  async function excluirMovimentacao(mov: MovimentacaoComFornecedor): Promise<ResultadoExclusao> {
+    const { data: deleted, error } = await supabase
+      .from('movimentacoes_estoque').delete().eq('id', mov.id).select('id')
+
+    if (error) return { ok: false, erro: `Erro: ${error.message}` }
+    if (!deleted || deleted.length === 0) {
+      return { ok: false, erro: 'Sem permissão para excluir. Verifique as políticas do banco.' }
+    }
+
+    const delta = mov.tipo === 'entrada' ? -mov.quantidade : mov.quantidade
+    await ajustarSaldoPorDelta(mov.insumo_id, delta)
+    await recarregar()
+    return { ok: true }
+  }
+
+  async function criarInsumo(form: {
+    nome: string; tipo: string; unidade: string
+    quantidade: number; minimo: number; preco: number
+  }) {
+    const { data: insumo, error } = await supabase
+      .from('insumos')
+      .insert({ nome: form.nome, tipo: form.tipo, unidade: form.unidade })
+      .select()
+      .single()
+    if (insumo && !error) {
+      await supabase.from('estoque').insert({
+        insumo_id: insumo.id,
+        quantidade_atual: form.quantidade,
+        quantidade_minima_alerta: form.minimo,
+        preco_medio_unitario: form.preco,
+      })
+      if (form.quantidade > 0) {
+        await supabase.from('movimentacoes_estoque').insert({
+          insumo_id: insumo.id,
+          tipo: 'entrada',
+          quantidade: form.quantidade,
+          data: new Date().toISOString(),
+          origem: 'manual',
+        })
+      }
+    }
+    await recarregar()
+  }
+
+  async function excluirInsumo(item: Estoque): Promise<ResultadoExclusao> {
+    const { error } = await supabase.from('insumos').delete().eq('id', item.insumo_id)
+    if (error) return { ok: false, erro: `Erro: ${error.message}` }
+    await recarregar()
+    return { ok: true }
+  }
+
+  async function converterUnidade(item: Estoque, novaUnidade: string, fator: number) {
+    const novaQtd   = parseFloat((item.quantidade_atual * fator).toFixed(3))
+    const novoPreco = item.preco_medio_unitario > 0
+      ? parseFloat((item.preco_medio_unitario / fator).toFixed(4))
+      : 0
+
+    await supabase.from('insumos').update({ unidade: novaUnidade }).eq('id', item.insumo_id)
+    await supabase.from('estoque').update({
+      quantidade_atual: novaQtd,
+      ...(novoPreco > 0 ? { preco_medio_unitario: novoPreco } : {}),
+    }).eq('id', item.id)
+    await supabase.from('movimentacoes_estoque').insert({
+      insumo_id: item.insumo_id,
+      tipo:      'entrada',
+      quantidade: novaQtd,
+      data:      new Date().toISOString().split('T')[0],
+      origem:    'correcao_unidade',
+    })
+    await recarregar()
+  }
+
+  return {
+    estoque, movimentacoes, loading, recarregar,
+    ajustarEstoque, editarMovimentacao, excluirMovimentacao,
+    criarInsumo, excluirInsumo, converterUnidade,
+  }
+}
