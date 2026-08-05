@@ -181,13 +181,33 @@ pensado para produto agrícola, não serviço. Não corrigido, não é urgente.
 Construir suporte de verdade é trabalho grande (cada prefeitura formata do seu jeito) —
 só vale quando a frequência justificar.
 
-## 🟢 Tela `/estoque` com organização ruim — achado em 05/08/2026
+## 🔵 Reorganização da tela `/estoque` — EM EXECUÇÃO desde a noite de 05/08/2026
 
-Queixa dele ao vivo enquanto testava o PR #46: um item aparece "no meio da página" em
-vez do topo. **Não é investigação, é reclamação** — não foi reproduzido nem olhado no
-código, e ele não disse qual item nem qual ordenação esperava. Decisão de 05/08: não
-mexer na hora, terminar os testes primeiro. Começa perguntando a ele o que deveria
-aparecer em cima.
+Ele pediu pra simplificar (achava a tela confusa) e pediu explicitamente pra chamar
+especialistas. Brainstorm + consulta a dois agentes (atlas = técnico, ui-ux-designer =
+UX) viraram spec aprovada por ele:
+`docs/superpowers/specs/2026-08-05-reorganizacao-estoque-design.md`. Plano de 13
+tarefas: `docs/superpowers/plans/2026-08-05-reorganizacao-estoque.md` — abas
+Produtos/Histórico, ordenar produtos por data de entrada no estoque (mais recente
+primeiro), esconder Excluir atrás de um menu "⋯", arquivo único de ~1000 linhas
+quebrado em hooks + componentes.
+
+Execução via subagent-driven-development (skill superpowers), num **worktree isolado**
+— `.worktrees/reorganizacao-estoque`, branch `reorganizacao-estoque`, nunca tocou a
+`main`. Progresso turno-a-turno e resultado de cada revisão ficam no ledger, **leia-o
+antes de continuar ou reconstruir qualquer coisa**:
+`.worktrees/reorganizacao-estoque/.superpowers/sdd/2026-08-05-reorganizacao-estoque/progress.md`
+
+**Combinado com ele (05/08, ele foi dormir):** autorizou terminar tudo sozinho —
+implementar, revisar, commitar, mergear, abrir PR. **Uma trava que fica de pé mesmo
+com essa autorização:** a Tarefa 1 do plano é uma migração nova
+(`supabase/migrations/010_estoque_created_at.sql`, adiciona `estoque.created_at`) que
+só ELE pode aplicar (login dele no Supabase, produção). **O merge para `main` fica
+parado até ele aplicar essa migração** — a Tarefa 2 já muda a API pra depender dessa
+coluna; mergear antes quebraria a tela de Estoque em produção (Vercel/Railway parecem
+fazer deploy automático ao mergear na `main`, não foi 100% confirmado). Quando ele
+acordar: rodar o SQL da migração 010 no Supabase Studio (comando pronto no próprio
+arquivo da migração), depois revisar e dar sinal verde pro merge do PR.
 
 ## ⚠️ `precisaCriarLancamento` — deliberadamente NÃO consertado
 
