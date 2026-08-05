@@ -24,6 +24,40 @@
 
 # 1. NO AR — o que o sistema já faz
 
+## Upload manual de XML — porta cega fechada, no ar desde 05/08/2026
+
+**PR #46 mergeado** (`3ea4f04`, squash) — https://github.com/diretorpc/agromouro/pull/46.
+Upload de XML e "Excluir nota" passaram a usar rotas do servidor
+(`POST /nfe/importar-xml`, `DELETE /nfe/:id`), que reaproveitam o mesmo processador do
+e-mail — antes a tela gravava direto no banco, sem ler CFOP. Modo "Manual" passou a criar
+o item do gasto. Exclusão virou função atômica no Postgres: devolve estoque, apaga boleto
+e lançamento financeiro, ou nada acontece.
+
+Migração `supabase/migrations/009_excluir_nota_fiscal.sql` **já rodada em produção** — foi
+ela que permitiu o teste ao vivo abaixo. Para reconferir em vez de acreditar neste texto,
+no SQL Editor do Supabase:
+`select proname from pg_proc where proname = 'excluir_nota_fiscal';`
+
+**Duas rodadas de revisão do Apolo** — 15 + 2 problemas achados (lançamento fantasma ao
+excluir, exclusão sem transação, boleto pago apagado sem rastro, envenenamento no caminho
+de erro do upload, fazenda vinda do corpo do pedido em vez do login, WhatsApp derrubando
+importação boa quando a rede falha, função do banco sem trava de permissão). Todos os
+críticos/altos e os 2 bloqueantes foram corrigidos. Ficaram 7 achados médios/baixos,
+documentados no PR, decididos como não-bloqueantes pelo próprio Apolo.
+
+✅ **HISTÓRIA de 05/08 — testado por ele, ao vivo, contra o banco de produção:** XML de
+nota de serviço → rejeitado com aviso claro. XML já processado → "nota já está no
+sistema", sem erro técnico. XML de nota nova (sintética, "EMPRESA TESTE") → importou,
+CFOP lido, insumo criado e vinculado, estoque foi a 10 KG. Excluiu a nota → estoque
+voltou a **exatamente 0** (achado 3, transação atômica) e o gasto de R$ 50 **sumiu do
+Financeiro** (achado 1, lançamento fantasma) — sem sobrar rastro nos dois casos. Os 5
+críticos + 2 bloqueantes das revisões do Apolo estão confirmados na prática, não só em
+teste automatizado.
+
+⚠️ Railway e Vercel fazem deploy automático no push — **não confirmado de fora** que os
+dois já servem o código novo (mesmo padrão de incerteza da Fase 2 de contas a pagar em
+31/07).
+
 ## CFOP de entrega futura — no ar desde 04/08/2026
 
 **PR #45 mergeado** (`d76f413`, squash). Migrações `007` (coluna `cfop`) e `008`
@@ -125,45 +159,6 @@ Antes do CFOP isso era impossível: o sistema não distinguia "comprei" de "rece
   por pedido — agrupar por fornecedor + insumo é o que é confiável hoje.
 - O **retorno** de depósito (`5906`/`6906`) ainda não está mapeado (item acima).
 
-## 🟢 Segunda porta cega: upload manual de XML — PR #46 MERGEADO em 05/08 (`3ea4f04`)
-
-Consertada em `worktree-nfe-upload-manual`: upload de XML e "Excluir nota" passam a
-usar rotas novas no servidor (`POST /nfe/importar-xml`, `DELETE /nfe/:id`), que
-reaproveitam o mesmo processador do e-mail. Modo "Manual" passa a criar o item do
-gasto. Exclusão virou função atômica no Postgres — devolve estoque, apaga boleto e
-lançamento financeiro, ou nada acontece.
-
-**Duas rodadas de revisão do Apolo** — achou 15 + 2 problemas no total (lançamento
-fantasma ao excluir, exclusão sem transação, boleto pago apagado sem rastro,
-envenenamento no caminho de erro do upload, fazenda vinda do corpo do pedido em vez do
-login, WhatsApp derrubando importação boa quando a rede falha, função do banco sem
-trava de permissão). Todos os críticos/altos e os 2 bloqueantes foram corrigidos.
-Ficaram 7 achados médios/baixos, documentados no PR, decididos como não-bloqueantes
-pelo próprio Apolo.
-
-⚠️ **Antes do deploy:** `supabase/migrations/009_excluir_nota_fiscal.sql` precisa ser
-colada no SQL Editor do Supabase **antes** do código subir — sem ela, excluir nota
-responde 500. Instruções e consulta de verificação estão no fim do arquivo.
-
-✅ **Testado por ele mesmo, ao vivo, contra o banco de produção** (05/08, servidor
-local com a migration já rodada): XML de nota de serviço → rejeitado com aviso claro.
-XML já processado → "nota já está no sistema", sem erro técnico. XML de nota nova
-(sintética, "EMPRESA TESTE") → importou, CFOP lido, insumo criado e vinculado,
-estoque foi a 10 KG. Excluiu a nota → estoque voltou a **exatamente 0** (achado 3,
-transação atômica) e o gasto de R$ 50 **sumiu do Financeiro** (achado 1, lançamento
-fantasma) — sem sobrar rastro nos dois casos. Os 5 críticos + 2 bloqueantes das
-revisões do Apolo estão confirmados na prática, não só em teste automatizado.
-
-**Mergeado na `main`** (`3ea4f04`, squash) e sincronizado com a `main` remota. Railway e
-Vercel fazem deploy automático no push — não confirmado de fora que os dois já servem
-o código novo (mesmo padrão de incerteza da Fase 2 de contas a pagar em 31/07). PR:
-https://github.com/diretorpc/agromouro/pull/46
-
-📝 **Achado durante o teste, fora de escopo:** a tela `/estoque` está com a
-organização ruim — ele reclamou que um item aparece "no meio da página" em vez do
-topo. Não mexido agora (decisão dele: terminar os testes primeiro). Vira tarefa
-própria.
-
 ## 🟡 Nota de serviço (NFS-e) não é lida por NENHUM caminho automático — achado em 05/08/2026
 
 `parseXmlNFe` (`api/src/services/nfeProcessor.ts:78`) exige a raiz `<NFe>`/`<infNFe>` —
@@ -185,6 +180,14 @@ pensado para produto agrícola, não serviço. Não corrigido, não é urgente.
 
 Construir suporte de verdade é trabalho grande (cada prefeitura formata do seu jeito) —
 só vale quando a frequência justificar.
+
+## 🟢 Tela `/estoque` com organização ruim — achado em 05/08/2026
+
+Queixa dele ao vivo enquanto testava o PR #46: um item aparece "no meio da página" em
+vez do topo. **Não é investigação, é reclamação** — não foi reproduzido nem olhado no
+código, e ele não disse qual item nem qual ordenação esperava. Decisão de 05/08: não
+mexer na hora, terminar os testes primeiro. Começa perguntando a ele o que deveria
+aparecer em cima.
 
 ## ⚠️ `precisaCriarLancamento` — deliberadamente NÃO consertado
 
