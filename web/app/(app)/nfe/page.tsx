@@ -210,16 +210,35 @@ export default function NfePage() {
           return
         }
       } else if (addMode === 'manual') {
-        const { error: errManual } = await supabase.from('notas_fiscais').insert({
+        const valor = parseFloat(manualForm.valor_total) || 0
+        const { data: nota, error: errManual } = await supabase.from('notas_fiscais').insert({
           fazenda_id: fazendaAtiva.id,
           numero: manualForm.numero.trim(),
           emitente_nome: manualForm.emitente_nome.trim(),
           emitente_cnpj: manualForm.emitente_cnpj.trim(),
           data_emissao: manualForm.data_emissao,
-          valor_total: parseFloat(manualForm.valor_total) || 0,
+          valor_total: valor,
           status: 'recebida',
-        })
+        }).select().single()
         if (errManual) { setAddErro(errManual.message); return }
+
+        // Sem isto, a nota fica com zero itens e o gasto some do Financeiro
+        // (que soma itens_nfe, não notas_fiscais) — achado em 05/08/2026.
+        if (nota) {
+          const { error: errItem } = await supabase.from('itens_nfe').insert({
+            nota_fiscal_id: nota.id,
+            fazenda_id: fazendaAtiva.id,
+            descricao: manualForm.emitente_nome.trim(),
+            quantidade: 1,
+            unidade: 'un',
+            valor_unitario: valor,
+            valor_total: valor,
+            insumo_id: null,
+            cfop: null,
+            conta_como_compra: true,
+          })
+          if (errItem) { setAddErro(errItem.message); return }
+        }
       }
       setAddDialog(false)
       setXmlFileContent(null)
