@@ -277,7 +277,7 @@ function linhaCobrancaMaiorQueGasto(contas: ContaDeNota[], valorCompra: number):
 }
 
 // ─── Processador principal ────────────────────────────────────────────────────
-export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = 'webhook', fazenda_id: string): Promise<void> {
+export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' | 'manual' = 'webhook', fazenda_id: string): Promise<void> {
   const { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items, duplicatas, formaPagamento } = nfe
 
   const itensSeguros  = items.slice(0, 200)
@@ -524,7 +524,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' = '
       )
     }
 
-    const icone = origem === 'email' ? '📧' : '📄'
+    const icone = origem === 'email' ? '📧' : origem === 'manual' ? '💻' : '📄'
     // reais() — a mesma função usada na linha do boleto duas seções abaixo, na
     // MESMA mensagem. Antes este cabeçalho escrevia `R$ ${valorTotal.toFixed(2)}`
     // à mão ("R$ 1000.00", sem separador de milhar nem vírgula brasileira) e o
