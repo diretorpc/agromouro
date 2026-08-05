@@ -141,26 +141,15 @@ export default function NfePage() {
     setDeletandoNota(true)
     setDeleteNotaErro(null)
 
-    await supabase.from('itens_nfe').delete().eq('nota_fiscal_id', deleteNota.id)
-
-    const { data: deleted, error } = await supabase
-      .from('notas_fiscais')
-      .delete()
-      .eq('id', deleteNota.id)
-      .select('id')
+    try {
+      await api.del(`/nfe/${deleteNota.id}`)
+    } catch (err) {
+      setDeletandoNota(false)
+      setDeleteNotaErro(err instanceof Error ? err.message : 'Erro ao excluir a nota.')
+      return
+    }
 
     setDeletandoNota(false)
-
-    if (error) {
-      setDeleteNotaErro(`Erro: ${error.message}`)
-      return
-    }
-
-    if (!deleted || deleted.length === 0) {
-      setDeleteNotaErro('Sem permissão para excluir esta nota. Verifique as políticas do banco.')
-      return
-    }
-
     if (selected?.id === deleteNota.id) setSelected(null)
     setDeleteNota(null)
     loadNotas()
