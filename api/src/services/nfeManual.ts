@@ -34,68 +34,72 @@ export async function importarXmlManual(xml: string, fazenda_id: string): Promis
     await processarNFe(nfe, 'manual', fazenda_id)
     return { status: 'criada', numero: nfe.numero, emitenteNome: nfe.emitenteNome, valorTotal: nfe.valorTotal }
   } catch (err) {
-    return { status: 'erro', mensagem: err instanceof Error ? err.message : 'Erro desconhecido' }
+    const mensagem = err instanceof Error ? err.message : 'Erro desconhecido'
+
+    // ACHADO 2 (revisão do Apolo, 05/08/2026): processarNFe grava a nota como
+    // PRIMEIRO passo (status 'processando'), antes de tocar em qualquer item —
+    // não depois de terminar, como o design original desta função assumia
+    // (errado, corrigido aqui). Se o processamento falhar no meio (ex.: a IA
+    // de classificação fora do ar), a casca fica no banco com status 'erro' e
+    // NUNCA é removida. Quando a nota de verdade chegar depois por e-mail,
+    // nfeJaProcessada() só confere se a nota EXISTE — acha a casca, e ignora a
+    // nota real para sempre (o mesmo envenenamento que este trabalho existe
+    // para fechar, só que agora escondido no caminho de erro). Por isso: se
+    // processarNFe falhou, procurar a casca pela mesma chave que ele usa
+    // (número + CNPJ + fazenda) e apagar antes de devolver o erro.
+    const { data: notaFalha } = await supabase
+      .from('notas_fiscais')
+      .select('id')
+      .eq('numero', nfe.numero)
+      .eq('emitente_cnpj', nfe.emitenteCnpj)
+      .eq('fazenda_id', fazenda_id)
+      .maybeSingle()
+
+    if (notaFalha) {
+      const { error: errLimpeza } = await supabase.rpc('excluir_nota_fiscal', {
+        p_nota_id:    notaFalha.id,
+        p_fazenda_id: fazenda_id,
+      })
+      if (errLimpeza) {
+        // Não é para acontecer (nota recém-criada não tem boleto pago nem
+        // está 'processando' de novo) — mas se acontecer, falha ruidosamente
+        // no log em vez de mascarar a falha original.
+        console.error('[NFeManual] Falha ao limpar nota após erro de processamento:', errLimpeza.message)
+      }
+    }
+
+    return { status: 'erro', mensagem }
   }
 }
 
 export type ResultadoExclusao =
   | { status: 'excluida' }
   | { status: 'nao_encontrada' }
+  | { status: 'em_processamento' }
+  | { status: 'boleto_pago' }
   | { status: 'erro'; mensagem: string }
 
-// Desfaz tudo que a nota criou, na ordem que respeita as referências entre
-// tabelas. Se qualquer passo falhar, PARA ali — nunca segue apagando o resto
-// e finge que deu certo (mesmo princípio de contas/cfop.ts: falhar ruidosamente
-// é sempre melhor que silencioso).
-export async function excluirNotaManual(notaId: string): Promise<ResultadoExclusao> {
-  try {
-    const { data: movimentacoes, error: errMov } = await supabase
-      .from('movimentacoes_estoque')
-      .select('insumo_id, tipo, quantidade')
-      .eq('nota_fiscal_id', notaId)
-    if (errMov) throw errMov
+// ACHADOS 1, 3 e 5 (revisão do Apolo, 05/08/2026): a versão anterior desta
+// função apagava em vários passos separados, do lado do Node — sem
+// transação (falha no meio podia devolver o mesmo estoque duas vezes numa
+// segunda tentativa), sem apagar o lançamento financeiro (gasto fantasma
+// ficava para sempre no Dashboard), e sem checar se o boleto já tinha sido
+// pago (apagava o único rastro do pagamento). A exclusão inteira agora é
+// UMA função no Postgres (migration 009_excluir_nota_fiscal.sql) — ou tudo
+// acontece, ou nada acontece. Esta função só traduz o resultado.
+export async function excluirNotaManual(notaId: string, fazendaId: string): Promise<ResultadoExclusao> {
+  const { error } = await supabase.rpc('excluir_nota_fiscal', {
+    p_nota_id:    notaId,
+    p_fazenda_id: fazendaId,
+  })
 
-    // incrementar_estoque soma p_quantidade ao saldo — entrada devolve com
-    // sinal negativo, saída (defensivo; não deveria existir vindo de NF-e)
-    // devolve com sinal positivo.
-    for (const mov of movimentacoes ?? []) {
-      const delta = mov.tipo === 'entrada' ? -mov.quantidade : mov.quantidade
-      const { error: errRpc } = await supabase.rpc('incrementar_estoque', {
-        p_insumo_id:  mov.insumo_id,
-        p_quantidade: delta,
-      })
-      if (errRpc) throw errRpc
-    }
+  if (!error) return { status: 'excluida' }
 
-    const { error: errDelMov } = await supabase
-      .from('movimentacoes_estoque')
-      .delete()
-      .eq('nota_fiscal_id', notaId)
-    if (errDelMov) throw errDelMov
+  const msg = error.message ?? ''
+  if (msg.includes('nota_nao_encontrada'))   return { status: 'nao_encontrada' }
+  if (msg.includes('nota_em_processamento')) return { status: 'em_processamento' }
+  if (msg.includes('boleto_ja_pago'))        return { status: 'boleto_pago' }
 
-    const { error: errDelContas } = await supabase
-      .from('contas_a_pagar')
-      .delete()
-      .eq('nota_fiscal_id', notaId)
-    if (errDelContas) throw errDelContas
-
-    const { error: errDelItens } = await supabase
-      .from('itens_nfe')
-      .delete()
-      .eq('nota_fiscal_id', notaId)
-    if (errDelItens) throw errDelItens
-
-    const { data: deleted, error: errDelNota } = await supabase
-      .from('notas_fiscais')
-      .delete()
-      .eq('id', notaId)
-      .select('id')
-    if (errDelNota) throw errDelNota
-    if (!deleted || deleted.length === 0) return { status: 'nao_encontrada' }
-
-    return { status: 'excluida' }
-  } catch (err) {
-    console.error('[NFeManual] Erro ao excluir nota:', err instanceof Error ? err.message : err)
-    return { status: 'erro', mensagem: err instanceof Error ? err.message : 'Erro desconhecido' }
-  }
+  console.error('[NFeManual] Erro ao excluir nota:', msg)
+  return { status: 'erro', mensagem: msg }
 }

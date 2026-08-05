@@ -185,7 +185,6 @@ export default function NfePage() {
         try {
           const resultado = await api.post<ResultadoImportacaoXml>('/nfe/importar-xml', {
             xml: xmlFileContent,
-            fazenda_id: fazendaAtiva.id,
           })
           if (resultado.status === 'duplicada') {
             const dataFmt = resultado.nota.data_emissao

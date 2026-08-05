@@ -8,38 +8,29 @@ vi.mock('./nfeProcessor', () => ({
 
 const { estadoBanco, chamadasRpc } = vi.hoisted(() => ({
   estadoBanco: {
-    duplicada:     { data: null as any, error: null as any },
-    movimentacoes: { data: [] as any[], error: null as any },
-    deleteMov:     { error: null as any },
-    deleteContas:  { error: null as any },
-    deleteItens:   { error: null as any },
-    deleteNota:    { data: [{ id: 'nota-1' }] as any[] | null, error: null as any },
-    rpcErro:       null as any,
+    // Resposta do único SELECT em notas_fiscais que este arquivo mocka —
+    // reaproveitado pelas duas buscas de importarXmlManual (nota duplicada
+    // E nota que falhou no meio do processamento), porque as duas fazem a
+    // MESMA forma de consulta (.select().eq().eq().eq().maybeSingle()) e
+    // cada teste só exercita uma das duas por vez.
+    notaSelect: { data: null as any, error: null as any },
+    rpcErro:    null as any,
   },
   chamadasRpc: [] as { fn: string; args: any }[],
 }))
 
 vi.mock('./supabase', () => {
-  function builder(table: string) {
-    let isDelete = false
+  function builder() {
     const obj: any = {
       select:      vi.fn(() => obj),
       eq:          vi.fn(() => obj),
-      delete:      vi.fn(() => { isDelete = true; return obj }),
-      maybeSingle: vi.fn(() => Promise.resolve(estadoBanco.duplicada)),
-      then: (resolve: any) => {
-        if (table === 'movimentacoes_estoque') return resolve(isDelete ? estadoBanco.deleteMov : estadoBanco.movimentacoes)
-        if (table === 'contas_a_pagar')        return resolve(estadoBanco.deleteContas)
-        if (table === 'itens_nfe')             return resolve(estadoBanco.deleteItens)
-        if (table === 'notas_fiscais')         return resolve(estadoBanco.deleteNota)
-        return resolve({ data: null, error: null })
-      },
+      maybeSingle: vi.fn(() => Promise.resolve(estadoBanco.notaSelect)),
     }
     return obj
   }
   return {
     supabase: {
-      from: vi.fn((table: string) => builder(table)),
+      from: vi.fn(() => builder()),
       rpc:  vi.fn((fn: string, args: any) => {
         chamadasRpc.push({ fn, args })
         return Promise.resolve({ error: estadoBanco.rpcErro })
@@ -56,7 +47,9 @@ describe('importarXmlManual', () => {
     vi.mocked(parseXmlNFe).mockReset()
     vi.mocked(nfeJaProcessada).mockReset()
     vi.mocked(processarNFe).mockReset()
-    estadoBanco.duplicada = { data: null, error: null }
+    estadoBanco.notaSelect = { data: null, error: null }
+    estadoBanco.rpcErro = null
+    chamadasRpc.length = 0
   })
 
   const nfeFake = {
@@ -77,7 +70,7 @@ describe('importarXmlManual', () => {
   it('nota já existe: devolve status duplicada com os dados da nota encontrada', async () => {
     vi.mocked(parseXmlNFe).mockReturnValue(nfeFake)
     vi.mocked(nfeJaProcessada).mockResolvedValue(true)
-    estadoBanco.duplicada = {
+    estadoBanco.notaSelect = {
       data: { id: 'nota-existente', numero: '9001', data_emissao: '2026-06-02', emitente_nome: 'CHEGOU STORE' },
       error: null,
     }
@@ -100,12 +93,14 @@ describe('importarXmlManual', () => {
 
     expect(resultado.status).toBe('criada')
     expect(processarNFe).toHaveBeenCalledWith(nfeFake, 'manual', 'fazenda-1')
+    expect(chamadasRpc).toHaveLength(0)
   })
 
-  it('processarNFe lança erro: devolve status erro com a mensagem', async () => {
+  it('processarNFe lança erro SEM ter deixado casca no banco: devolve erro e não chama limpeza', async () => {
     vi.mocked(parseXmlNFe).mockReturnValue(nfeFake)
     vi.mocked(nfeJaProcessada).mockResolvedValue(false)
     vi.mocked(processarNFe).mockRejectedValue(new Error('banco fora do ar'))
+    estadoBanco.notaSelect = { data: null, error: null }
 
     const resultado = await importarXmlManual('<xml/>', 'fazenda-1')
 
@@ -113,53 +108,73 @@ describe('importarXmlManual', () => {
     if (resultado.status === 'erro') {
       expect(resultado.mensagem).toBe('banco fora do ar')
     }
+    expect(chamadasRpc).toHaveLength(0)
+  })
+
+  it('ACHADO 2: processarNFe lança erro COM casca já gravada — limpa a nota antes de devolver o erro', async () => {
+    vi.mocked(parseXmlNFe).mockReturnValue(nfeFake)
+    vi.mocked(nfeJaProcessada).mockResolvedValue(false)
+    vi.mocked(processarNFe).mockRejectedValue(new Error('IA de classificação fora do ar'))
+    // processarNFe grava a nota como PRIMEIRO passo — se falhar depois, a
+    // casca fica no banco com status 'erro'. Esta busca simula encontrá-la.
+    estadoBanco.notaSelect = { data: { id: 'nota-casca-8001' }, error: null }
+
+    const resultado = await importarXmlManual('<xml/>', 'fazenda-1')
+
+    expect(resultado.status).toBe('erro')
+    expect(chamadasRpc).toEqual([
+      { fn: 'excluir_nota_fiscal', args: { p_nota_id: 'nota-casca-8001', p_fazenda_id: 'fazenda-1' } },
+    ])
   })
 })
 
 describe('excluirNotaManual', () => {
   beforeEach(() => {
-    estadoBanco.movimentacoes = { data: [], error: null }
-    estadoBanco.deleteMov     = { error: null }
-    estadoBanco.deleteContas  = { error: null }
-    estadoBanco.deleteItens   = { error: null }
-    estadoBanco.deleteNota    = { data: [{ id: 'nota-1' }], error: null }
-    estadoBanco.rpcErro       = null
+    estadoBanco.rpcErro = null
     chamadasRpc.length = 0
   })
 
-  it('nota sem movimentação de estoque: apaga tudo sem chamar o RPC', async () => {
-    const resultado = await excluirNotaManual('nota-1')
+  it('RPC sem erro: devolve excluida', async () => {
+    const resultado = await excluirNotaManual('nota-1', 'fazenda-1')
 
     expect(resultado.status).toBe('excluida')
-    expect(chamadasRpc).toHaveLength(0)
-  })
-
-  it('nota com entrada em estoque: devolve a quantidade com sinal negativo', async () => {
-    estadoBanco.movimentacoes = {
-      data: [{ insumo_id: 'insumo-1', tipo: 'entrada', quantidade: 50 }],
-      error: null,
-    }
-
-    await excluirNotaManual('nota-1')
-
     expect(chamadasRpc).toEqual([
-      { fn: 'incrementar_estoque', args: { p_insumo_id: 'insumo-1', p_quantidade: -50 } },
+      { fn: 'excluir_nota_fiscal', args: { p_nota_id: 'nota-1', p_fazenda_id: 'fazenda-1' } },
     ])
   })
 
-  it('nota que não existe mais: devolve nao_encontrada', async () => {
-    estadoBanco.deleteNota = { data: [], error: null }
+  it('RPC devolve nota_nao_encontrada: devolve nao_encontrada', async () => {
+    estadoBanco.rpcErro = { message: 'nota_nao_encontrada' }
 
-    const resultado = await excluirNotaManual('nota-inexistente')
+    const resultado = await excluirNotaManual('nota-inexistente', 'fazenda-1')
 
     expect(resultado.status).toBe('nao_encontrada')
   })
 
-  it('erro ao apagar o boleto: para ali e não tenta apagar os itens', async () => {
-    estadoBanco.deleteContas = { error: { message: 'falha de rede' } }
+  it('RPC devolve nota_em_processamento: devolve em_processamento', async () => {
+    estadoBanco.rpcErro = { message: 'nota_em_processamento' }
 
-    const resultado = await excluirNotaManual('nota-1')
+    const resultado = await excluirNotaManual('nota-1', 'fazenda-1')
+
+    expect(resultado.status).toBe('em_processamento')
+  })
+
+  it('RPC devolve boleto_ja_pago: devolve boleto_pago', async () => {
+    estadoBanco.rpcErro = { message: 'boleto_ja_pago' }
+
+    const resultado = await excluirNotaManual('nota-1', 'fazenda-1')
+
+    expect(resultado.status).toBe('boleto_pago')
+  })
+
+  it('RPC devolve erro desconhecido: devolve erro com a mensagem original', async () => {
+    estadoBanco.rpcErro = { message: 'connection timeout' }
+
+    const resultado = await excluirNotaManual('nota-1', 'fazenda-1')
 
     expect(resultado.status).toBe('erro')
+    if (resultado.status === 'erro') {
+      expect(resultado.mensagem).toBe('connection timeout')
+    }
   })
 })
