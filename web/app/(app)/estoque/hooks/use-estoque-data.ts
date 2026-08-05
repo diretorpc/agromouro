@@ -12,12 +12,11 @@ export type MovimentacaoComFornecedor = MovimentacaoEstoque & {
 
 type ResultadoExclusao = { ok: true } | { ok: false; erro: string }
 
-// Duplicado antes em handleEditMov e handleDeleteMov: lê o saldo atual do
-// banco (não confia em estado do React, que pode estar desatualizado),
-// soma o delta e nunca deixa passar de zero pra negativo por engano de
-// arredondamento — igual ao comportamento original nos dois lugares.
+// Lê o saldo atual do banco (não confia em estado do React que pode estar
+// desatualizado), soma o delta e nunca deixa passar de zero pra negativo por
+// engano de arredondamento. Usado em editarMovimentacao (quando delta ≠ 0) e
+// excluirMovimentacao (sem guarda).
 async function ajustarSaldoPorDelta(insumoId: string, delta: number) {
-  if (delta === 0) return
   const { data: row } = await supabase
     .from('estoque').select('id, quantidade_atual').eq('insumo_id', insumoId).single()
   if (!row) return
@@ -92,7 +91,10 @@ export function useEstoqueData() {
       data: novaData,
     }).eq('id', mov.id)
 
-    await ajustarSaldoPorDelta(mov.insumo_id, delta)
+    // Só mexe no saldo se delta ≠ 0, replica comportamento original handleEditMov
+    if (delta !== 0) {
+      await ajustarSaldoPorDelta(mov.insumo_id, delta)
+    }
     await recarregar()
   }
 
@@ -105,6 +107,7 @@ export function useEstoqueData() {
       return { ok: false, erro: 'Sem permissão para excluir. Verifique as políticas do banco.' }
     }
 
+    // Sempre calcula e aplica delta sem guarda, replica comportamento original handleDeleteMov
     const delta = mov.tipo === 'entrada' ? -mov.quantidade : mov.quantidade
     await ajustarSaldoPorDelta(mov.insumo_id, delta)
     await recarregar()
@@ -117,7 +120,7 @@ export function useEstoqueData() {
   }) {
     const { data: insumo, error } = await supabase
       .from('insumos')
-      .insert({ nome: form.nome, tipo: form.tipo, unidade: form.unidade })
+      .insert({ nome: form.nome.trim(), tipo: form.tipo, unidade: form.unidade })
       .select()
       .single()
     if (insumo && !error) {
