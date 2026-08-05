@@ -125,7 +125,7 @@ Antes do CFOP isso era impossível: o sistema não distinguia "comprei" de "rece
   por pedido — agrupar por fornecedor + insumo é o que é confiável hoje.
 - O **retorno** de depósito (`5906`/`6906`) ainda não está mapeado (item acima).
 
-## 🟢 Segunda porta cega: upload manual de XML — PR #46 aberto, TESTADO PONTA A PONTA (05/08)
+## 🟢 Segunda porta cega: upload manual de XML — PR #46 MERGEADO em 05/08 (`3ea4f04`)
 
 Consertada em `worktree-nfe-upload-manual`: upload de XML e "Excluir nota" passam a
 usar rotas novas no servidor (`POST /nfe/importar-xml`, `DELETE /nfe/:id`), que
@@ -154,7 +154,10 @@ transação atômica) e o gasto de R$ 50 **sumiu do Financeiro** (achado 1, lan�
 fantasma) — sem sobrar rastro nos dois casos. Os 5 críticos + 2 bloqueantes das
 revisões do Apolo estão confirmados na prática, não só em teste automatizado.
 
-**Pronto para mergear.** PR: https://github.com/diretorpc/agromouro/pull/46
+**Mergeado na `main`** (`3ea4f04`, squash) e sincronizado com a `main` remota. Railway e
+Vercel fazem deploy automático no push — não confirmado de fora que os dois já servem
+o código novo (mesmo padrão de incerteza da Fase 2 de contas a pagar em 31/07). PR:
+https://github.com/diretorpc/agromouro/pull/46
 
 📝 **Achado durante o teste, fora de escopo:** a tela `/estoque` está com a
 organização ruim — ele reclamou que um item aparece "no meio da página" em vez do
