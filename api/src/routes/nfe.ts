@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { importarXmlManual } from '../services/nfeManual'
+import { importarXmlManual, excluirNotaManual } from '../services/nfeManual'
 
 export const nfeRoutes = Router()
 
@@ -34,6 +34,26 @@ nfeRoutes.post('/importar-xml', async (req, res, next) => {
     }
 
     res.status(200).json(resultado)
+  } catch (err) {
+    next(err)
+  }
+})
+
+// DELETE /nfe/:id — apaga a nota e desfaz o que ela criou (estoque e boleto).
+nfeRoutes.delete('/:id', async (req, res, next) => {
+  try {
+    const resultado = await excluirNotaManual(req.params.id)
+
+    if (resultado.status === 'nao_encontrada') {
+      res.status(404).json({ error: 'Nota não encontrada.' })
+      return
+    }
+    if (resultado.status === 'erro') {
+      res.status(500).json({ error: 'Erro ao excluir a nota.', detalhe: resultado.mensagem })
+      return
+    }
+
+    res.status(204).send()
   } catch (err) {
     next(err)
   }
