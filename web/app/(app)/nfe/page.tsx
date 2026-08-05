@@ -24,8 +24,9 @@ import { Label } from '@/components/ui/label'
 import { KpiCard } from '@/components/ui/kpi-card'
 import { ActionMenu } from '@/components/ui/action-menu'
 import { supabase } from '@/lib/supabase'
+import { api } from '@/lib/api'
 import { useFazenda } from '@/context/fazenda-context'
-import type { NotaFiscal, ItemNfe } from '@/lib/types'
+import type { NotaFiscal, ItemNfe, ResultadoImportacaoXml } from '@/lib/types'
 
 const STATUS_STYLE: Record<string, string> = {
   recebida: 'bg-blue-100 text-blue-700 border-blue-200',
@@ -35,49 +36,6 @@ const STATUS_STYLE: Record<string, string> = {
 }
 
 const SELECT_CLASS = 'flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring'
-
-type ParsedNFe = {
-  numero: string
-  emitente_nome: string
-  emitente_cnpj: string
-  data_emissao: string
-  valor_total: number
-  itens: { descricao: string; quantidade: number; unidade: string; valor_unitario: number; valor_total: number }[]
-}
-
-function parseNFeXML(xmlStr: string): ParsedNFe | null {
-  try {
-    const parser = new DOMParser()
-    const doc = parser.parseFromString(xmlStr, 'text/xml')
-    if (doc.querySelector('parsererror')) return null
-
-    const getTag = (tag: string, ctx?: Element | Document) =>
-      (ctx ?? doc).getElementsByTagName(tag)[0]?.textContent?.trim() ?? ''
-
-    const numero = getTag('nNF')
-    const emitente_nome = getTag('xNome')
-    const emitente_cnpj = doc.getElementsByTagName('CNPJ')[0]?.textContent?.trim() ?? ''
-    const data_emissao = getTag('dhEmi') || getTag('dEmi')
-    const valor_total = parseFloat(getTag('vNF')) || 0
-
-    const dets = Array.from(doc.getElementsByTagName('det'))
-    const itens = dets.map(det => {
-      const prod = det.getElementsByTagName('prod')[0]
-      return {
-        descricao: getTag('xProd', prod),
-        quantidade: parseFloat(getTag('qCom', prod)) || 0,
-        unidade: getTag('uCom', prod),
-        valor_unitario: parseFloat(getTag('vUnCom', prod)) || 0,
-        valor_total: parseFloat(getTag('vProd', prod)) || 0,
-      }
-    })
-
-    if (!numero || !emitente_nome) return null
-    return { numero, emitente_nome, emitente_cnpj, data_emissao, valor_total, itens }
-  } catch {
-    return null
-  }
-}
 
 async function exportarXML(nota: NotaFiscal) {
   const { data } = await supabase
@@ -133,7 +91,8 @@ export default function NfePage() {
   // adicionar NF
   const [addDialog, setAddDialog] = useState(false)
   const [addMode, setAddMode] = useState<'xml' | 'manual'>('xml')
-  const [xmlPreview, setXmlPreview] = useState<ParsedNFe | null>(null)
+  const [xmlFileContent, setXmlFileContent] = useState<string | null>(null)
+  const [xmlFileName, setXmlFileName] = useState<string | null>(null)
   const [xmlError, setXmlError] = useState('')
   const [addErro, setAddErro] = useState('')
   const [salvandoNF, setSalvandoNF] = useState(false)
@@ -214,16 +173,16 @@ export default function NfePage() {
 
   function handleXmlFile(file: File) {
     setXmlError('')
-    setXmlPreview(null)
+    setXmlFileContent(null)
+    setXmlFileName(file.name)
     const reader = new FileReader()
     reader.onload = e => {
       const text = e.target?.result as string
-      const parsed = parseNFeXML(text)
-      if (!parsed) {
-        setXmlError('Arquivo XML inválido ou formato não reconhecido.')
-      } else {
-        setXmlPreview(parsed)
+      if (!text || text.length < 50) {
+        setXmlError('Arquivo vazio ou pequeno demais para ser uma NF-e.')
+        return
       }
+      setXmlFileContent(text)
     }
     reader.readAsText(file, 'UTF-8')
   }
@@ -233,43 +192,22 @@ export default function NfePage() {
     setSalvandoNF(true)
     setAddErro('')
     try {
-      if (addMode === 'xml' && xmlPreview) {
-        const { data: nota, error: errNota } = await supabase
-          .from('notas_fiscais')
-          .insert({
+      if (addMode === 'xml' && xmlFileContent) {
+        try {
+          const resultado = await api.post<ResultadoImportacaoXml>('/nfe/importar-xml', {
+            xml: xmlFileContent,
             fazenda_id: fazendaAtiva.id,
-            numero: xmlPreview.numero,
-            emitente_nome: xmlPreview.emitente_nome,
-            emitente_cnpj: xmlPreview.emitente_cnpj,
-            data_emissao: xmlPreview.data_emissao,
-            valor_total: xmlPreview.valor_total,
-            status: 'recebida',
           })
-          .select()
-          .single()
-        if (errNota) { setAddErro(errNota.message); return }
-        if (nota && xmlPreview.itens.length > 0) {
-          // ATENÇÃO: este upload manual lê o XML no NAVEGADOR e grava direto em
-          // itens_nfe — não passa pelo processador da API (api/src/services/nfeProcessor.ts).
-          // Por isso NÃO grava `cfop` nem `conta_como_compra` aqui: uma nota de
-          // entrega (remessa) enviada por este caminho continua contando como
-          // gasto na tela Financeiro, do jeito que a Fase 2 (leitura de CFOP)
-          // consertou para o caminho automático. É raro — a porta principal é a
-          // integração automática via Make — mas é uma lacuna real, pendente de
-          // tarefa própria. Não resolvida nesta revisão.
-          const { error: errItens } = await supabase.from('itens_nfe').insert(
-            xmlPreview.itens.map(item => ({
-              nota_fiscal_id: nota.id,
-              fazenda_id: fazendaAtiva.id,
-              descricao: item.descricao,
-              quantidade: item.quantidade,
-              unidade: item.unidade,
-              valor_unitario: item.valor_unitario,
-              valor_total: item.valor_total,
-              insumo_id: null,
-            }))
-          )
-          if (errItens) { setAddErro(errItens.message); return }
+          if (resultado.status === 'duplicada') {
+            const dataFmt = resultado.nota.data_emissao
+              ? resultado.nota.data_emissao.slice(0, 10).split('-').reverse().join('/')
+              : 'data desconhecida'
+            setAddErro(`Esta nota já está no sistema (entrou em ${dataFmt}).`)
+            return
+          }
+        } catch (err) {
+          setAddErro(err instanceof Error ? err.message : 'Erro ao importar a nota.')
+          return
         }
       } else if (addMode === 'manual') {
         const { error: errManual } = await supabase.from('notas_fiscais').insert({
@@ -284,7 +222,8 @@ export default function NfePage() {
         if (errManual) { setAddErro(errManual.message); return }
       }
       setAddDialog(false)
-      setXmlPreview(null)
+      setXmlFileContent(null)
+      setXmlFileName(null)
       setXmlError('')
       setManualForm({ numero: '', emitente_nome: '', emitente_cnpj: '', data_emissao: '', valor_total: '' })
       loadNotas()
@@ -293,7 +232,7 @@ export default function NfePage() {
     }
   }
 
-  const canSave = addMode === 'xml' ? !!xmlPreview : !!(manualForm.numero && manualForm.emitente_nome && manualForm.data_emissao)
+  const canSave = addMode === 'xml' ? !!xmlFileContent : !!(manualForm.numero && manualForm.emitente_nome && manualForm.data_emissao)
 
   const notasFiltradas = useMemo(() => {
     const buscaLower = busca.trim().toLowerCase()
@@ -357,7 +296,7 @@ export default function NfePage() {
         </div>
         <Button
           size="sm"
-          onClick={() => { setAddDialog(true); setAddMode('xml'); setXmlPreview(null); setXmlError(''); setAddErro('') }}
+          onClick={() => { setAddDialog(true); setAddMode('xml'); setXmlFileContent(null); setXmlFileName(null); setXmlError(''); setAddErro('') }}
           className="shrink-0"
         >
           <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
@@ -462,7 +401,7 @@ export default function NfePage() {
                 </div>
                 <Button
                   size="sm"
-                  onClick={() => { setAddDialog(true); setAddMode('xml'); setXmlPreview(null); setXmlError(''); setAddErro('') }}
+                  onClick={() => { setAddDialog(true); setAddMode('xml'); setXmlFileContent(null); setXmlFileName(null); setXmlError(''); setAddErro('') }}
                 >
                   <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
                   Adicionar NF
@@ -668,7 +607,7 @@ export default function NfePage() {
           <div className="flex gap-1 p-1 bg-muted rounded-lg">
             <button
               type="button"
-              onClick={() => { setAddMode('xml'); setXmlPreview(null); setXmlError(''); setAddErro('') }}
+              onClick={() => { setAddMode('xml'); setXmlFileContent(null); setXmlFileName(null); setXmlError(''); setAddErro('') }}
               className={`flex-1 flex items-center justify-center gap-2 rounded-md py-1.5 text-sm font-medium transition-all ${addMode === 'xml' ? 'bg-white shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
             >
               <Upload className="h-3.5 w-3.5" />
@@ -719,23 +658,10 @@ export default function NfePage() {
                 <p className="text-sm text-red-600 bg-red-50 rounded-md px-3 py-2">{xmlError}</p>
               )}
 
-              {xmlPreview && (
-                <div className="border rounded-lg p-3 space-y-2 bg-green-50/50">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Prévia</p>
-                  <div className="grid grid-cols-2 gap-1 text-sm">
-                    <span className="text-muted-foreground">Número:</span>
-                    <span className="font-medium">{xmlPreview.numero}</span>
-                    <span className="text-muted-foreground">Emitente:</span>
-                    <span className="font-medium">{xmlPreview.emitente_nome}</span>
-                    <span className="text-muted-foreground">CNPJ:</span>
-                    <span>{xmlPreview.emitente_cnpj}</span>
-                    <span className="text-muted-foreground">Valor total:</span>
-                    <span className="font-semibold text-green-700">
-                      {xmlPreview.valor_total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                    </span>
-                    <span className="text-muted-foreground">Itens:</span>
-                    <span>{xmlPreview.itens.length} produto{xmlPreview.itens.length !== 1 ? 's' : ''}</span>
-                  </div>
+              {xmlFileName && !xmlError && (
+                <div className="border rounded-lg p-3 bg-green-50/50 flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-green-700 shrink-0" aria-hidden="true" />
+                  <span className="text-sm font-medium truncate">{xmlFileName}</span>
                 </div>
               )}
             </div>
