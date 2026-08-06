@@ -65,6 +65,17 @@ export function resumoVazio(r: Resumo): boolean {
          r.semVencimentoAntigas.length === 0
 }
 
+// Descrição da conta com o fornecedor na frente, quando houver. Desde que a
+// Descrição passou a mostrar os produtos/serviços da nota (e não mais
+// "fornecedor — NF número"), o aviso diário precisa reencaixar o fornecedor
+// na frente — senão a mensagem vira "DIESEL S10 — venceu ..." sem dizer de
+// quem é o boleto, e o Matheus não tem como decidir o que pagar.
+// As 4 contas antigas do banco (do formato velho, com o fornecedor já
+// embutido na descrição) ficam com o fornecedor repetido — não é grave.
+function linhaDescricao(c: ContaResumo): string {
+  return c.fornecedor ? `${c.fornecedor} — ${c.descricao}` : c.descricao
+}
+
 export function textoResumo(r: Resumo, hojeISO: string): string {
   const linhas: string[] = [`📋 *Contas — ${ddmm(hojeISO)}*`]
 
@@ -72,25 +83,25 @@ export function textoResumo(r: Resumo, hojeISO: string): string {
   if (criticas > 0) {
     linhas.push(`\n🔴 ${criticas} urgente${criticas > 1 ? 's' : ''}:`)
     for (const c of r.atrasadas) {
-      linhas.push(`• ${c.descricao} — venceu ${ddmm(c.vencimento!)}, ${reais(c.valor)}`)
+      linhas.push(`• ${linhaDescricao(c)} — venceu ${ddmm(c.vencimento!)}, ${reais(c.valor)}`)
     }
     for (const c of r.semVencimentoAntigas) {
       const dias = diasEntre(c.criada_em, hojeISO)
-      linhas.push(`• ${c.descricao} — ${reais(c.valor)}, há ${dias} dias sem vencimento informado`)
+      linhas.push(`• ${linhaDescricao(c)} — ${reais(c.valor)}, há ${dias} dias sem vencimento informado`)
     }
   }
   if (r.vencendo.length) {
     linhas.push(`\n🟡 ${r.vencendo.length} vencendo:`)
-    for (const c of r.vencendo) linhas.push(`• ${c.descricao} — dia ${ddmm(c.vencimento!)}, ${reais(c.valor)}`)
+    for (const c of r.vencendo) linhas.push(`• ${linhaDescricao(c)} — dia ${ddmm(c.vencimento!)}, ${reais(c.valor)}`)
   }
   if (r.naoChegaram.length) {
     const n = r.naoChegaram.length
     linhas.push(`\n⏳ ${n} ainda ${n > 1 ? 'não chegaram' : 'não chegou'}:`)
-    for (const c of r.naoChegaram) linhas.push(`• ${c.descricao} — esperada dia ${ddmm(c.vencimento!)}`)
+    for (const c of r.naoChegaram) linhas.push(`• ${linhaDescricao(c)} — esperada dia ${ddmm(c.vencimento!)}`)
   }
   if (r.semVencimento.length) {
     linhas.push(`\n❓ ${r.semVencimento.length} sem vencimento:`)
-    for (const c of r.semVencimento) linhas.push(`• ${c.descricao} — ${reais(c.valor)}`)
+    for (const c of r.semVencimento) linhas.push(`• ${linhaDescricao(c)} — ${reais(c.valor)}`)
   }
   if (r.semVencimento.length || r.semVencimentoAntigas.length) {
     linhas.push(`👉 ${APP_URL}/contas?filtro=sem-vencimento`)

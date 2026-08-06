@@ -10,6 +10,7 @@ export type DadosParaConta = {
   valorTotal:     number
   formaPagamento: string | null
   duplicatas:     NFeDuplicata[]
+  items:          { descricao: string }[]   // xProd de cada item — só o texto, não NCM/CFOP/valor
 }
 
 export type ContaDeNota = {
@@ -132,6 +133,47 @@ function mesDe(dataISO: string): string {
   return competenciaDoMes(ano, mes)
 }
 
+// Resume os produtos/serviços da nota em português corrido, para a coluna Descrição
+// da tela de Contas a Pagar mostrar o que foi comprado — a coluna Fornecedor já
+// mostra o fornecedor, repeti-lo na Descrição não ajuda o dono a reconhecer a
+// compra. "Produto A" (1 item), "Produto A e Produto B" (2), "Produto A, Produto B
+// e Produto C" (3). A partir de 4 itens, trunca: mostra os 2 primeiros + contagem
+// do resto ("Produto A, Produto B e mais 2 itens") — uma nota de defensivos ou
+// fertilizantes pode trazer uma dezena de itens, e listar todos estouraria a linha
+// da tabela.
+// Regressão pega pelo Apolo (06/08/2026): uma nota real de 52 linhas do mesmo
+// produto "SOJA EM GRAOS DE TERCEIROS" (lotes/preços diferentes, mesmo nome)
+// virava "SOJA EM GRAOS DE TERCEIROS, SOJA EM GRAOS DE TERCEIROS e mais 50
+// itens" — a função contava LINHAS da nota, não produtos distintos. trim()
+// antes do Set também resolve de graça um item cujo nome é só espaços: ele
+// vira string vazia e cai no filter(Boolean) de baixo, em vez de sobreviver
+// como célula vazia na lista.
+function resumoDosItens(items: { descricao: string }[]): string {
+  const descricoes = [...new Set(items.map(i => i.descricao.trim()).filter(Boolean))]
+
+  if (descricoes.length === 0) return ''
+  if (descricoes.length === 1) return descricoes[0]
+  if (descricoes.length === 2) return `${descricoes[0]} e ${descricoes[1]}`
+  if (descricoes.length === 3) return `${descricoes[0]}, ${descricoes[1]} e ${descricoes[2]}`
+
+  // resto nunca é 1 com a lista de 4 pra cima (mínimo é 2, de 4 itens: 2 mostrados +
+  // 2 no resto) — o branch de 3 itens acima intercepta o único caso que daria resto
+  // 1. Mantido singular/plural explícito mesmo assim: é defensivo contra mudar o
+  // "mostra os 2 primeiros" para outro número no futuro sem lembrar desta regra.
+  const resto = descricoes.length - 2
+  const rotuloResto = resto === 1 ? 'item' : 'itens'
+  return `${descricoes[0]}, ${descricoes[1]} e mais ${resto} ${rotuloResto}`
+}
+
+// A primeira parte da descrição de uma conta (antes do sufixo de parcela, quando
+// houver). Prefere o resumo dos produtos/serviços da nota; cai no formato antigo
+// (fornecedor — NF número) só se a nota não trouxer item nenhum — defensivo: na
+// prática `items` sempre vem preenchido (parseXmlNFe descarta item sem xProd), mas
+// uma descrição em branco na tela seria pior do que repetir o fornecedor.
+function descricaoDaConta(nfe: DadosParaConta, fornecedor: string): string {
+  return resumoDosItens(nfe.items) || `${fornecedor} — NF ${nfe.numero}`
+}
+
 // Tenta transformar cada duplicata da nota numa conta, isoladamente. Uma parcela com
 // data ruim NÃO pode derrubar as outras: perder 1 parcela é ruim, perder as 3 é muito
 // pior — mesmo raciocínio já usado no limite de 24 parcelas do desenho desta fase
@@ -148,13 +190,12 @@ function tentarContasDasDuplicatas(
   const total = nfe.duplicatas.length
   const contas: ContaDeNota[] = []
   const descartadas: ParcelaDescartada[] = []
+  const base = descricaoDaConta(nfe, fornecedor)
 
   nfe.duplicatas.forEach((d, i) => {
     try {
       contas.push({
-        descricao:      total > 1
-                          ? `${fornecedor} — NF ${nfe.numero} (${i + 1}/${total})`
-                          : `${fornecedor} — NF ${nfe.numero}`,
+        descricao:      total > 1 ? `${base} (${i + 1}/${total})` : base,
         fornecedor,
         vencimento:     d.vencimento,
         // Parcela sem data não tem mês de vencimento: cai no mês da emissão.
@@ -218,7 +259,7 @@ export function contasDaNota(nfe: DadosParaConta): ContaDeNota[] {
   // emissão ruim estoura direto (não há como isolar um problema de um item único).
   if (nfe.duplicatas.length === 0) {
     return [{
-      descricao:      `${fornecedor} — NF ${nfe.numero}`,
+      descricao:      descricaoDaConta(nfe, fornecedor),
       fornecedor,
       vencimento:     null,
       competencia:    mesDe(nfe.dataEmissao),

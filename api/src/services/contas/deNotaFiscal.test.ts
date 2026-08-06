@@ -8,6 +8,7 @@ const base: DadosParaConta = {
   valorTotal:     30600,
   formaPagamento: '15',
   duplicatas:     [{ numero: '001', vencimento: '2026-07-21', valor: 30600 }],
+  items:          [{ descricao: 'DIESEL S10' }],
 }
 
 describe('motivoSemBoleto', () => {
@@ -207,7 +208,7 @@ describe('contasDaNota', () => {
   })
 
   it('descricao de parcela unica nao mostra numero de parcela', () => {
-    expect(contasDaNota(base)[0].descricao).toBe('TRIANGULO DIESEL TRR LTDA — NF 4516')
+    expect(contasDaNota(base)[0].descricao).toBe('DIESEL S10')
   })
 
   it('tres duplicatas viram tres contas numeradas, cada uma com seu valor', () => {
@@ -219,7 +220,7 @@ describe('contasDaNota', () => {
     expect(r).toHaveLength(3)
     expect(r.map(c => c.numero_parcela)).toEqual([1, 2, 3])
     expect(r.every(c => c.total_parcelas === 3)).toBe(true)
-    expect(r[1].descricao).toBe('TRIANGULO DIESEL TRR LTDA — NF 4516 (2/3)')
+    expect(r[1].descricao).toBe('DIESEL S10 (2/3)')
     expect(r.map(c => c.vencimento)).toEqual(['2026-08-15', '2026-09-15', '2026-10-15'])
   })
 
@@ -310,6 +311,97 @@ describe('contasDaNota', () => {
   })
 })
 
+// A descricao da conta mostra os PRODUTOS/SERVICOS da nota, nao o fornecedor
+// repetido (a tela ja tem uma coluna Fornecedor separada). Testado via
+// contasDaNota (sem duplicata, pra isolar so a construcao da descricao do
+// resto da logica de parcela) porque resumoDosItens/descricaoDaConta nao sao
+// exportadas de proposito — sao detalhe interno desta funcao.
+describe('contasDaNota — descricao mostra os itens da nota, nao o fornecedor', () => {
+  it('1 item: mostra so o nome do produto', () => {
+    const r = contasDaNota({ ...base, duplicatas: [], items: [
+      { descricao: 'Glifosato 20L' },
+    ]})
+    expect(r[0].descricao).toBe('Glifosato 20L')
+  })
+
+  it('2 itens: junta com "e"', () => {
+    const r = contasDaNota({ ...base, duplicatas: [], items: [
+      { descricao: 'Glifosato 20L' },
+      { descricao: 'Ureia 50kg' },
+    ]})
+    expect(r[0].descricao).toBe('Glifosato 20L e Ureia 50kg')
+  })
+
+  it('3 itens: virgula entre os dois primeiros, "e" antes do ultimo', () => {
+    const r = contasDaNota({ ...base, duplicatas: [], items: [
+      { descricao: 'Glifosato 20L' },
+      { descricao: 'Ureia 50kg' },
+      { descricao: '2,4-D 5L' },
+    ]})
+    expect(r[0].descricao).toBe('Glifosato 20L, Ureia 50kg e 2,4-D 5L')
+  })
+
+  it('4 itens: trunca nos 2 primeiros + "e mais 2 itens" (plural)', () => {
+    const r = contasDaNota({ ...base, duplicatas: [], items: [
+      { descricao: 'Glifosato 20L' },
+      { descricao: 'Ureia 50kg' },
+      { descricao: '2,4-D 5L' },
+      { descricao: 'Adjuvante 1L' },
+    ]})
+    expect(r[0].descricao).toBe('Glifosato 20L, Ureia 50kg e mais 2 itens')
+  })
+
+  it('5 itens: continua truncando nos 2 primeiros, contagem do resto sobe', () => {
+    const r = contasDaNota({ ...base, duplicatas: [], items: [
+      { descricao: 'Glifosato 20L' },
+      { descricao: 'Ureia 50kg' },
+      { descricao: '2,4-D 5L' },
+      { descricao: 'Adjuvante 1L' },
+      { descricao: 'Fungicida 10L' },
+    ]})
+    expect(r[0].descricao).toBe('Glifosato 20L, Ureia 50kg e mais 3 itens')
+  })
+
+  it('items vazio: cai no formato antigo (fornecedor — NF numero), defensivo — descricao nunca fica em branco', () => {
+    const r = contasDaNota({ ...base, duplicatas: [], items: [] })
+    expect(r[0].descricao).toBe('TRIANGULO DIESEL TRR LTDA — NF 4516')
+  })
+
+  it('item repetido (mesmo nome, varias linhas — lotes/precos diferentes): aparece 1 vez so (regressao Apolo 06/08/2026, nota real de 52 linhas do mesmo produto)', () => {
+    const itensRepetidos = Array.from({ length: 52 }, () => ({ descricao: 'SOJA EM GRAOS DE TERCEIROS' }))
+    const r = contasDaNota({ ...base, duplicatas: [], items: itensRepetidos })
+    expect(r[0].descricao).toBe('SOJA EM GRAOS DE TERCEIROS')
+  })
+
+  it('item repetido com espacos extras ao redor tambem conta como o mesmo produto', () => {
+    const r = contasDaNota({ ...base, duplicatas: [], items: [
+      { descricao: 'Glifosato 20L' },
+      { descricao: '  Glifosato 20L  ' },
+    ]})
+    expect(r[0].descricao).toBe('Glifosato 20L')
+  })
+
+  it('item com nome so de espacos e ignorado, nao vira celula vazia', () => {
+    const r = contasDaNota({ ...base, duplicatas: [], items: [
+      { descricao: 'Glifosato 20L' },
+      { descricao: '   ' },
+    ]})
+    expect(r[0].descricao).toBe('Glifosato 20L')
+  })
+
+  it('items com parcelas (mais de uma duplicata): resumo dos itens + sufixo de parcela', () => {
+    const r = contasDaNota({ ...base, items: [
+      { descricao: 'Glifosato 20L' },
+      { descricao: 'Ureia 50kg' },
+    ], duplicatas: [
+      { numero: '001', vencimento: '2026-08-15', valor: 15300 },
+      { numero: '002', vencimento: '2026-09-15', valor: 15300 },
+    ]})
+    expect(r[0].descricao).toBe('Glifosato 20L e Ureia 50kg (1/2)')
+    expect(r[1].descricao).toBe('Glifosato 20L e Ureia 50kg (2/2)')
+  })
+})
+
 describe('contasDaNota — uma parcela ruim nao pode derrubar as boas', () => {
   it('3 parcelas, uma ruim no meio: devolve as 2 boas, na ordem, com os valores certos', () => {
     const r = contasDaNota({ ...base, duplicatas: [
@@ -355,8 +447,8 @@ describe('contasDaNota — uma parcela ruim nao pode derrubar as boas', () => {
     // completo por engano. "1/3" seguido de "3/3" (sem "2/3") é o próprio aviso.
     expect(r.map(c => c.numero_parcela)).toEqual([1, 3])
     expect(r.every(c => c.total_parcelas === 3)).toBe(true)
-    expect(r[0].descricao).toBe('TRIANGULO DIESEL TRR LTDA — NF 4516 (1/3)')
-    expect(r[1].descricao).toBe('TRIANGULO DIESEL TRR LTDA — NF 4516 (3/3)')
+    expect(r[0].descricao).toBe('DIESEL S10 (1/3)')
+    expect(r[1].descricao).toBe('DIESEL S10 (3/3)')
   })
 
   it('todas as parcelas ruins: nao devolve lista vazia (indistinguivel de "nao gera boleto") — lanca erro', () => {

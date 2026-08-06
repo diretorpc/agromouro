@@ -101,6 +101,27 @@ describe('textoResumo', () => {
     const r = montarResumo([conta({ vencimento: '2026-07-30', valor: 1234.56 })], HOJE)
     expect(textoResumo(r, HOJE)).toContain('R$ 1.234,56')
   })
+
+  // Regressão pega pelo Apolo (06/08/2026): a Descrição da conta passou a
+  // mostrar os produtos da nota, não mais "fornecedor — NF número" — então o
+  // aviso diário perdeu o nome do fornecedor, que antes vinha embutido na
+  // descrição. Sem ele, "DIESEL S10 — venceu 03/08, R$ 30.600,00" não diz de
+  // quem é o boleto.
+  it('a linha da conta atrasada mostra o fornecedor na frente da descricao', () => {
+    const r = montarResumo([
+      conta({ descricao: 'DIESEL S10', fornecedor: 'TRIANGULO DIESEL TRR LTDA', vencimento: '2026-07-25', valor: 30600 }),
+    ], HOJE)
+    const txt = textoResumo(r, HOJE)
+    expect(txt).toContain('TRIANGULO DIESEL TRR LTDA — DIESEL S10 — venceu')
+  })
+
+  it('conta sem fornecedor (avulsa) mostra so a descricao, sem travessao sobrando na frente', () => {
+    const r = montarResumo([
+      conta({ descricao: 'Energia', fornecedor: null, vencimento: '2026-07-25', valor: 890 }),
+    ], HOJE)
+    const txt = textoResumo(r, HOJE)
+    expect(txt).toContain('• Energia — venceu')
+  })
 })
 
 describe('conta sem vencimento', () => {
