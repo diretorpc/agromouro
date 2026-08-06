@@ -12,16 +12,20 @@ export function AjustarEstoqueDialog({
 }: {
   item: Estoque | null
   onOpenChange: (open: boolean) => void
-  onAjustar: (item: Estoque, novaQuantidade: number, novoPreco: number | null) => Promise<void>
+  onAjustar: (
+    item: Estoque, novaQuantidade: number, novoPreco: number | null,
+  ) => Promise<{ ok: true } | { ok: false; erro: string }>
 }) {
   const [ajuste, setAjuste] = useState('')
   const [ajustePreco, setAjustePreco] = useState('')
   const [salvando, setSalvando] = useState(false)
+  const [erro, setErro] = useState<string | null>(null)
 
   useEffect(() => {
     if (item) {
       setAjuste(String(item.quantidade_atual))
       setAjustePreco(item.preco_medio_unitario > 0 ? String(item.preco_medio_unitario) : '')
+      setErro(null)
     }
   }, [item])
 
@@ -31,15 +35,17 @@ export function AjustarEstoqueDialog({
     const novaQtd = parseFloat(ajuste)
     if (isNaN(novaQtd)) return
     setSalvando(true)
+    setErro(null)
     const novoPreco = parseFloat(ajustePreco)
-    await onAjustar(item, novaQtd, !isNaN(novoPreco) && novoPreco >= 0 ? novoPreco : null)
+    const resultado = await onAjustar(item, novaQtd, !isNaN(novoPreco) && novoPreco >= 0 ? novoPreco : null)
     setSalvando(false)
+    if (!resultado.ok) { setErro(resultado.erro); return }
     onOpenChange(false)
     setAjuste('')
     setAjustePreco('')
   }
 
-  function fechar() { onOpenChange(false); setAjustePreco('') }
+  function fechar() { onOpenChange(false); setAjustePreco(''); setErro(null) }
 
   return (
     <Dialog open={!!item} onOpenChange={open => { if (!open) fechar() }}>
@@ -70,6 +76,11 @@ export function AjustarEstoqueDialog({
                 value={ajustePreco} onChange={e => setAjustePreco(e.target.value)}
               />
             </div>
+            {erro && (
+              <p aria-live="polite" className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+                {erro}
+              </p>
+            )}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={fechar}>Cancelar</Button>
               <Button type="submit" disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar'}</Button>
