@@ -90,6 +90,11 @@ export default function OperacoesPage() {
   const [editingOp, setEditingOp] = useState<OperacaoCompleta | null>(null)
   const [deletando, setDeletando] = useState<string | null>(null)
   const [deleteConfirmOp, setDeleteConfirmOp] = useState<OperacaoCompleta | null>(null)
+  const [erroExcluirOp, setErroExcluirOp] = useState<string | null>(null)
+  // true só quando um erro aconteceu DEPOIS de alguma escrita real no banco (devolução
+  // parcial ao estoque) — evita o clique repetido enquanto o aviso está na tela. Não é uma
+  // trava permanente: reabre ao fechar e reabrir o diálogo (handleDelete zera de novo).
+  const [bloqueadoParaRetry, setBloqueadoParaRetry] = useState(false)
 
   const [filtroTalhao, setFiltroTalhao] = useState('todos')
   const [form, setForm] = useState({
@@ -143,40 +148,97 @@ export default function OperacoesPage() {
 
   function handleDelete(op: OperacaoCompleta) {
     setDeleteConfirmOp(op)
+    setBloqueadoParaRetry(false)
+    setErroExcluirOp(null)
   }
 
   async function confirmarDeleteOp() {
     if (!deleteConfirmOp) return
+    if (!fazendaAtiva) {
+      setErroExcluirOp('Nenhuma fazenda ativa selecionada')
+      return
+    }
     const op = deleteConfirmOp
-    setDeleteConfirmOp(null)
+    setErroExcluirOp(null)
     setDeletando(op.id)
+
+    // Mensagem de devolução PRIMEIRO produto do laço: nada foi alterado ainda, então "tente
+    // novamente" é seguro. A partir do segundo item, um erro aqui significa que um produto
+    // anterior já voltou ao estoque — repetir a exclusão do zero devolveria ele de novo (duplica).
+    const MSG_ERRO_INICIAL = 'Não foi possível devolver os produtos ao estoque. A operação não foi excluída — tente novamente.'
+    const MSG_ERRO_PARCIAL = 'Parte dos produtos pode já ter voltado ao estoque, mas houve um erro. NÃO tente excluir de novo — confira o estoque e fale com o suporte antes de repetir.'
+    let algumaEscritaFeita = false
 
     for (const item of op.itens_operacao ?? []) {
       if (item.insumo_id && item.quantidade) {
-        await supabase.from('movimentacoes_estoque').insert({
+        const { error: movError } = await supabase.from('movimentacoes_estoque').insert({
           insumo_id: item.insumo_id,
           tipo: 'entrada',
           quantidade: item.quantidade,
           data: new Date().toISOString().split('T')[0],
           origem: 'manual',
-          ...(fazendaAtiva ? { fazenda_id: fazendaAtiva.id } : {}),
+          fazenda_id: fazendaAtiva.id,
         })
+        if (movError) {
+          console.error('[Operações] erro ao registrar devolução ao estoque:', movError)
+          setErroExcluirOp(algumaEscritaFeita ? MSG_ERRO_PARCIAL : MSG_ERRO_INICIAL)
+          if (algumaEscritaFeita) setBloqueadoParaRetry(true)
+          setDeletando(null)
+          loadData()
+          return
+        }
+        // O insert já foi confirmado pelo banco: a partir daqui um erro é PARCIAL, porque
+        // repetir a exclusão do zero devolveria este item de novo (duplica).
+        algumaEscritaFeita = true
+
         // busca saldo fresco do banco para evitar usar state desatualizado
-        const { data: estRow } = await supabase
+        const { data: estRow, error: estSelectError } = await supabase
           .from('estoque')
           .select('quantidade_atual')
           .eq('insumo_id', item.insumo_id)
           .single()
-        if (estRow) {
-          await supabase.from('estoque')
-            .update({ quantidade_atual: estRow.quantidade_atual + item.quantidade })
-            .eq('insumo_id', item.insumo_id)
+        if (estSelectError || !estRow) {
+          console.error('[Operações] erro ao ler saldo do estoque:', estSelectError)
+          setErroExcluirOp(MSG_ERRO_PARCIAL)
+          setBloqueadoParaRetry(true)
+          setDeletando(null)
+          loadData()
+          return
+        }
+        const { error: estUpdateError } = await supabase.from('estoque')
+          .update({ quantidade_atual: estRow.quantidade_atual + item.quantidade })
+          .eq('insumo_id', item.insumo_id)
+        if (estUpdateError) {
+          console.error('[Operações] erro ao atualizar saldo do estoque:', estUpdateError)
+          setErroExcluirOp(MSG_ERRO_PARCIAL)
+          setBloqueadoParaRetry(true)
+          setDeletando(null)
+          loadData()
+          return
         }
       }
     }
 
-    await supabase.from('operacoes').delete().eq('id', op.id)
+    // .select('id') depois do delete devolve as linhas apagadas de verdade — count: 'exact'
+    // depende de um cabeçalho que o servidor nem sempre manda, e "null === 0" dá falso,
+    // mascarando um delete bloqueado por regra de acesso (RLS) como se tivesse dado certo.
+    const { error: delError, data: deletedOps } = await supabase
+      .from('operacoes')
+      .delete()
+      .eq('id', op.id)
+      .select('id')
+
+    if (delError || !deletedOps || deletedOps.length === 0) {
+      console.error('[Operações] erro ao excluir operação:', delError)
+      setErroExcluirOp(algumaEscritaFeita ? MSG_ERRO_PARCIAL : 'Não foi possível excluir a operação. Tente novamente.')
+      if (algumaEscritaFeita) setBloqueadoParaRetry(true)
+      setDeletando(null)
+      loadData()
+      return
+    }
+
     setDeletando(null)
+    setDeleteConfirmOp(null)
     loadData()
   }
 
@@ -561,7 +623,7 @@ export default function OperacoesPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={!!deleteConfirmOp} onOpenChange={open => { if (!open) setDeleteConfirmOp(null) }}>
+      <Dialog open={!!deleteConfirmOp} onOpenChange={open => { if (!open) { setDeleteConfirmOp(null); setErroExcluirOp(null); setBloqueadoParaRetry(false) } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>Excluir operação?</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">
@@ -571,9 +633,14 @@ export default function OperacoesPage() {
             <span className="font-medium text-foreground">{deleteConfirmOp?.talhoes?.nome ?? 'talhão'}</span>?
             {' '}Os produtos utilizados voltarão ao estoque.
           </p>
+          {erroExcluirOp && (
+            <p aria-live="polite" className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              {erroExcluirOp}
+            </p>
+          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteConfirmOp(null)}>Cancelar</Button>
-            <Button variant="destructive" onClick={confirmarDeleteOp} disabled={deletando !== null}>
+            <Button variant="outline" onClick={() => { setDeleteConfirmOp(null); setErroExcluirOp(null); setBloqueadoParaRetry(false) }}>Cancelar</Button>
+            <Button variant="destructive" onClick={confirmarDeleteOp} disabled={deletando !== null || bloqueadoParaRetry}>
               {deletando !== null ? 'Excluindo…' : 'Excluir'}
             </Button>
           </DialogFooter>
