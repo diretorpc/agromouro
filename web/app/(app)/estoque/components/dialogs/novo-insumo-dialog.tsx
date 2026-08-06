@@ -14,15 +14,18 @@ export function NovoInsumoDialog({
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onCriar: (form: { nome: string; tipo: string; unidade: string; quantidade: number; minimo: number; preco: number }) => Promise<void>
+  onCriar: (form: { nome: string; tipo: string; unidade: string; quantidade: number; minimo: number; preco: number }) =>
+    Promise<{ ok: true } | { ok: false; erro: string }>
 }) {
   const [form, setForm] = useState(FORM_INICIAL)
   const [salvando, setSalvando] = useState(false)
+  const [erro, setErro] = useState<string | null>(null)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSalvando(true)
-    await onCriar({
+    setErro(null)
+    const resultado = await onCriar({
       nome: form.nome.trim(),
       tipo: form.tipo,
       unidade: form.unidade,
@@ -31,12 +34,15 @@ export function NovoInsumoDialog({
       preco: parseFloat(form.preco) || 0,
     })
     setSalvando(false)
+    if (!resultado.ok) { setErro(resultado.erro); return }
     onOpenChange(false)
     setForm(FORM_INICIAL)
   }
 
+  function fechar() { onOpenChange(false); setErro(null) }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={next => { onOpenChange(next); if (!next) setErro(null) }}>
       <DialogContent>
         <DialogHeader><DialogTitle>Novo Insumo</DialogTitle></DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -96,8 +102,13 @@ export function NovoInsumoDialog({
               onChange={e => setForm(f => ({ ...f, preco: e.target.value }))}
             />
           </div>
+          {erro && (
+            <p aria-live="polite" className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              {erro}
+            </p>
+          )}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+            <Button type="button" variant="outline" onClick={fechar}>Cancelar</Button>
             <Button type="submit" disabled={salvando}>{salvando ? 'Salvando…' : 'Adicionar'}</Button>
           </DialogFooter>
         </form>

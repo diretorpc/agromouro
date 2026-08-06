@@ -13,13 +13,16 @@ export function ConverterUnidadeDialog({
 }: {
   item: Estoque | null
   onOpenChange: (open: boolean) => void
-  onConverter: (item: Estoque, novaUnidade: string, fator: number) => Promise<void>
+  onConverter: (
+    item: Estoque, novaUnidade: string, fator: number,
+  ) => Promise<{ ok: true } | { ok: false; erro: string }>
 }) {
   const [form, setForm] = useState({ novaUnidade: 'L', fator: '' })
   const [salvando, setSalvando] = useState(false)
+  const [erro, setErro] = useState<string | null>(null)
 
   useEffect(() => {
-    if (item) setForm({ novaUnidade: 'L', fator: '' })
+    if (item) { setForm({ novaUnidade: 'L', fator: '' }); setErro(null) }
   }, [item])
 
   async function handleSubmit(e: React.FormEvent) {
@@ -28,16 +31,20 @@ export function ConverterUnidadeDialog({
     const fator = parseFloat(form.fator.replace(',', '.'))
     if (isNaN(fator) || fator <= 0) return
     setSalvando(true)
-    await onConverter(item, form.novaUnidade, fator)
+    setErro(null)
+    const resultado = await onConverter(item, form.novaUnidade, fator)
     setSalvando(false)
+    if (!resultado.ok) { setErro(resultado.erro); return }
     onOpenChange(false)
     setForm({ novaUnidade: 'L', fator: '' })
   }
 
+  function fechar() { onOpenChange(false); setErro(null) }
+
   const fatorNum = parseFloat(form.fator.replace(',', '.'))
 
   return (
-    <Dialog open={!!item} onOpenChange={open => { if (!open) onOpenChange(false) }}>
+    <Dialog open={!!item} onOpenChange={open => { if (!open) fechar() }}>
       <DialogContent className="max-w-sm">
         <DialogHeader><DialogTitle>Converter Unidade</DialogTitle></DialogHeader>
         {item && (
@@ -83,8 +90,13 @@ export function ConverterUnidadeDialog({
                 )}
               </p>
             )}
+            {erro && (
+              <p aria-live="polite" className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+                {erro}
+              </p>
+            )}
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+              <Button type="button" variant="outline" onClick={fechar}>Cancelar</Button>
               <Button type="submit" disabled={salvando || !form.fator}>{salvando ? 'Salvando…' : 'Converter'}</Button>
             </DialogFooter>
           </form>
