@@ -181,19 +181,20 @@ pensado para produto agrícola, não serviço. Não corrigido, não é urgente.
 Construir suporte de verdade é trabalho grande (cada prefeitura formata do seu jeito) —
 só vale quando a frequência justificar.
 
-## 🔵 Reorganização da tela `/estoque` — PR #47 ABERTO, esperando ele (05/08 à noite)
+## 🔵 Reorganização da tela `/estoque` — PR #47 ABERTO, migração já aplicada (06/08 manhã)
 
 **https://github.com/diretorpc/agromouro/pull/47** — 13 tarefas implementadas e revisadas
-(3 com 1 rodada de correção cada), mais uma revisão final de toda a branch que achou 1
-crítico (erro da API sendo engolido, mostrando "estoque vazio" em vez de aviso) e 2
-importantes (busca do Histórico sem avisar limite de 100; migração sem transação) — os
-três já corrigidos e re-revisados. `npx tsc --noEmit` limpo, suíte da API 187/187.
+(3 com 1 rodada de correção cada), revisão final de branch (1 crítico + 2 importantes,
+todos corrigidos e re-revisados), mais um adicional pedido por ele depois de testar
+localmente: **ordenação por clique no cabeçalho da coluna**, nas duas abas — já
+implementado, revisado e no PR. `npx tsc --noEmit` limpo, suíte da API 187/187.
 
-**⛔ Trava antes do merge, em letra grande no próprio PR:** rodar
-`supabase/migrations/010_estoque_created_at.sql` no SQL Editor do Supabase ANTES de
-mergear — a Task 2 já mudou a API pra depender da coluna nova; merge sem a migração
-quebra a tela em produção. Depois disso: conferir na tela logada (ninguém neste fluxo
-automatizado tinha login) e mergear.
+**✅ Migração `010_estoque_created_at.sql` aplicada em produção e confirmada por ele
+(06/08 08h):** `sem_entrada_registrada=0` de `total_produtos=71`, amostra com datas reais
+de maio/2026 — backfill funcionou. **A trava que impedia o merge foi removida.**
+
+**Próximo passo, só dele:** testar a tela logado (servidor local já está rodando —
+`http://localhost:3000`, branch `reorganizacao-estoque`) e, satisfeito, mergear o PR #47.
 
 **Achado fora do escopo, virou tarefa separada:** `GET /estoque` não filtra por
 `fazenda_id` (usa chave de serviço, ignora RLS) — numa instalação multi-fazenda mistura
