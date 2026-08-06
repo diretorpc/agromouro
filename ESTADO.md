@@ -181,57 +181,21 @@ pensado para produto agrícola, não serviço. Não corrigido, não é urgente.
 Construir suporte de verdade é trabalho grande (cada prefeitura formata do seu jeito) —
 só vale quando a frequência justificar.
 
-## 🔵 Reorganização da tela `/estoque` — PR #47 ABERTO, migração já aplicada (06/08 manhã)
+## ✅ Reorganização da tela `/estoque` — CONCLUÍDA e mergeada (06/08 08h12)
 
-**https://github.com/diretorpc/agromouro/pull/47** — 13 tarefas implementadas e revisadas
-(3 com 1 rodada de correção cada), revisão final de branch (1 crítico + 2 importantes,
-todos corrigidos e re-revisados), mais um adicional pedido por ele depois de testar
-localmente: **ordenação por clique no cabeçalho da coluna**, nas duas abas — já
-implementado, revisado e no PR. `npx tsc --noEmit` limpo, suíte da API 187/187.
-
-**✅ Migração `010_estoque_created_at.sql` aplicada em produção e confirmada por ele
-(06/08 08h):** `sem_entrada_registrada=0` de `total_produtos=71`, amostra com datas reais
-de maio/2026 — backfill funcionou. **A trava que impedia o merge foi removida.**
-
-**Próximo passo, só dele:** testar a tela logado (servidor local já está rodando —
-`http://localhost:3000`, branch `reorganizacao-estoque`) e, satisfeito, mergear o PR #47.
+PR #47 mergeado (squash `c66289d`), branch e worktree limpos. Virou abas
+Produtos/Histórico, ordenar por data de entrada (clicando no cabeçalho da coluna, nas
+duas abas), Excluir escondido atrás de um menu "⋯", arquivo de ~1000 linhas quebrado em
+hooks + componentes. 13 tarefas + revisão final + 1 adicional, tudo via
+subagent-driven-development num worktree isolado (nunca tocou a `main` até o merge).
+Migração `010_estoque_created_at.sql` aplicada em produção e confirmada por ele
+(`sem_entrada_registrada=0` de `71`). Testado logado por ele antes do merge.
+Detalhe completo: `docs/superpowers/plans/2026-08-05-reorganizacao-estoque.md`.
 
 **Achado fora do escopo, virou tarefa separada:** `GET /estoque` não filtra por
 `fazenda_id` (usa chave de serviço, ignora RLS) — numa instalação multi-fazenda mistura
 o estoque de todas. Pré-existente, não é desta branch. Chip criado pra sessão
 separada (`task_2d190249`).
-
-<details>
-<summary>Histórico da execução (dobrar se precisar)</summary>
-
-
-Ele pediu pra simplificar (achava a tela confusa) e pediu explicitamente pra chamar
-especialistas. Brainstorm + consulta a dois agentes (atlas = técnico, ui-ux-designer =
-UX) viraram spec aprovada por ele:
-`docs/superpowers/specs/2026-08-05-reorganizacao-estoque-design.md`. Plano de 13
-tarefas: `docs/superpowers/plans/2026-08-05-reorganizacao-estoque.md` — abas
-Produtos/Histórico, ordenar produtos por data de entrada no estoque (mais recente
-primeiro), esconder Excluir atrás de um menu "⋯", arquivo único de ~1000 linhas
-quebrado em hooks + componentes.
-
-Execução via subagent-driven-development (skill superpowers), num **worktree isolado**
-— `.worktrees/reorganizacao-estoque`, branch `reorganizacao-estoque`, nunca tocou a
-`main`. Progresso turno-a-turno e resultado de cada revisão ficam no ledger, **leia-o
-antes de continuar ou reconstruir qualquer coisa**:
-`.worktrees/reorganizacao-estoque/.superpowers/sdd/2026-08-05-reorganizacao-estoque/progress.md`
-
-**Combinado com ele (05/08, ele foi dormir):** autorizou terminar tudo sozinho —
-implementar, revisar, commitar, mergear, abrir PR. **Uma trava que fica de pé mesmo
-com essa autorização:** a Tarefa 1 do plano é uma migração nova
-(`supabase/migrations/010_estoque_created_at.sql`, adiciona `estoque.created_at`) que
-só ELE pode aplicar (login dele no Supabase, produção). **O merge para `main` fica
-parado até ele aplicar essa migração** — a Tarefa 2 já muda a API pra depender dessa
-coluna; mergear antes quebraria a tela de Estoque em produção (Vercel/Railway parecem
-fazer deploy automático ao mergear na `main`, não foi 100% confirmado). Quando ele
-acordar: rodar o SQL da migração 010 no Supabase Studio (comando pronto no próprio
-arquivo da migração), depois revisar e dar sinal verde pro merge do PR.
-
-</details>
 
 ## ⚠️ `precisaCriarLancamento` — deliberadamente NÃO consertado
 
