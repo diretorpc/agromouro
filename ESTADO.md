@@ -181,7 +181,28 @@ pensado para produto agrícola, não serviço. Não corrigido, não é urgente.
 Construir suporte de verdade é trabalho grande (cada prefeitura formata do seu jeito) —
 só vale quando a frequência justificar.
 
-## 🔵 Reorganização da tela `/estoque` — EM EXECUÇÃO desde a noite de 05/08/2026
+## 🔵 Reorganização da tela `/estoque` — PR #47 ABERTO, esperando ele (05/08 à noite)
+
+**https://github.com/diretorpc/agromouro/pull/47** — 13 tarefas implementadas e revisadas
+(3 com 1 rodada de correção cada), mais uma revisão final de toda a branch que achou 1
+crítico (erro da API sendo engolido, mostrando "estoque vazio" em vez de aviso) e 2
+importantes (busca do Histórico sem avisar limite de 100; migração sem transação) — os
+três já corrigidos e re-revisados. `npx tsc --noEmit` limpo, suíte da API 187/187.
+
+**⛔ Trava antes do merge, em letra grande no próprio PR:** rodar
+`supabase/migrations/010_estoque_created_at.sql` no SQL Editor do Supabase ANTES de
+mergear — a Task 2 já mudou a API pra depender da coluna nova; merge sem a migração
+quebra a tela em produção. Depois disso: conferir na tela logada (ninguém neste fluxo
+automatizado tinha login) e mergear.
+
+**Achado fora do escopo, virou tarefa separada:** `GET /estoque` não filtra por
+`fazenda_id` (usa chave de serviço, ignora RLS) — numa instalação multi-fazenda mistura
+o estoque de todas. Pré-existente, não é desta branch. Chip criado pra sessão
+separada (`task_2d190249`).
+
+<details>
+<summary>Histórico da execução (dobrar se precisar)</summary>
+
 
 Ele pediu pra simplificar (achava a tela confusa) e pediu explicitamente pra chamar
 especialistas. Brainstorm + consulta a dois agentes (atlas = técnico, ui-ux-designer =
@@ -208,6 +229,8 @@ coluna; mergear antes quebraria a tela de Estoque em produção (Vercel/Railway 
 fazer deploy automático ao mergear na `main`, não foi 100% confirmado). Quando ele
 acordar: rodar o SQL da migração 010 no Supabase Studio (comando pronto no próprio
 arquivo da migração), depois revisar e dar sinal verde pro merge do PR.
+
+</details>
 
 ## ⚠️ `precisaCriarLancamento` — deliberadamente NÃO consertado
 
