@@ -13,6 +13,7 @@ import type { Estoque } from '@/lib/types'
 import { TIPOS, UNIDADES_BASE, SELECT_CLASS } from '../constants'
 import { formatTipoInsumo } from '@/lib/insumos'
 import type { useFiltrosProdutos } from '../hooks/use-filtros-produtos'
+import { SortableTableHead } from './sortable-table-head'
 
 type Filtros = ReturnType<typeof useFiltrosProdutos>
 
@@ -28,7 +29,7 @@ export function TabelaProdutos({
 }) {
   const {
     busca, setBusca, filtroTipo, setFiltroTipo, filtroStatus, setFiltroStatus,
-    ordenacao, setOrdenacao, estoqueFiltrado, filtroAtivo, limpar,
+    ordenacao, setOrdenacao, direcao, toggleSort, estoqueFiltrado, filtroAtivo, limpar,
   } = filtros
 
   const situacaoBadge = (negativo: boolean, critico: boolean) =>
@@ -148,11 +149,11 @@ export function TabelaProdutos({
             <Table className="hidden md:table">
               <TableHeader>
                 <TableRow>
-                  <TableHead>Produto</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead className="text-right">Qtd. Atual</TableHead>
-                  <TableHead className="text-right">Preço Médio</TableHead>
-                  <TableHead className="text-right">Situação</TableHead>
+                  <SortableTableHead campo="nome" ordenacao={ordenacao} direcao={direcao} onSort={toggleSort}>Produto</SortableTableHead>
+                  <SortableTableHead campo="tipo" ordenacao={ordenacao} direcao={direcao} onSort={toggleSort}>Tipo</SortableTableHead>
+                  <SortableTableHead campo="quantidade" ordenacao={ordenacao} direcao={direcao} onSort={toggleSort} className="text-right">Qtd. Atual</SortableTableHead>
+                  <SortableTableHead campo="preco" ordenacao={ordenacao} direcao={direcao} onSort={toggleSort} className="text-right">Preço Médio</SortableTableHead>
+                  <SortableTableHead campo="situacao" ordenacao={ordenacao} direcao={direcao} onSort={toggleSort} className="text-right">Situação</SortableTableHead>
                   <TableHead />
                 </TableRow>
               </TableHeader>

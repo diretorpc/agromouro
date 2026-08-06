@@ -12,6 +12,7 @@ import { Pencil, Trash2 } from 'lucide-react'
 import { ORIGENS, SELECT_CLASS } from '../constants'
 import type { MovimentacaoComFornecedor } from '../hooks/use-estoque-data'
 import type { useFiltrosHistorico } from '../hooks/use-filtros-historico'
+import { SortableTableHead } from './sortable-table-head'
 
 type Filtros = ReturnType<typeof useFiltrosHistorico>
 
@@ -22,7 +23,10 @@ export function TabelaHistorico({
   onEditar: (mov: MovimentacaoComFornecedor) => void
   onExcluir: (mov: MovimentacaoComFornecedor) => void
 }) {
-  const { busca, setBusca, filtroOrigem, setFiltroOrigem, movimentacoesFiltradas, filtroAtivo, limpar } = filtros
+  const {
+    busca, setBusca, filtroOrigem, setFiltroOrigem, ordenacao, direcao, toggleSort,
+    movimentacoesFiltradas, filtroAtivo, limpar,
+  } = filtros
 
   return (
     <Card>
@@ -61,11 +65,11 @@ export function TabelaHistorico({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Data</TableHead>
-              <TableHead>Insumo</TableHead>
-              <TableHead>Tipo</TableHead>
-              <TableHead className="text-right">Quantidade</TableHead>
-              <TableHead>Origem</TableHead>
+              <SortableTableHead campo="data" ordenacao={ordenacao} direcao={direcao} onSort={toggleSort}>Data</SortableTableHead>
+              <SortableTableHead campo="insumo" ordenacao={ordenacao} direcao={direcao} onSort={toggleSort}>Insumo</SortableTableHead>
+              <SortableTableHead campo="tipo" ordenacao={ordenacao} direcao={direcao} onSort={toggleSort}>Tipo</SortableTableHead>
+              <SortableTableHead campo="quantidade" ordenacao={ordenacao} direcao={direcao} onSort={toggleSort} className="text-right">Quantidade</SortableTableHead>
+              <SortableTableHead campo="origem" ordenacao={ordenacao} direcao={direcao} onSort={toggleSort}>Origem</SortableTableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
