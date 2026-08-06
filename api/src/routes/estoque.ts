@@ -10,8 +10,9 @@ estoqueRoutes.get('/', async (_req, res, next) => {
       .from('estoque')
       .select('*, insumos(nome, tipo, unidade)')
       // Supabase não suporta .order() em colunas de tabela relacionada.
-      // Ordenamos pelo campo local e deixamos o frontend ordenar por nome se precisar.
-      .order('quantidade_atual', { ascending: false })
+      // "Mais recente primeiro" é a ordem padrão da tela; o frontend
+      // reordena por nome quando o usuário pedir.
+      .order('created_at', { ascending: false })
 
     if (error) throw error
 
