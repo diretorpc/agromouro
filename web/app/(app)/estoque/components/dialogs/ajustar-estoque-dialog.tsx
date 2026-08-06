@@ -35,6 +35,7 @@ export function AjustarEstoqueDialog({
     await onAjustar(item, novaQtd, !isNaN(novoPreco) && novoPreco >= 0 ? novoPreco : null)
     setSalvando(false)
     onOpenChange(false)
+    setAjuste('')
     setAjustePreco('')
   }
 
