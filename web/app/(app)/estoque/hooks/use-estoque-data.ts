@@ -29,10 +29,16 @@ export function useEstoqueData() {
   const [estoque, setEstoque] = useState<Estoque[]>([])
   const [movimentacoes, setMovimentacoes] = useState<MovimentacaoComFornecedor[]>([])
   const [loading, setLoading] = useState(true)
+  const [erroCarregamento, setErroCarregamento] = useState<string | null>(null)
 
   const recarregar = useCallback(async () => {
     const [e, movs] = await Promise.all([
-      api.get<Estoque[]>('/estoque').catch(() => [] as Estoque[]),
+      api.get<Estoque[]>('/estoque')
+        .then(data => { setErroCarregamento(null); return data })
+        .catch(() => {
+          setErroCarregamento('Não foi possível carregar o estoque agora. Tente recarregar a página em instantes.')
+          return [] as Estoque[]
+        }),
       supabase
         .from('movimentacoes_estoque')
         .select('*, insumos(nome, unidade), operacoes(talhoes(nome))')
@@ -172,7 +178,7 @@ export function useEstoqueData() {
   }
 
   return {
-    estoque, movimentacoes, loading, recarregar,
+    estoque, movimentacoes, loading, erroCarregamento, recarregar,
     ajustarEstoque, editarMovimentacao, excluirMovimentacao,
     criarInsumo, excluirInsumo, converterUnidade,
   }

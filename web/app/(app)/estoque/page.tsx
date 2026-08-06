@@ -56,6 +56,12 @@ export default function EstoquePage() {
         </Button>
       </div>
 
+      {dados.erroCarregamento && (
+        <div role="alert" className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+          {dados.erroCarregamento}
+        </div>
+      )}
+
       <Tabs value={tab} onValueChange={v => setTab(String(v))}>
         <TabsList>
           <TabsTrigger value="produtos">Produtos</TabsTrigger>

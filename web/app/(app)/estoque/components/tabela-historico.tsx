@@ -55,6 +55,7 @@ export function TabelaHistorico({
             </Button>
           )}
         </div>
+        <p className="text-xs text-muted-foreground">Mostrando as últimas 100 movimentações.</p>
       </CardHeader>
       <CardContent className="p-0">
         <Table>

@@ -13,6 +13,8 @@
 -- em estoque/page.tsx), a data da primeira movimentação de "entrada" é a
 -- data de entrada real do produto no estoque.
 --
+BEGIN;
+
 ALTER TABLE estoque ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
 UPDATE estoque e
@@ -25,18 +27,21 @@ FROM (
 ) AS primeira_entrada
 WHERE e.insumo_id = primeira_entrada.insumo_id;
 
+COMMIT;
+
 -- Produtos sem nenhuma movimentação de "entrada" registrada (raro — só
 -- existem por ajuste manual direto) ficam com o valor padrão (o momento em
 -- que esta migration rodou) e aparecem por último na ordenação "mais
 -- recentes primeiro". Não precisam de tratamento especial na aplicação.
 
--- VERIFICAÇÃO — confira o resultado antes de considerar concluído.
-SELECT
-  count(*) FILTER (WHERE created_at::date = current_date) AS sem_entrada_registrada,
-  count(*) AS total_produtos
-FROM estoque;
-
+-- VERIFICAÇÃO — rode as duas consultas SEPARADAMENTE — o SQL Editor só
+-- mostra o resultado da última quando coladas juntas.
 SELECT i.nome, e.created_at
 FROM estoque e JOIN insumos i ON i.id = e.insumo_id
 ORDER BY e.created_at ASC
 LIMIT 5;
+
+SELECT
+  count(*) FILTER (WHERE created_at::date = current_date) AS sem_entrada_registrada,
+  count(*) AS total_produtos
+FROM estoque;
