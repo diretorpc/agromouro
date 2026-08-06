@@ -37,6 +37,9 @@ Thumbs.db
 # Railway / Vercel
 .vercel
 
+# Supabase CLI — estado local da máquina (link do projeto, versões)
+supabase/.temp/
+
 # Ferramentas locais (não versionar)
 .playwright-mcp/
 .agents/

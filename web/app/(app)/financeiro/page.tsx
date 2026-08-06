@@ -27,6 +27,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { supabase } from '@/lib/supabase'
+import { useFazenda } from '@/context/fazenda-context'
 
 type ItemFinanceiro = {
   id: string
@@ -260,8 +261,10 @@ export default function FinanceiroPage() {
   const [filtroMes, setFiltroMes] = useState('todos')
   const [filtroOrigem, setFiltroOrigem] = useState<'todos' | 'nfe' | 'cartao' | 'manual' | 'conta'>('todos')
   const [sortData, setSortData] = useState<'desc' | 'asc'>('desc')
+  const { fazendaAtiva } = useFazenda()
 
   const [addDialog, setAddDialog] = useState(false)
+  const [addErro, setAddErro] = useState<string | null>(null)
   const [editItem, setEditItem] = useState<ItemFinanceiro | null>(null)
   const [editErro, setEditErro] = useState<string | null>(null)
   const [deleteItem, setDeleteItem] = useState<ItemFinanceiro | null>(null)
@@ -275,7 +278,7 @@ export default function FinanceiroPage() {
     const [nfeResult, lancResult] = await Promise.all([
       supabase
         .from('itens_nfe')
-        .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, centro_custo, insumo_id, conta_como_compra, insumos(tipo), notas_fiscais(numero, emitente_nome, data_emissao)')
+        .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, centro_custo, insumo_id, conta_como_compra, data_manual, insumos(tipo), notas_fiscais(numero, emitente_nome, data_emissao)')
         .order('id', { ascending: false }),
       supabase
         .from('lancamentos_financeiros')
@@ -306,7 +309,11 @@ export default function FinanceiroPage() {
       insumo_id: row.insumo_id,
       nota_numero: row.notas_fiscais?.numero ?? null,
       emitente_nome: row.notas_fiscais?.emitente_nome ?? '',
-      data_emissao: row.notas_fiscais?.data_emissao ?? '',
+      // Prioridade para a data da NF-e quando existir; lançamento manual
+      // (sem nota vinculada) usa data_manual — a data escolhida pelo usuário
+      // no formulário (migration 015). Sem este fallback o lançamento manual
+      // fica com data vazia: some do filtro de mês e do Total de Despesas.
+      data_emissao: row.notas_fiscais?.data_emissao ?? row.data_manual ?? '',
       is_manual: !row.notas_fiscais,
       origem: 'nfe' as const,
       cartao_apelido: null,
@@ -351,7 +358,16 @@ export default function FinanceiroPage() {
   }, [])
 
   async function handleAdd() {
+    // Sem fazenda ativa não há como preencher fazenda_id (NOT NULL + RLS
+    // nas duas tabelas abaixo) — o insert seria recusado pelo banco e o
+    // usuário não veria nada. Barra antes de tentar.
+    if (!fazendaAtiva) {
+      setAddErro('Nenhuma fazenda ativa selecionada. Recarregue a página e tente de novo.')
+      return
+    }
+
     setSalvando(true)
+    setAddErro(null)
     const qtd = parseFloat(form.quantidade) || 1
     const vUnit = parseFloat(form.valor_unitario) || 0
 
@@ -368,7 +384,7 @@ export default function FinanceiroPage() {
       } else {
         const { data: novo, error: errInsumo } = await supabase
           .from('insumos')
-          .insert({ nome: form.descricao.trim(), tipo: form.centro_custo, unidade: form.unidade })
+          .insert({ nome: form.descricao.trim(), tipo: form.centro_custo, unidade: form.unidade, fazenda_id: fazendaAtiva.id })
           .select('id')
           .single()
         if (errInsumo) throw errInsumo
@@ -384,6 +400,8 @@ export default function FinanceiroPage() {
         valor_total: qtd * vUnit,
         insumo_id: insumoId,
         data_manual: form.data,
+        fazenda_id: fazendaAtiva.id,
+        centro_custo: form.centro_custo,
       })
       if (errItem) throw errItem
 
@@ -392,6 +410,8 @@ export default function FinanceiroPage() {
       load()
     } catch (err) {
       console.error('[Financeiro] Erro ao adicionar lançamento:', err)
+      const msg = (err as { message?: string })?.message ?? 'Erro desconhecido ao salvar'
+      setAddErro(`Erro ao salvar: ${msg}`)
     } finally {
       setSalvando(false)
     }
@@ -531,7 +551,7 @@ export default function FinanceiroPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Financeiro</h1>
           <p className="text-sm text-muted-foreground mt-1 font-medium">Despesas e lançamentos da fazenda</p>
         </div>
-        <Button size="sm" className="shrink-0" onClick={() => { setForm(FORM_VAZIO); setAddDialog(true) }}>
+        <Button size="sm" className="shrink-0" onClick={() => { setForm(FORM_VAZIO); setAddErro(null); setAddDialog(true) }}>
           <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
           Adicionar
         </Button>
@@ -868,12 +888,17 @@ export default function FinanceiroPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={addDialog} onOpenChange={open => { if (!open) setAddDialog(false) }}>
+      <Dialog open={addDialog} onOpenChange={open => { if (!open) { setAddDialog(false); setAddErro(null) } }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Adicionar Lançamento</DialogTitle></DialogHeader>
           <FormFields form={form} setForm={setForm} />
+          {addErro && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              {addErro}
+            </p>
+          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddDialog(false)}>Cancelar</Button>
+            <Button variant="outline" onClick={() => { setAddDialog(false); setAddErro(null) }}>Cancelar</Button>
             <Button onClick={handleAdd} disabled={salvando || !form.descricao || !form.valor_unitario}>
               {salvando ? 'Salvando…' : 'Salvar'}
             </Button>
