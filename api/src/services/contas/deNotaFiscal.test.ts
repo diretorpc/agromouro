@@ -32,6 +32,15 @@ describe('motivoSemBoleto', () => {
   it('90 (sem pagamento) NAO gera boleto', () => {
     expect(motivoSemBoleto('90')).toBe('a nota diz que não há pagamento')
   })
+  // '16' (depósito bancário), '19' (cashback/crédito virtual) e '21' (crédito
+  // em loja) foram avaliados e propositalmente NÃO entraram em MOTIVO_SEM_BOLETO
+  // — ver comentário em deNotaFiscal.ts. Por não estarem mapeados, caem no
+  // caminho padrão: "na dúvida, GERA".
+  it('16/19/21 nao estao mapeados — seguem o padrao "na duvida, gera"', () => {
+    expect(motivoSemBoleto('16')).toBeNull()
+    expect(motivoSemBoleto('19')).toBeNull()
+    expect(motivoSemBoleto('21')).toBeNull()
+  })
 })
 
 describe('contasDaNota — nota de entrega futura (tPag 90)', () => {
@@ -63,6 +72,29 @@ describe('contasDaNota — nota de entrega futura (tPag 90)', () => {
       duplicatas: [{ numero: '001', vencimento: '2026-08-01', valor: 355 }],
     })
     expect(r).toEqual([])
+  })
+
+  // '16'/'19'/'21' não estão mapeados em MOTIVO_SEM_BOLETO (decisão registrada
+  // em deNotaFiscal.ts, 06/08/2026) — então, com ou sem duplicata, seguem o
+  // caminho padrão desta função: código desconhecido = "na dúvida, GERA".
+  it('tPag 16/19/21 SEM duplicata: gera conta pelo valor total (caminho padrao, igual a um tPag qualquer nao mapeado)', () => {
+    for (const tPag of ['16', '19', '21']) {
+      const r = contasDaNota({ ...base, formaPagamento: tPag, duplicatas: [] })
+      expect(r).toHaveLength(1)
+      expect(r[0].valor).toBe(base.valorTotal)
+    }
+  })
+
+  it('tPag 16/19/21 COM duplicata: gera conta a partir da duplicata (caminho padrao)', () => {
+    for (const tPag of ['16', '19', '21']) {
+      const r = contasDaNota({
+        ...base, formaPagamento: tPag,
+        duplicatas: [{ numero: '001', vencimento: '2026-09-15', valor: 5000 }],
+      })
+      expect(r).toHaveLength(1)
+      expect(r[0].vencimento).toBe('2026-09-15')
+      expect(r[0].valor).toBe(5000)
+    }
   })
 })
 
