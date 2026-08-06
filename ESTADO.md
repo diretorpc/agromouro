@@ -58,6 +58,75 @@ teste automatizado.
 dois já servem o código novo (mesmo padrão de incerteza da Fase 2 de contas a pagar em
 31/07).
 
+## Estoque: fazenda_id nas gravações manuais — no ar desde 06/08/2026
+
+**PR #49 mergeado** (`3309300`, squash), branch `claude/nervous-torvalds-4a56e7`
+apagada. Achado independente do bug de isolamento por fazenda do PR #48: em
+`web/app/(app)/estoque/hooks/use-estoque-data.ts`, 5 gravações (`ajustarEstoque`,
+`criarInsumo`, `converterUnidade`) não mandavam `fazenda_id` (coluna `NOT NULL` sem
+padrão, regra de permissão do banco exige o valor) e nenhuma conferia erro de retorno —
+falha muda. Sintoma: saldo mudava na tela, o histórico que deveria explicar por quê
+nunca era gravado.
+
+**3 rodadas de revisão do Apolo**, cada uma achando problema na correção da anterior:
+(1) `fazenda_id` ausente + falha muda; (2) estado parcial em falha de rede — converter
+unidade podia trocar o rótulo sem a quantidade, cadastrar insumo podia deixar produto
+"fantasma" preso pelo índice único de nome; (3) a própria correção do item 2 podia
+deixar a tela desatualizada quando só o histórico falhava por último, arriscando
+repetir a operação. Confirmado em produção (`SELECT ... FROM pg_policies`) que as 3
+tabelas têm política `FOR ALL` — as compensações (desfazer o passo anterior) têm
+permissão pra funcionar.
+
+⚠️ **Não testado ao vivo** (diferente do PR #46/#48) — só revisão de código + `tsc
+--noEmit` limpo. Vercel/Railway fazem deploy automático no push; não confirmado de
+fora que o ar já serve este código.
+
+## Operações: fazenda_id condicional na exclusão — no ar desde 06/08/2026
+
+**PR #51 mergeado** (`7c8cddd`, squash), branch `claude/zen-mayer-9a5a06` apagada
+(local e remota). Achado pelo Apolo durante a correção do Estoque (seção anterior),
+enquanto ele lia `use-estoque-data.ts` em busca de padrões repetidos — mesma família
+dos dois bugs acima (PR #48 e #49).
+
+Em `web/app/(app)/operacoes/page.tsx`, função `confirmarDeleteOp` (apaga uma operação e
+devolve os produtos usados ao estoque): o insert em `movimentacoes_estoque` mandava
+`fazenda_id` só condicionalmente — mesmo sintoma dos outros dois, saldo mudava sem o
+registro que explica por quê.
+
+**4 rodadas de revisão do Apolo**, cada uma achando problema na correção da anterior:
+(1) `fazenda_id` condicional → obrigatório + guarda de `fazendaAtiva`; (2) delete da
+operação e update do saldo sem checar erro → checados (decisão do Matheus: resolver só
+isso agora, sem função no banco — ver adiados abaixo); (3) a própria correção do item 2
+introduziu 3 bugs (variável de controle ligando tarde, `return` de erro sem recarregar
+os dados, botão "Excluir" continuando clicável depois de erro parcial) → corrigidos;
+(4) comentário prometendo trava permanente que o código não entregava + mensagem de
+erro antiga não sendo limpa ao abrir nova tentativa → 2 ajustes triviais.
+
+**Confirmado com o Matheus rodando SQL no Supabase:** `itens_operacao_operacao_id_fkey`
+tem `confdeltype = c` (cascata) — apagar uma operação apaga os itens vinculados
+automaticamente, sem risco de exclusão travada por vínculo.
+
+⚠️ **Não testado ao vivo** — só revisão de código + `tsc --noEmit` limpo antes e depois
+do merge com `main`. Deploy de teste do PR (Vercel) passou; não confirmado de fora que
+o ar em produção já serve este código.
+
+**Adiado de propósito, decisão do Matheus ("só o mínimo agora") — vira tarefa quando
+ele quiser:**
+- função no banco "tudo ou nada" para a exclusão inteira (igual à da migração 009 de
+  excluir nota fiscal) — sem ela, ainda é fisicamente possível parar no meio com
+  devolução parcial gravada (mensagem de erro avisa e trava o botão, mas não impede);
+- mesmo bug de fundo (sem registro de movimentação) na **edição** de operação
+  (`handleSubmit`), que é **mais grave** que o da exclusão: cada edição de operação
+  salva empilha uma "saída fantasma" no histórico, porque a devolução ao ajustar
+  quantidade não grava movimentação nenhuma;
+- corrida entre ler e gravar o saldo (`select` + `update` em dois passos) — o projeto já
+  tem a função `incrementar_estoque` pronta pra isso, mas ela não é usada aqui; usá-la
+  exige antes conferir se está liberada para o navegador sem risco de fazenda cruzada;
+- travar o diálogo de exclusão contra fechar por Esc/clique fora durante o processamento;
+- origem da devolução gravada como `'manual'` em vez de `'operacao'` + `operacao_id` —
+  dificulta distinguir, no histórico do Estoque, uma devolução de exclusão com erro
+  parcial de um ajuste manual comum.
+
 ## CFOP de entrega futura — no ar desde 04/08/2026
 
 **PR #45 mergeado** (`d76f413`, squash). Migrações `007` (coluna `cfop`) e `008`
@@ -97,6 +166,61 @@ Detalhe, riscos e defeitos achados nas revisões: **corpo do PR** e
 ---
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
+
+## 🔴 Financeiro: o botão "Adicionar" NÃO SALVA — quebrado agora, em produção (06/08/2026)
+
+Worktree `.claude/worktrees/heuristic-rubin-2a59d0`, branch `claude/heuristic-rubin-2a59d0`.
+**Nada commitado ainda.**
+
+**Bug original.** `web/app/(app)/financeiro/page.tsx`, função `handleAdd`: os dois
+`insert` no Supabase (tabelas `insumos` e `itens_nfe`) não mandavam `fazenda_id` —
+coluna obrigatória e exigida pela regra de permissão do banco. O lançamento manual
+falhava **em silêncio** (só `console.error`) e o dinheiro nem entrava na conta do
+Financeiro. Isto é o mesmo bug-irmão já anotado na seção do Estoque abaixo.
+
+**Primeira correção (Atlas):** `fazenda_id` nos dois `insert` + erro visível na tela em
+vez de só registro interno.
+
+**A revisão do Apolo achou mais 9 problemas na própria correção.** O pior, e é o que
+mantém a tela quebrada NESTE momento:
+
+⛔ **`data_manual` não existe.** O `insert` tenta gravar `data_manual: form.data`, mas
+essa coluna **não existe** em `itens_nfe` no banco de produção — conferido direto no
+banco pela ferramenta de linha de comando do Supabase, não deduzido do código. Ou seja:
+**mesmo com o `fazenda_id` corrigido, o botão "Adicionar" continua falhando ao salvar
+hoje.** Decisão dele: **criar migração nova para a coluna que falta**, em vez de
+reaproveitar `created_at`.
+
+Já corrigidos nesta branch:
+- mensagem de erro escondia o motivo real — `err instanceof Error` não reconhece erro
+  vindo do Supabase, então aparecia texto genérico;
+- a categoria escolhida por ele era jogada fora quando o produto já existia no catálogo.
+
+Em andamento quando a sessão parou:
+- menu "Centro de Custo" oferece 22 categorias e o banco só aceitava 18 (faltavam
+  `adjuvante`, `manutencao`, `alimentacao`, `outros`) → migração
+  `014_add_categorias_faltantes.sql`;
+- o mesmo `fazenda_id` ausente em `web/app/(app)/estoque/hooks/use-estoque-data.ts`
+  (`ajustarEstoque`, `criarInsumo`, `converterUnidade`).
+
+**Próximo passo, nesta ordem — a ordem importa:** esperar a migração de categorias
+terminar, **só então** criar a migração da coluna `data_manual` (se as duas forem
+criadas juntas, colidem no número do arquivo); depois consolidar e commitar tudo.
+
+**Ainda não resolvidos, menor prioridade:**
+- índice único de nome de insumo é **global**, não por fazenda — vira problema no dia em
+  que a segunda fazenda tiver dados;
+- se o segundo `insert` falhar, sobra insumo "órfão" no catálogo (impacto baixo).
+
+Achados de menor risco, não-bloqueantes, deixados para depois: `recarregar()` zera a
+lista de produtos se a API cair na mesma falha que gerou o aviso; índice único de nome
+de insumo não conhece fazenda (vira problema quando a 2ª fazenda tiver dados reais);
+projeto `web` não tem ESLint configurado, só o `tsc` confere automaticamente.
+
+**Dois bugs-irmãos, mesma causa raiz, fora desta branch:** `financeiro/page.tsx`
+(`handleAdd`) — **em andamento na branch `heuristic-rubin-2a59d0`, ver seção acima**;
+`operacoes/page.tsx` — **corrigido e mergeado, PR #51, ver seção NO AR no topo deste
+arquivo.**
 
 ## 🔴 As 66 toneladas da SYAGRI (dele, não do sistema)
 
