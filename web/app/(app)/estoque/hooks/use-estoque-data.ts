@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { api } from '@/lib/api'
+import { useFazenda } from '@/context/fazenda-context'
 import type { Estoque, MovimentacaoEstoque } from '@/lib/types'
 
 export type MovimentacaoComFornecedor = MovimentacaoEstoque & {
@@ -11,6 +12,14 @@ export type MovimentacaoComFornecedor = MovimentacaoEstoque & {
 }
 
 type ResultadoExclusao = { ok: true } | { ok: false; erro: string }
+
+// Traduz o erro cru do Postgres (em inglês, cheio de termos técnicos) para uma
+// mensagem que um produtor rural sem vocabulário técnico consegue entender.
+function mensagemErro(error: { code?: string; message: string }): string {
+  if (error.code === '23505') return 'Já existe um produto com esse nome.'
+  if (error.code === '23502') return 'Faltou informar a fazenda. Recarregue a página.'
+  return `Erro: ${error.message}`
+}
 
 // Lê o saldo atual do banco (não confia em estado do React que pode estar
 // desatualizado), soma o delta e nunca deixa passar de zero pra negativo por
@@ -26,6 +35,7 @@ async function ajustarSaldoPorDelta(insumoId: string, delta: number) {
 }
 
 export function useEstoqueData() {
+  const { fazendaAtiva } = useFazenda()
   const [estoque, setEstoque] = useState<Estoque[]>([])
   const [movimentacoes, setMovimentacoes] = useState<MovimentacaoComFornecedor[]>([])
   const [loading, setLoading] = useState(true)
@@ -66,20 +76,43 @@ export function useEstoqueData() {
 
   useEffect(() => { recarregar() }, [recarregar])
 
-  async function ajustarEstoque(item: Estoque, novaQuantidade: number, novoPreco: number | null) {
+  async function ajustarEstoque(
+    item: Estoque, novaQuantidade: number, novoPreco: number | null,
+  ): Promise<ResultadoExclusao> {
+    if (!fazendaAtiva) return { ok: false, erro: 'Nenhuma fazenda ativa selecionada' }
+
     const diff = novaQuantidade - item.quantidade_atual
     const tipo = diff >= 0 ? 'entrada' : 'saida'
-    await supabase.from('movimentacoes_estoque').insert({
+    const { data: mov, error: movError } = await supabase.from('movimentacoes_estoque').insert({
       insumo_id: item.insumo_id,
       tipo,
       quantidade: Math.abs(diff),
       data: new Date().toISOString(),
       origem: 'manual',
-    })
+      fazenda_id: fazendaAtiva.id,
+    }).select('id').single()
+    if (movError) return { ok: false, erro: mensagemErro(movError) }
+    if (!mov) return { ok: false, erro: 'Não foi possível registrar a movimentação.' }
+
     const updatePayload: Record<string, unknown> = { quantidade_atual: novaQuantidade }
     if (novoPreco !== null && novoPreco >= 0) updatePayload.preco_medio_unitario = novoPreco
-    await supabase.from('estoque').update(updatePayload).eq('id', item.id)
+    const { data: updated, error: updateError } = await supabase
+      .from('estoque').update(updatePayload).eq('id', item.id).select('id')
+
+    if (updateError || !updated || updated.length === 0) {
+      // Update do saldo falhou (ou RLS barrou em silêncio) — desfaz a movimentação
+      // que já tinha sido gravada, pra não sobrar histórico sem saldo batendo.
+      await supabase.from('movimentacoes_estoque').delete().eq('id', mov.id)
+      return {
+        ok: false,
+        erro: updateError
+          ? mensagemErro(updateError)
+          : 'Sem permissão para alterar. Verifique as políticas do banco.',
+      }
+    }
+
     await recarregar()
+    return { ok: true }
   }
 
   async function editarMovimentacao(
@@ -108,7 +141,7 @@ export function useEstoqueData() {
     const { data: deleted, error } = await supabase
       .from('movimentacoes_estoque').delete().eq('id', mov.id).select('id')
 
-    if (error) return { ok: false, erro: `Erro: ${error.message}` }
+    if (error) return { ok: false, erro: mensagemErro(error) }
     if (!deleted || deleted.length === 0) {
       return { ok: false, erro: 'Sem permissão para excluir. Verifique as políticas do banco.' }
     }
@@ -123,58 +156,112 @@ export function useEstoqueData() {
   async function criarInsumo(form: {
     nome: string; tipo: string; unidade: string
     quantidade: number; minimo: number; preco: number
-  }) {
-    const { data: insumo, error } = await supabase
+  }): Promise<ResultadoExclusao> {
+    if (!fazendaAtiva) return { ok: false, erro: 'Nenhuma fazenda ativa selecionada' }
+
+    const { data: insumo, error: insumoError } = await supabase
       .from('insumos')
-      .insert({ nome: form.nome.trim(), tipo: form.tipo, unidade: form.unidade })
+      .insert({ nome: form.nome.trim(), tipo: form.tipo, unidade: form.unidade, fazenda_id: fazendaAtiva.id })
       .select()
       .single()
-    if (insumo && !error) {
-      await supabase.from('estoque').insert({
+    if (insumoError) return { ok: false, erro: mensagemErro(insumoError) }
+    if (!insumo) return { ok: false, erro: 'Não foi possível criar o insumo.' }
+
+    const { error: estoqueError } = await supabase.from('estoque').insert({
+      insumo_id: insumo.id,
+      quantidade_atual: form.quantidade,
+      quantidade_minima_alerta: form.minimo,
+      preco_medio_unitario: form.preco,
+      fazenda_id: fazendaAtiva.id,
+    })
+    if (estoqueError) {
+      // Sem linha de estoque o insumo fica órfão, e o nome (índice único) trava
+      // qualquer nova tentativa de cadastro — apaga o insumo recém-criado.
+      await supabase.from('insumos').delete().eq('id', insumo.id)
+      return { ok: false, erro: mensagemErro(estoqueError) }
+    }
+
+    if (form.quantidade > 0) {
+      const { error: movError } = await supabase.from('movimentacoes_estoque').insert({
         insumo_id: insumo.id,
-        quantidade_atual: form.quantidade,
-        quantidade_minima_alerta: form.minimo,
-        preco_medio_unitario: form.preco,
+        tipo: 'entrada',
+        quantidade: form.quantidade,
+        data: new Date().toISOString(),
+        origem: 'manual',
+        fazenda_id: fazendaAtiva.id,
       })
-      if (form.quantidade > 0) {
-        await supabase.from('movimentacoes_estoque').insert({
-          insumo_id: insumo.id,
-          tipo: 'entrada',
-          quantidade: form.quantidade,
-          data: new Date().toISOString(),
-          origem: 'manual',
-        })
+      if (movError) {
+        // O insumo e o estoque já foram salvos de verdade — só o histórico falhou.
+        // Atualiza a tela com o que já está no banco pra não fazer o produtor achar
+        // que nada foi salvo e tentar cadastrar de novo (o nome tem índice único).
+        await recarregar()
+        return { ok: false, erro: 'O produto foi salvo, mas o histórico da entrada não foi registrado. NÃO cadastre de novo — confira o estoque antes de repetir.' }
       }
     }
-    await recarregar()
-  }
 
-  async function excluirInsumo(item: Estoque): Promise<ResultadoExclusao> {
-    const { error } = await supabase.from('insumos').delete().eq('id', item.insumo_id)
-    if (error) return { ok: false, erro: `Erro: ${error.message}` }
     await recarregar()
     return { ok: true }
   }
 
-  async function converterUnidade(item: Estoque, novaUnidade: string, fator: number) {
+  async function excluirInsumo(item: Estoque): Promise<ResultadoExclusao> {
+    const { error } = await supabase.from('insumos').delete().eq('id', item.insumo_id)
+    if (error) return { ok: false, erro: mensagemErro(error) }
+    await recarregar()
+    return { ok: true }
+  }
+
+  async function converterUnidade(item: Estoque, novaUnidade: string, fator: number): Promise<ResultadoExclusao> {
+    if (!fazendaAtiva) return { ok: false, erro: 'Nenhuma fazenda ativa selecionada' }
+
     const novaQtd   = parseFloat((item.quantidade_atual * fator).toFixed(3))
     const novoPreco = item.preco_medio_unitario > 0
       ? parseFloat((item.preco_medio_unitario / fator).toFixed(4))
       : 0
 
-    await supabase.from('insumos').update({ unidade: novaUnidade }).eq('id', item.insumo_id)
-    await supabase.from('estoque').update({
+    const { data: insumoUpdated, error: insumoError } = await supabase
+      .from('insumos').update({ unidade: novaUnidade }).eq('id', item.insumo_id).select('id')
+    if (insumoError) return { ok: false, erro: mensagemErro(insumoError) }
+    if (!insumoUpdated || insumoUpdated.length === 0) {
+      return { ok: false, erro: 'Sem permissão para alterar. Verifique as políticas do banco.' }
+    }
+
+    const { data: estoqueUpdated, error: estoqueError } = await supabase.from('estoque').update({
       quantidade_atual: novaQtd,
       ...(novoPreco > 0 ? { preco_medio_unitario: novoPreco } : {}),
-    }).eq('id', item.id)
-    await supabase.from('movimentacoes_estoque').insert({
+    }).eq('id', item.id).select('id')
+
+    if (estoqueError || !estoqueUpdated || estoqueUpdated.length === 0) {
+      // Update da quantidade falhou (ou RLS barrou em silêncio) — desfaz a
+      // unidade pra não deixar o produto com unidade nova e quantidade na
+      // unidade antiga (ex.: 20 caixas viram "20 L", 20x subavaliado).
+      await supabase.from('insumos').update({ unidade: item.insumos.unidade }).eq('id', item.insumo_id)
+      const detalhe = estoqueError
+        ? estoqueError.message
+        : 'sem permissão para alterar. Verifique as políticas do banco.'
+      return {
+        ok: false,
+        erro: `Erro ao atualizar a quantidade — nenhuma alteração foi salva: ${detalhe}`,
+      }
+    }
+
+    const { error: movError } = await supabase.from('movimentacoes_estoque').insert({
       insumo_id: item.insumo_id,
       tipo:      'entrada',
       quantidade: novaQtd,
       data:      new Date().toISOString().split('T')[0],
       origem:    'correcao_unidade',
+      fazenda_id: fazendaAtiva.id,
     })
+    if (movError) {
+      // A unidade e a quantidade já foram convertidas de verdade no banco — só o
+      // histórico falhou. Atualiza a tela com o valor novo pra não deixar o produtor
+      // achar que a conversão não aconteceu e repetir (aplicaria o fator duas vezes).
+      await recarregar()
+      return { ok: false, erro: 'A conversão foi salva, mas o histórico não foi registrado. NÃO converta de novo — confira o estoque antes de repetir.' }
+    }
+
     await recarregar()
+    return { ok: true }
   }
 
   return {
