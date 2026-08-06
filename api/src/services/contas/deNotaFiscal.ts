@@ -43,6 +43,19 @@ const MOTIVO_SEM_BOLETO: Record<string, string> = {
   '90': 'a nota diz que não há pagamento',
 }
 
+// '16' (depósito bancário), '19' (cashback/crédito virtual) e '21' (crédito em
+// loja) foram AVALIADOS e propositalmente NÃO entraram na tabela acima — decisão
+// registrada em 06/08/2026, depois de revisão do Apolo. Numa nota SEM quadro de
+// cobrança (sem `<cobr>`), não há como distinguir "esses créditos já cobriram a
+// nota inteira" de "cobrança real que o fornecedor só não detalhou" — é
+// exatamente o caso ERCAL (nfeProcessor.ts:249, nota 82398: tPag 15, zero
+// duplicata, boleto real de R$ 8.258,40 mesmo sem duplicata nenhuma no XML).
+// Tratar esses 3 códigos como "sem boleto" arriscaria perder boleto de verdade
+// pela mesma brecha. Resolver direito exige ler `vPag` (o valor efetivamente
+// pago, campo do XML que o parser hoje não lê) e comparar com o total da nota —
+// isso é trabalho futuro, não feito aqui. Até lá, '16'/'19'/'21' seguem o
+// caminho padrão desta função: código não mapeado = "na dúvida, GERA" boleto.
+
 // Devolve o motivo em português quando a nota NÃO deve gerar boleto, ou null quando deve.
 // Na dúvida (código desconhecido ou ausente), GERA: um boleto a mais é dispensado
 // num toque; um boleto a menos vence sem ninguém avisar.
@@ -64,6 +77,9 @@ export function motivoSemBoleto(formaPagamento: string | null): string | null {
 // Cartão e dinheiro NÃO cedem: ali a cobrança vem pela fatura do cartão ou o
 // dinheiro já saiu, e a duplicata do XML é só o espelho da venda. Prova medida em
 // 04/08/2026: METAL AGRÍCOLA nota 51843 tem tPag '05' E duplicata preenchida.
+// '16'/'19'/'21' não estão nem aqui nem em MOTIVO_SEM_BOLETO (ver comentário lá
+// em cima) — de propósito: como não são tratados como "sem boleto" em nenhuma
+// circunstância, não existe nada para "ceder" nesses códigos.
 const CODIGOS_QUE_CEDEM_A_DUPLICATA = new Set(['90'])
 
 // Decide se a nota gera boleto levando em conta a duplicata — é esta função,
