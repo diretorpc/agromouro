@@ -595,6 +595,23 @@ describe('processarNFe — CFOP manda no estoque e no custo', () => {
     expect(lancamentos[0].payload.valor).toBe(1060000)
   })
 
+  // REGRESSAO (achada pelo Apolo, 06/08/2026): duplicata sem vencimento mas com valor
+  // preenchido (<dup><nDup>1</nDup><vDup>...</vDup></dup> sem <dVenc>) é cobrança real —
+  // temCobrancaReal precisa aceitar isso, não só duplicata com data.
+  it('P1 — escape hatch: remessa (5117) COM duplicata SEM data mas COM valor ainda cria lançamento pelo valor total', async () => {
+    await processarNFe(
+      nota({
+        items:      [item({ cfop: '5117' })],
+        duplicatas: [{ numero: '001', vencimento: null, valor: 1060000 }],
+      }),
+      'webhook', 'fazenda-fake-id',
+    )
+
+    const lancamentos = insertsEm('lancamentos_financeiros')
+    expect(lancamentos).toHaveLength(1)
+    expect(lancamentos[0].payload.valor).toBe(1060000)
+  })
+
   it('P4 — nota mista soma só os itens de compra, não o total da nota', async () => {
     await processarNFe(
       nota({
@@ -670,6 +687,30 @@ describe('processarNFe — CFOP manda no estoque e no custo', () => {
     const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
     expect(mensagem).not.toContain('Sem boleto')
     expect(mensagem).toContain('Boleto:')
+  })
+
+  // REGRESSAO (achada pelo Apolo, 06/08/2026): mesma prova acima, mas com a duplicata
+  // SEM vencimento (só valor) — critério antigo (`duplicatas.length > 0` já cobria isso,
+  // mas o critério intermediário só-com-data no meio do dia teria feito a nota inteira
+  // desaparecer da mensagem: nem "Sem boleto" nem "Boleto:", nenhuma linha nenhuma).
+  it('tPag 90 COM duplicata SEM data (só valor): cria o boleto de verdade e a mensagem NAO diz "Sem boleto"', async () => {
+    await processarNFe(
+      nota({
+        formaPagamento: '90',
+        duplicatas: [{ numero: '001', vencimento: null, valor: 5000 }],
+      }),
+      'webhook', 'fazenda-fake-id',
+    )
+
+    const upsertContas = chamadas.filter(c => c.table === 'contas_a_pagar' && c.method === 'upsert')
+    expect(upsertContas).toHaveLength(1)
+
+    // Boleto sem vencimento usa a frase própria de "informe a data" (avisoBoleto.ts),
+    // não o rótulo "Boleto:" (que só aparece quando há data pra mostrar) — confirmado
+    // rodando o teste antes de fixar a asserção, não por suposição.
+    const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
+    expect(mensagem).not.toContain('Sem boleto')
+    expect(mensagem).toContain('Boleto sem data de vencimento')
   })
 })
 

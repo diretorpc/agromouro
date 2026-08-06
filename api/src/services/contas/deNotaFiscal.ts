@@ -30,16 +30,32 @@ export type ParcelaDescartada = {
   motivo: string
 }
 
-// Formas de pagamento que NÃO geram boleto para o Matheus pagar.
-// A cobrança vem pela fatura do cartão, ou o dinheiro já saiu.
+// Formas de pagamento que NÃO geram boleto para o Matheus pagar — sozinhas, sem
+// duplicata (quadro de cobrança) na nota. A cobrança vem pela fatura do cartão,
+// ou o dinheiro já saiu por PIX/transferência.
 // ⚠️ Decidido com uma amostra só (31/07/2026): a METAL AGRICOLA usou '05'
 // ("crédito loja") para o que o texto livre chama de cartão de crédito.
+// Confirmado em produção (06/08/2026): a nota 16246 da USINA UBERABA S/A
+// (R$ 88.939,27) usou '18' ("transferência bancária/carteira digital") e,
+// como o código não estava mapeado, caiu na regra de segurança abaixo e
+// virou boleto fantasma — o dinheiro já tinha sido transferido.
+// '17' (PIX dinâmico) e '20' (PIX estático — QR Code fixo que o fornecedor reaproveita
+// para vários clientes, ao contrário do '17' que é gerado na hora) foram acrescentados
+// por ANALOGIA ao '18': mesma família (PIX), mas sem nota real de amostra confirmando —
+// não tratar como confirmado em produção enquanto isso não acontecer.
+// tPag descreve o MEIO de pagamento, não o MOMENTO: uma compra pode ser "uma parte
+// por PIX agora, o resto por boleto daqui a 3 meses" no mesmo XML. Por isso este mapa
+// sozinho NUNCA decide a nota — motivoSemBoletoDaNota() cruza com a duplicata antes de
+// decidir de verdade (ver CODIGOS_QUE_CEDEM_A_DUPLICATA logo abaixo).
 // Confirmar contra o manual vigente da NF-e antes de acrescentar código novo.
 const MOTIVO_SEM_BOLETO: Record<string, string> = {
   '01': 'a nota diz pagamento em dinheiro',
   '03': 'a nota diz cartão de crédito',
   '04': 'a nota diz cartão de débito',
   '05': 'a nota diz crédito da loja',
+  '17': 'a nota diz PIX',
+  '18': 'a nota diz transferência bancária ou carteira digital',
+  '20': 'a nota diz PIX',
   '90': 'a nota diz que não há pagamento',
 }
 
@@ -61,10 +77,16 @@ export function motivoSemBoleto(formaPagamento: string | null): string | null {
 // com quadro de duplicatas, o boleto é real e vence o código: existe revenda que
 // pula o passo do faturamento e embute a cobrança na própria nota de remessa —
 // perder esse boleto é o erro mais caro possível.
+// '17'/'18'/'20' (PIX e transferência) cedem pelo MESMO motivo: tPag descreve o meio
+// de pagamento, não o momento. "Entrada por PIX + saldo em boleto daqui a 3 meses" é
+// uma combinação real — se a nota tem duplicata de verdade (data e valor programados),
+// a duplicata é o dado mais confiável, mesmo que o código sozinho dissesse "sem boleto".
+// Regressão pega pelo Apolo (06/08/2026): nota com tPag '18' e duplicata futura de
+// R$ 88.939,27 devolvia [] antes desta correção — o boleto sumia calado.
 // Cartão e dinheiro NÃO cedem: ali a cobrança vem pela fatura do cartão ou o
 // dinheiro já saiu, e a duplicata do XML é só o espelho da venda. Prova medida em
 // 04/08/2026: METAL AGRÍCOLA nota 51843 tem tPag '05' E duplicata preenchida.
-const CODIGOS_QUE_CEDEM_A_DUPLICATA = new Set(['90'])
+const CODIGOS_QUE_CEDEM_A_DUPLICATA = new Set(['17', '18', '20', '90'])
 
 // Decide se a nota gera boleto levando em conta a duplicata — é esta função,
 // não motivoSemBoleto() sozinha, que contasDaNota() e parcelasDescartadasDaNota()
@@ -154,8 +176,39 @@ function tentarContasDasDuplicatas(
   return { contas, descartadas }
 }
 
+// Duplicata "de verdade" tem DATA de vencimento OU VALOR programado — não precisa das
+// duas. Um <dup> do XML que só traz o número (sem vencimento nem valor — forma que
+// nfeProcessor.ts produz quando o fornecedor não preenche nada) não é uma dívida
+// agendada: é um número de controle interno do emitente. Tratar essa duplicata vazia
+// como se fosse real geraria uma conta com vencimento e valor ambos null — uma linha
+// inútil na tela, sem nada pra pagar.
+// Regressão pega pelo Apolo (06/08/2026): a nota 16246 da USINA UBERABA S/A (tPag '18',
+// dispensada manualmente) ficava ambígua no banco — sem o XML original (não guardado),
+// não dava pra saber se ela tinha 0 duplicatas ou 1 duplicata vazia, porque as duas
+// formas produziam o mesmo resultado. Exigir vencimento OU valor faz os dois casos
+// convergirem de propósito: nenhum dos dois gera conta.
+//
+// Regressão SEGUINTE pega pelo Apolo no mesmo dia (06/08/2026): exigir só vencimento
+// (sem aceitar valor sozinho) derrubava duplicata REAL com valor preenchido e data
+// ausente (<dup><nDup>1</nDup><vDup>5000.00</vDup></dup>, sem <dVenc>) — R$ 5.000 que
+// antes viravam boleto sem data (visível e cobrável) passaram a sumir sem rastro
+// nenhum, porque '90' ("sem pagamento") cede à duplicata só quando ela é "real".
+function duplicataEhReal(d: NFeDuplicata): boolean {
+  return !!d.vencimento || d.valor != null
+}
+
+// Exportada para nfeProcessor.ts: as DUAS perguntas "esta nota tem cobrança de
+// verdade?" que ele fazia sozinho (linha ~331, decide se uma remessa sem itens de
+// compra vira gasto; linha ~596, decide a frase de boleto no WhatsApp) usavam
+// `duplicatas.length > 0` — um critério ainda MAIS solto que o antigo daqui (aceitava
+// até duplicata totalmente vazia). Centralizado para as três perguntas nunca mais
+// divergirem entre si.
+export function temDuplicataReal(duplicatas: NFeDuplicata[]): boolean {
+  return duplicatas.some(duplicataEhReal)
+}
+
 export function contasDaNota(nfe: DadosParaConta): ContaDeNota[] {
-  if (motivoSemBoletoDaNota(nfe.formaPagamento, nfe.duplicatas.length > 0)) return []
+  if (motivoSemBoletoDaNota(nfe.formaPagamento, temDuplicataReal(nfe.duplicatas))) return []
 
   const fornecedor = nfe.emitenteNome
 
@@ -199,7 +252,7 @@ export function contasDaNota(nfe: DadosParaConta): ContaDeNota[] {
 // parcela BOA sumiu no meio de uma nota que, no geral, deu certo — contasDaNota()
 // sozinha não tem como avisar isso, é função pura e não loga.
 export function parcelasDescartadasDaNota(nfe: DadosParaConta): ParcelaDescartada[] {
-  if (motivoSemBoletoDaNota(nfe.formaPagamento, nfe.duplicatas.length > 0)) return []
+  if (motivoSemBoletoDaNota(nfe.formaPagamento, temDuplicataReal(nfe.duplicatas))) return []
   if (nfe.duplicatas.length === 0) return []
   return tentarContasDasDuplicatas(nfe, nfe.emitenteNome).descartadas
 }

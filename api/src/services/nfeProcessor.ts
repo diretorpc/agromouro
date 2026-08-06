@@ -4,7 +4,7 @@ import { supabase } from './supabase'
 import { enviarMensagem } from './zapi'
 import { efeitoDoCfop } from './contas/cfop'
 import { gravarContasDaNota } from './contas/gravarDeNota'
-import { motivoSemBoletoDaNota, type ContaDeNota, type ParcelaDescartada } from './contas/deNotaFiscal'
+import { motivoSemBoletoDaNota, temDuplicataReal, type ContaDeNota, type ParcelaDescartada } from './contas/deNotaFiscal'
 import { linhaBoleto } from './contas/avisoBoleto'
 import { hojeSaoPauloISO, reais } from './contas/formato'
 
@@ -328,7 +328,11 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' | '
     const efeitosDosItens = itensSeguros.map(i => efeitoDoCfop(i.cfop))
     const todosSaoCompra  = efeitosDosItens.every(e => e.contaComoCompra)
     const algumECompra    = efeitosDosItens.some(e => e.contaComoCompra)
-    const temCobrancaReal = duplicatas.length > 0
+    // Duplicata "real" = data OU valor preenchido (mesmo critério de contas/deNotaFiscal.ts,
+    // centralizado em temDuplicataReal — ver comentário lá para o histórico das duas
+    // regressões pegas pelo Apolo em 06/08/2026). Antes era `duplicatas.length > 0`, que
+    // aceitava até duplicata totalmente vazia (só número, sem data nem valor).
+    const temCobrancaReal = temDuplicataReal(duplicatas)
     const contaComoCompraDoItem = (n: number): boolean =>
       algumECompra ? efeitosDosItens[n].contaComoCompra : temCobrancaReal
 
@@ -593,7 +597,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' | '
     // "vence em 1 dia" para um boleto que já tinha vencido há 2).
     mensagem += linhaBoleto(
       contasCriadas,
-      motivoSemBoletoDaNota(formaPagamento, duplicatas.length > 0),
+      motivoSemBoletoDaNota(formaPagamento, temDuplicataReal(duplicatas)),
       hojeSaoPauloISO(),
       erroContas,
       parcelasPerdidas,
