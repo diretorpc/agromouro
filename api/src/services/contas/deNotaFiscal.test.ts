@@ -454,7 +454,10 @@ describe('contasDaNota — duplicata(s) completamente vazia(s)', () => {
     expect(r[0].valor).toBe(30600) // valorTotal do `base`, nao null
     expect(r[0].numero_parcela).toBe(1)
     expect(r[0].total_parcelas).toBe(1)
-    expect(r[0].descricao).toBe('TRIANGULO DIESEL TRR LTDA — NF 4516')
+    // Descricao vem do resumo dos itens da nota (base.items = 'DIESEL S10'), nao do
+    // formato antigo "fornecedor — NF numero" — essa troca e de outra correcao (ver
+    // describe 'contasDaNota — descricao mostra os itens da nota' acima).
+    expect(r[0].descricao).toBe('DIESEL S10')
   })
 
   it('duas duplicatas, ambas sem data e sem valor: uma unica conta com o valor total, nao duas vazias', () => {
