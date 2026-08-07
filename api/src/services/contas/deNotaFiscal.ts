@@ -164,7 +164,7 @@ function mesDe(dataISO: string): string {
 // antes do Set também resolve de graça um item cujo nome é só espaços: ele
 // vira string vazia e cai no filter(Boolean) de baixo, em vez de sobreviver
 // como célula vazia na lista.
-function resumoDosItens(items: { descricao: string }[]): string {
+export function resumoDosItens(items: { descricao: string }[]): string {
   const descricoes = [...new Set(items.map(i => i.descricao.trim()).filter(Boolean))]
 
   if (descricoes.length === 0) return ''
