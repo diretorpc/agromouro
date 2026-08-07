@@ -109,7 +109,7 @@ export function ListaContas({ contas, onPagar, onDispensar, onDesfazer, onEditar
           }
           return (
             <TableRow key={conta.id}>
-              <TableCell className="text-sm font-medium max-w-[220px] truncate" title={conta.fornecedor ?? ''}>
+              <TableCell className="text-sm font-medium max-w-[220px] whitespace-normal break-words">
                 {conta.fornecedor ?? '—'}
               </TableCell>
               <TableCell className="text-sm max-w-[280px]">
