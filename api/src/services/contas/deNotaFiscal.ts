@@ -190,6 +190,31 @@ function descricaoDaConta(nfe: DadosParaConta, fornecedor: string): string {
   return resumoDosItens(nfe.items) || `${fornecedor} — NF ${nfe.numero}`
 }
 
+// Uma duplicata sem NENHUMA informação útil (nem vencimento, nem valor — só o número
+// de controle) não é diferente, pra quem vai pagar, de a nota não ter vindo com quadro
+// de cobrança nenhum. contasDaNota() usa isto para colapsar esse caso no mesmo caminho
+// de "sem duplicata" (valor TOTAL da nota), em vez de gerar uma conta sem vencimento E
+// sem valor — perdendo um valor conhecido por um nulo à toa.
+//
+// Também é a resposta usada por motivoSemBoletoDaNota() (código '90') para decidir se
+// a duplicata é prova real de cobrança — achado do Apolo em 06/08/2026: usar
+// `duplicatas.length > 0` ali, em vez desta função, deixava a nota "90" com duplicata
+// vazia gerar um boleto FANTASMA do valor TOTAL da nota (pior que o defeito original:
+// um número que parece real, provado com a nota da SYAGRI de R$ 1.060.000).
+//
+// `Number.isFinite(d.valor) && d.valor > 0` rejeita `NaN`, `0`, negativo E `Infinity`
+// de uma vez só: fornecedor que manda `<vDup></vDup>` (tag presente, vazia) vira `NaN`
+// no parser (`parseFloat('')`), um boleto de R$ 0,00 sem vencimento não é cobrança
+// nenhuma, um valor negativo (nunca visto numa nota real até hoje, 06/08/2026) não pode
+// virar boleto de valor negativo por acaso, e um valor infinito (hipotético, XML com
+// algo tipo `1e999`) passaria em `d.valor > 0` sozinho e depois viraria `null` ao salvar
+// no banco — perdendo o valor total conhecido da nota, o mesmo defeito que esta função
+// existe para evitar. Simplificação sugerida pela 2ª revisão do Apolo; checagem de
+// `Infinity` acrescentada na 3ª.
+export function duplicataEhReal(d: NFeDuplicata): boolean {
+  return d.vencimento !== null || (d.valor !== null && Number.isFinite(d.valor) && d.valor > 0)
+}
+
 // Tenta transformar cada duplicata da nota numa conta, isoladamente. Uma parcela com
 // data ruim NÃO pode derrubar as outras: perder 1 parcela é ruim, perder as 3 é muito
 // pior — mesmo raciocínio já usado no limite de 24 parcelas do desenho desta fase
@@ -233,47 +258,20 @@ function tentarContasDasDuplicatas(
   return { contas, descartadas }
 }
 
-// Duplicata "de verdade" tem DATA de vencimento OU VALOR programado — não precisa das
-// duas. Um <dup> do XML que só traz o número (sem vencimento nem valor — forma que
-// nfeProcessor.ts produz quando o fornecedor não preenche nada) não é uma dívida
-// agendada: é um número de controle interno do emitente. Tratar essa duplicata vazia
-// como se fosse real geraria uma conta com vencimento e valor ambos null — uma linha
-// inútil na tela, sem nada pra pagar.
-// Regressão pega pelo Apolo (06/08/2026): a nota 16246 da USINA UBERABA S/A (tPag '18',
-// dispensada manualmente) ficava ambígua no banco — sem o XML original (não guardado),
-// não dava pra saber se ela tinha 0 duplicatas ou 1 duplicata vazia, porque as duas
-// formas produziam o mesmo resultado. Exigir vencimento OU valor faz os dois casos
-// convergirem de propósito: nenhum dos dois gera conta.
-//
-// Regressão SEGUINTE pega pelo Apolo no mesmo dia (06/08/2026): exigir só vencimento
-// (sem aceitar valor sozinho) derrubava duplicata REAL com valor preenchido e data
-// ausente (<dup><nDup>1</nDup><vDup>5000.00</vDup></dup>, sem <dVenc>) — R$ 5.000 que
-// antes viravam boleto sem data (visível e cobrável) passaram a sumir sem rastro
-// nenhum, porque '90' ("sem pagamento") cede à duplicata só quando ela é "real".
-function duplicataEhReal(d: NFeDuplicata): boolean {
-  return !!d.vencimento || d.valor != null
-}
-
-// Exportada para nfeProcessor.ts: as DUAS perguntas "esta nota tem cobrança de
-// verdade?" que ele fazia sozinho (linha ~331, decide se uma remessa sem itens de
-// compra vira gasto; linha ~596, decide a frase de boleto no WhatsApp) usavam
-// `duplicatas.length > 0` — um critério ainda MAIS solto que o antigo daqui (aceitava
-// até duplicata totalmente vazia). Centralizado para as três perguntas nunca mais
-// divergirem entre si.
-export function temDuplicataReal(duplicatas: NFeDuplicata[]): boolean {
-  return duplicatas.some(duplicataEhReal)
-}
-
 export function contasDaNota(nfe: DadosParaConta): ContaDeNota[] {
-  if (motivoSemBoletoDaNota(nfe.formaPagamento, temDuplicataReal(nfe.duplicatas))) return []
+  if (motivoSemBoletoDaNota(nfe.formaPagamento, nfe.duplicatas.some(duplicataEhReal))) return []
 
   const fornecedor = nfe.emitenteNome
 
-  // Sem quadro de cobrança: uma conta sem data, com o valor total da nota.
+  // Sem quadro de cobrança ÚTIL — nem duplicata nenhuma, nem uma duplicata sequer com
+  // vencimento OU valor preenchidos: uma conta sem data, com o valor total da nota.
   // Não descartar — é o caso ERCAL, e descartar seria perder R$ 8 mil em silêncio.
+  // Duplicata(s) completamente vazia(s) (só o número de controle) caem aqui também:
+  // sem isto, cada uma viraria uma conta sem vencimento E sem valor — trocando um
+  // valor conhecido (o total da nota) por um nulo à toa.
   // Aqui não há nada a "salvar parcialmente": é uma conta só, então uma data de
   // emissão ruim estoura direto (não há como isolar um problema de um item único).
-  if (nfe.duplicatas.length === 0) {
+  if (!nfe.duplicatas.some(duplicataEhReal)) {
     return [{
       descricao:      descricaoDaConta(nfe, fornecedor),
       fornecedor,
@@ -309,7 +307,7 @@ export function contasDaNota(nfe: DadosParaConta): ContaDeNota[] {
 // parcela BOA sumiu no meio de uma nota que, no geral, deu certo — contasDaNota()
 // sozinha não tem como avisar isso, é função pura e não loga.
 export function parcelasDescartadasDaNota(nfe: DadosParaConta): ParcelaDescartada[] {
-  if (motivoSemBoletoDaNota(nfe.formaPagamento, temDuplicataReal(nfe.duplicatas))) return []
-  if (nfe.duplicatas.length === 0) return []
+  if (motivoSemBoletoDaNota(nfe.formaPagamento, nfe.duplicatas.some(duplicataEhReal))) return []
+  if (!nfe.duplicatas.some(duplicataEhReal)) return []
   return tentarContasDasDuplicatas(nfe, nfe.emitenteNome).descartadas
 }

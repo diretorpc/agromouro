@@ -4,7 +4,7 @@ import { supabase } from './supabase'
 import { enviarMensagem } from './zapi'
 import { efeitoDoCfop } from './contas/cfop'
 import { gravarContasDaNota } from './contas/gravarDeNota'
-import { motivoSemBoletoDaNota, temDuplicataReal, type ContaDeNota, type ParcelaDescartada } from './contas/deNotaFiscal'
+import { motivoSemBoletoDaNota, duplicataEhReal, type ContaDeNota, type ParcelaDescartada } from './contas/deNotaFiscal'
 import { linhaBoleto } from './contas/avisoBoleto'
 import { hojeSaoPauloISO, reais } from './contas/formato'
 
@@ -325,14 +325,21 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' | '
     // Quando ALGUM item é compra, vale a regra de cada item. Quando NENHUM é (nota
     // de entrega pura), a nota inteira só conta se houver duplicata de verdade —
     // é a revenda que embute a cobrança na própria remessa.
+    //
+    // duplicatas.some(duplicataEhReal), NUNCA duplicatas.length > 0: achado da 4ª
+    // revisão do Apolo (06/08/2026), provado com a nota real da SYAGRI (CFOP 5117,
+    // tPag '90', duplicata só com número de controle — sem vencimento nem valor,
+    // valorTotal R$ 1.060.000). Com `.length > 0`, essa duplicata vazia contava
+    // como prova de cobrança real e `temCobrancaReal` virava `true`, gerando um
+    // lançamento de R$ 1.060.000 em `lancamentos_financeiros` para uma nota que não
+    // cobra nada — o mesmo gasto fantasma que motivou o conserto do lado do boleto
+    // (ver duplicataEhReal em contas/deNotaFiscal.ts e o comentário perto da
+    // linha ~606 abaixo, onde a mesma troca já tinha sido feita para a mensagem do
+    // WhatsApp).
     const efeitosDosItens = itensSeguros.map(i => efeitoDoCfop(i.cfop))
     const todosSaoCompra  = efeitosDosItens.every(e => e.contaComoCompra)
     const algumECompra    = efeitosDosItens.some(e => e.contaComoCompra)
-    // Duplicata "real" = data OU valor preenchido (mesmo critério de contas/deNotaFiscal.ts,
-    // centralizado em temDuplicataReal — ver comentário lá para o histórico das duas
-    // regressões pegas pelo Apolo em 06/08/2026). Antes era `duplicatas.length > 0`, que
-    // aceitava até duplicata totalmente vazia (só número, sem data nem valor).
-    const temCobrancaReal = temDuplicataReal(duplicatas)
+    const temCobrancaReal = duplicatas.some(duplicataEhReal)
     const contaComoCompraDoItem = (n: number): boolean =>
       algumECompra ? efeitosDosItens[n].contaComoCompra : temCobrancaReal
 
@@ -601,9 +608,19 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' | '
     // contra uma data congelada no passado. Bug medido em 31/07/2026 — ver
     // conserto 1 da revisão final da Fase 2 (nota processada em atraso mostrava
     // "vence em 1 dia" para um boleto que já tinha vencido há 2).
+    //
+    // duplicatas.some(duplicataEhReal), NUNCA duplicatas.length > 0: achado da 2ª
+    // revisão do Apolo (06/08/2026) — com `.length > 0`, uma nota tPag '90' com
+    // duplicata completamente vazia fazia este trecho concordar com o motivo
+    // "sem boleto" ERRADO (achava que a duplicata vazia cedia o código '90'), então
+    // `motivoSemBoletoDaNota` devolvia null igual a uma nota com boleto real — e
+    // como contasCriadas já vinha vazio (contasDaNota, corrigido, corretamente não
+    // gera nada), linhaBoleto() caía no ramo "contas.length === 0" com motivo nulo
+    // e a mensagem do WhatsApp saía MUDA sobre boleto, quebrando a promessa de
+    // avisoBoleto.ts de que "o sistema SEMPRE diz o que concluiu".
     mensagem += linhaBoleto(
       contasCriadas,
-      motivoSemBoletoDaNota(formaPagamento, temDuplicataReal(duplicatas)),
+      motivoSemBoletoDaNota(formaPagamento, duplicatas.some(duplicataEhReal)),
       hojeSaoPauloISO(),
       erroContas,
       parcelasPerdidas,

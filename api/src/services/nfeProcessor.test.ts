@@ -518,6 +518,27 @@ describe('processarNFe — CFOP manda no estoque e no custo', () => {
     expect(insertsEm('lancamentos_financeiros')).toHaveLength(0)
   })
 
+  // 4ª revisão do Apolo (06/08/2026), provado por execução com a nota real da
+  // SYAGRI: CFOP 5117, tPag '90', duplicata com SÓ o número de controle (sem
+  // vencimento nem valor — `<dup><nDup>001</nDup></dup>` sem `<dVenc>`/`<vDup>`),
+  // valorTotal R$ 1.060.000. Antes do conserto, `temCobrancaReal = duplicatas.length
+  // > 0` contava essa duplicata vazia como prova de cobrança real e lançava
+  // R$ 1.060.000 de gasto fantasma — pior que o defeito original coberto pelo
+  // teste acima (duplicatas: []), porque aqui `duplicatas.length` é 1, não 0.
+  it('remessa (CFOP 5117, tPag 90, duplicata VAZIA — caso real SYAGRI) NAO cria lançamento fantasma', async () => {
+    await processarNFe(
+      nota({
+        items:      [item({ cfop: '5117' })],
+        duplicatas: [{ numero: '001', vencimento: null, valor: null }],
+      }),
+      'webhook', 'fazenda-fake-id',
+    )
+
+    expect(insertsEm('movimentacoes_estoque')).toHaveLength(1)
+    expect(rpcChamado('incrementar_estoque')).toBe(true)
+    expect(insertsEm('lancamentos_financeiros')).toHaveLength(0)
+  })
+
   it('faturamento (CFOP 5922) cria lançamento e NAO soma estoque', async () => {
     await processarNFe(nota({ items: [item({ cfop: '5922' })] }), 'webhook', 'fazenda-fake-id')
 
@@ -711,6 +732,28 @@ describe('processarNFe — CFOP manda no estoque e no custo', () => {
     const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
     expect(mensagem).not.toContain('Sem boleto')
     expect(mensagem).toContain('Boleto sem data de vencimento')
+  })
+
+  // 3ª revisão do Apolo: sem este teste, desfazer a correção da linha ~606 de
+  // nfeProcessor.ts (trocar `duplicatas.some(duplicataEhReal)` de volta para
+  // `duplicatas.length > 0` na chamada a linhaBoleto) deixava a suíte inteira
+  // verde — nenhum teste cobria "tPag 90 com duplicata VAZIA" checando a
+  // MENSAGEM do WhatsApp (só contasDaNota().test.ts cobria o boleto em si).
+  it('tPag 90 com duplicata VAZIA: NAO cria boleto e a mensagem DIZ "Sem boleto"', async () => {
+    await processarNFe(
+      nota({
+        formaPagamento: '90',
+        duplicatas: [{ numero: '001', vencimento: null, valor: null }],
+      }),
+      'webhook', 'fazenda-fake-id',
+    )
+
+    const upsertContas = chamadas.filter(c => c.table === 'contas_a_pagar' && c.method === 'upsert')
+    expect(upsertContas).toHaveLength(0)
+
+    const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
+    expect(mensagem).toContain('Sem boleto')
+    expect(mensagem).toContain('a nota diz que não há pagamento')
   })
 })
 

@@ -121,6 +121,16 @@ describe('contasDaNota — nota de entrega futura (tPag 90)', () => {
     }
   })
 
+  it('tPag 90 com duplicata VAZIA: nao gera boleto fantasma do valor total (achado Apolo 06/08, caso real SYAGRI R$ 1.060.000)', () => {
+    // A duplicata vazia nao e prova de cobranca real — tratar como "sem duplicata",
+    // que para o codigo 90 significa NAO gerar boleto nenhum (mesmo teste da linha 38).
+    const r = contasDaNota({
+      ...base, formaPagamento: '90', valorTotal: 1060000,
+      duplicatas: [{ numero: '001', vencimento: null, valor: null }],
+    })
+    expect(r).toEqual([])
+  })
+
   it('dinheiro (01) nao cede a duplicata: mesmo com vencimento futuro real, nao gera conta', () => {
     const r = contasDaNota({
       ...base, formaPagamento: '01',
@@ -434,6 +444,88 @@ describe('contasDaNota — descricao mostra os itens da nota, nao o fornecedor',
   })
 })
 
+describe('contasDaNota — duplicata(s) completamente vazia(s)', () => {
+  it('uma duplicata sem data E sem valor: cai no caminho de "sem duplicata", com o valor TOTAL da nota', () => {
+    const r = contasDaNota({ ...base, duplicatas: [
+      { numero: '001', vencimento: null, valor: null },
+    ]})
+    expect(r).toHaveLength(1)
+    expect(r[0].vencimento).toBeNull()
+    expect(r[0].valor).toBe(30600) // valorTotal do `base`, nao null
+    expect(r[0].numero_parcela).toBe(1)
+    expect(r[0].total_parcelas).toBe(1)
+    expect(r[0].descricao).toBe('TRIANGULO DIESEL TRR LTDA — NF 4516')
+  })
+
+  it('duas duplicatas, ambas sem data e sem valor: uma unica conta com o valor total, nao duas vazias', () => {
+    const r = contasDaNota({ ...base, duplicatas: [
+      { numero: '001', vencimento: null, valor: null },
+      { numero: '002', vencimento: null, valor: null },
+    ]})
+    expect(r).toHaveLength(1)
+    expect(r[0].vencimento).toBeNull()
+    expect(r[0].valor).toBe(30600)
+  })
+
+  it('mistura: uma duplicata vazia entre outras com dado — NAO colapsa, mantem o comportamento por parcela', () => {
+    const r = contasDaNota({ ...base, duplicatas: [
+      { numero: '001', vencimento: '2026-08-15', valor: 15300 },
+      { numero: '002', vencimento: null, valor: null },
+    ]})
+    expect(r).toHaveLength(2)
+    expect(r[0].valor).toBe(15300)
+    expect(r[1].valor).toBeNull()
+    expect(r[1].vencimento).toBeNull()
+  })
+
+  it('duplicata com valor NaN (achado Apolo: <vDup></vDup> vazio vira NaN no parser, nao null) tambem colapsa', () => {
+    // Sem isto, metade do defeito original continua viva: NaN nao e null, entao a
+    // duplicata parecia "real" e a conta saia com valor nulo mesmo assim.
+    const r = contasDaNota({ ...base, duplicatas: [
+      { numero: '001', vencimento: null, valor: NaN },
+    ]})
+    expect(r).toHaveLength(1)
+    expect(r[0].vencimento).toBeNull()
+    expect(r[0].valor).toBe(30600)
+  })
+
+  it('duplicata com valor 0 e sem vencimento: colapsa (boleto de R$ 0,00 nao e cobranca)', () => {
+    const r = contasDaNota({ ...base, duplicatas: [
+      { numero: '001', vencimento: null, valor: 0 },
+    ]})
+    expect(r).toHaveLength(1)
+    expect(r[0].vencimento).toBeNull()
+    expect(r[0].valor).toBe(30600)
+  })
+
+  it('duplicata com valor 0 MAS com vencimento: continua real, nao colapsa (vencimento sozinho ja basta)', () => {
+    const r = contasDaNota({ ...base, duplicatas: [
+      { numero: '001', vencimento: '2026-08-15', valor: 0 },
+    ]})
+    expect(r).toHaveLength(1)
+    expect(r[0].vencimento).toBe('2026-08-15')
+    expect(r[0].valor).toBe(0)
+  })
+
+  it('duplicata com valor NEGATIVO e sem vencimento: colapsa (achado Apolo, 2a revisao: negativo nao pode contar como cobranca real)', () => {
+    const r = contasDaNota({ ...base, duplicatas: [
+      { numero: '001', vencimento: null, valor: -100 },
+    ]})
+    expect(r).toHaveLength(1)
+    expect(r[0].vencimento).toBeNull()
+    expect(r[0].valor).toBe(30600) // valor TOTAL da nota, nao o -100 da duplicata
+  })
+
+  it('duplicata com valor Infinity e sem vencimento: colapsa (Number.isFinite pega o que "> 0" sozinho deixaria passar)', () => {
+    const r = contasDaNota({ ...base, duplicatas: [
+      { numero: '001', vencimento: null, valor: Infinity },
+    ]})
+    expect(r).toHaveLength(1)
+    expect(r[0].vencimento).toBeNull()
+    expect(r[0].valor).toBe(30600)
+  })
+})
+
 describe('contasDaNota — uma parcela ruim nao pode derrubar as boas', () => {
   it('3 parcelas, uma ruim no meio: devolve as 2 boas, na ordem, com os valores certos', () => {
     const r = contasDaNota({ ...base, duplicatas: [
@@ -502,6 +594,13 @@ describe('parcelasDescartadasDaNota', () => {
 
   it('cartao de credito: lista vazia — a nota nem tenta gerar boleto', () => {
     expect(parcelasDescartadasDaNota({ ...base, formaPagamento: '05' })).toEqual([])
+  })
+
+  it('duplicata(s) completamente vazia(s): lista vazia — nao e descartada, e "sem duplicata"', () => {
+    const r = parcelasDescartadasDaNota({ ...base, duplicatas: [
+      { numero: '001', vencimento: null, valor: null },
+    ]})
+    expect(r).toEqual([])
   })
 
   it('parcela ruim no meio: aparece aqui com o numero da duplicata e o motivo', () => {
