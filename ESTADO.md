@@ -163,64 +163,121 @@ perguntas diferentes, não duas verdades.
 Detalhe, riscos e defeitos achados nas revisões: **corpo do PR** e
 `.superpowers/sdd/2026-07-31-contas-a-pagar-fase2/progress.md` — não copie para cá.
 
+## Financeiro: botão "Adicionar" volta a salvar — no ar desde 06/08/2026
+
+**PR #50 mergeado** (`267a8f5`... squash) — https://github.com/diretorpc/agromouro/pull/50.
+O lançamento manual da tela Financeiro falhava em silêncio (sem `fazenda_id` nos
+`insert` de `insumos`/`itens_nfe`, mensagem de erro genérica escondendo o motivo,
+categoria escolhida descartada quando o produto já existia no catálogo).
+
+**Migração 014** (4 categorias que faltavam: `adjuvante`, `manutencao`, `alimentacao`,
+`outros`) e **migração 015** (coluna `data_manual` em `itens_nfe`, que nunca tinha sido
+criada) — **as duas já aplicadas e testadas em produção**, confirmado pelo PR.
+
+**Migração 016** (RLS de UPDATE em `itens_nfe`, que deixava qualquer usuário logado
+editar item de nota fiscal de outra fazenda) — **aplicada em produção em 07/08/2026**,
+`SQL Editor` do Supabase, sem erro.
+
+## Duplicata vazia de NF-e não gera mais boleto/gasto fantasma — no ar desde 06/08/2026
+
+**PR #54 mergeado** (squash `7e8474a`), branch `claude/dazzling-nightingale-aebd93`
+apagada (local e remota). Achado original do Apolo: quando o quadro de cobrança
+(`<dup>`) de uma nota vinha com TODAS as parcelas completamente vazias (sem vencimento
+e sem valor — só o número de controle), o sistema tratava isso como cobrança real.
+Provado com a nota real da SYAGRI (CFOP 5117, tPag `90`, R$ 1.060.000): gerava boleto
+fantasma sem vencimento, lançava o mesmo valor como gasto fantasma no Financeiro, e a
+mensagem do WhatsApp sobre boleto ficava muda.
+
+**Correção:** nova função `duplicataEhReal()` (vencimento OU valor > 0 finito) decide,
+nos TRÊS lugares que perguntavam "essa nota cobra de verdade?" — o boleto
+(`contasDaNota`/`parcelasDescartadasDaNota` em `deNotaFiscal.ts`), a mensagem do
+WhatsApp e o lançamento financeiro (os dois em `nfeProcessor.ts`) — a mesma resposta.
+Quando nenhuma duplicata é real, a nota é tratada como se não tivesse quadro de
+cobrança (mesmo caminho do caso ERCAL): uma conta só, sem data, com o valor TOTAL da
+nota — em vez de um valor nulo perdido à toa.
+
+**5 rodadas de revisão do Apolo, cada uma achando e fechando um problema real antes da
+próxima** (histórico completo, achado por achado, no PR #54 — não repetir aqui):
+boleto fantasma → NaN/valor zero escapando → mensagem do WhatsApp muda → **gasto
+fantasma no Financeiro** (o achado mais sério, mesma causa raiz, aprovado pelo Matheus
+para entrar no mesmo commit em vez de virar tarefa separada) → confirmação final,
+testada quebrando cada correção de propósito para provar que os testes protegem.
+
+HISTÓRIA de 06/08: 209 testes de toda a API passam, `tsc --noEmit` limpo (rebase sobre
+o PR #53, que tinha mexido nos mesmos 2 arquivos, sem conflito de comportamento — só
+um conflito de posição de teste, resolvido mantendo os dois blocos).
+
+✅ **Conferido no Supabase (06/08, pelo Matheus): zero linhas.** Nenhuma conta antiga
+ficou com o defeito gravado — nada a corrigir no banco. Consulta usada, pra reconferir
+se precisar no futuro (ex: depois de restaurar um dump antigo):
+```sql
+SELECT id, descricao, fornecedor, competencia, valor, nota_fiscal_id
+FROM contas_a_pagar
+WHERE nota_fiscal_id IS NOT NULL AND vencimento IS NULL AND valor IS NULL
+ORDER BY competencia;
+```
+
+## Contas a pagar: tPag 16/19/21 avaliados e DELIBERADAMENTE NÃO mapeados — no ar desde 06/08/2026
+
+**PR [#53](https://github.com/diretorpc/agromouro/pull/53) mergeado na `main`** (squash,
+commit `267a8f5`), branch `claude/serene-kepler-985de0` apagada (local e remota).
+CI (Vercel) passou antes do merge.
+
+Pedido original citava um caso de produção ("Usina Uberaba", NF 16246, R$ 88.939,27)
+como motivo para os códigos `17`/`18` — **investigado e não confirmado** (sem rastro em
+`git log --all`; `17`/`18`/`20` nunca existiram no arquivo). Tratado como pedido novo.
+
+**Tentativa 1:** `16` (depósito), `19` (cashback), `21` (crédito em loja) confirmados
+contra a tabela oficial de `tPag` da NF-e e adicionados a `MOTIVO_SEM_BOLETO`, fora de
+`CODIGOS_QUE_CEDEM_A_DUPLICATA`. **Apolo achado crítico:** em nota de pagamento misto
+(mais de um `<detPag>`), o parser só lê o primeiro — `19`/`21` são pagamento parcial por
+natureza, então um boleto real podia sumir dependendo da ordem em que o fornecedor
+escreveu o XML. `16` tratado como "já pago" quando na real pode vencer no futuro igual
+boleto.
+
+**Tentativa 2:** `16`/`19`/`21` acrescentados também a `CODIGOS_QUE_CEDEM_A_DUPLICATA`
+(mesmo mecanismo que já protege o `90`). Resolveu o caso COM duplicata preenchida.
+**Apolo achou o mesmo risco no caminho SEM duplicata:** nota sem quadro de cobrança
+nenhum com esses códigos virava "nada a pagar" — reproduzindo o padrão real do caso
+ERCAL (`nfeProcessor.ts:249`: tPag 15, zero duplicata, boleto real de R$ 8.258,40).
+Sem ler `vPag` (valor efetivamente pago, campo do XML que o parser não lê), não dá pra
+saber se esses créditos cobrem a nota inteira.
+
+**Decisão do Matheus, depois do trade-off explicado:** reverter os 3 códigos por
+completo (opção "voltar ao seguro" — sistema sempre gera boleto quando o código não é
+um dos já mapeados, dispensa com 1 toque se for falso alarme). `MOTIVO_SEM_BOLETO` e
+`CODIGOS_QUE_CEDEM_A_DUPLICATA` voltaram ao estado original. Ficou um comentário no
+código (`deNotaFiscal.ts`) explicando a decisão pra próxima pessoa não repetir a
+tentativa sem primeiro resolver a raiz, + testes travando que `16/19/21` seguem o
+caminho padrão "na dúvida, gera boleto".
+
+197 testes de toda a API passam, `tsc --noEmit` limpo (rodado na 3ª rodada).
+
+## Reorganização da tela `/estoque` — no ar desde 06/08/2026
+
+PR #47 mergeado (squash `c66289d`), branch e worktree limpos. Virou abas
+Produtos/Histórico, ordenar por data de entrada (clicando no cabeçalho da coluna, nas
+duas abas), Excluir escondido atrás de um menu "⋯", arquivo de ~1000 linhas quebrado em
+hooks + componentes. 13 tarefas + revisão final + 1 adicional, tudo via
+subagent-driven-development num worktree isolado (nunca tocou a `main` até o merge).
+Migração `010_estoque_created_at.sql` aplicada em produção e confirmada por ele
+(`sem_entrada_registrada=0` de `71`). Testado logado por ele antes do merge.
+Detalhe completo: `docs/superpowers/plans/2026-08-05-reorganizacao-estoque.md`.
+
+O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda_id` —
+**foi resolvido no PR #48**, seção acima. Nada pendente aqui.
+
 ---
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
-## 🔴 Financeiro: o botão "Adicionar" NÃO SALVA — quebrado agora, em produção (06/08/2026)
+## 🟡 Pendências de baixo risco do Financeiro, deixadas para depois
 
-Worktree `.claude/worktrees/heuristic-rubin-2a59d0`, branch `claude/heuristic-rubin-2a59d0`.
-**Nada commitado ainda.**
-
-**Bug original.** `web/app/(app)/financeiro/page.tsx`, função `handleAdd`: os dois
-`insert` no Supabase (tabelas `insumos` e `itens_nfe`) não mandavam `fazenda_id` —
-coluna obrigatória e exigida pela regra de permissão do banco. O lançamento manual
-falhava **em silêncio** (só `console.error`) e o dinheiro nem entrava na conta do
-Financeiro. Isto é o mesmo bug-irmão já anotado na seção do Estoque abaixo.
-
-**Primeira correção (Atlas):** `fazenda_id` nos dois `insert` + erro visível na tela em
-vez de só registro interno.
-
-**A revisão do Apolo achou mais 9 problemas na própria correção.** O pior, e é o que
-mantém a tela quebrada NESTE momento:
-
-⛔ **`data_manual` não existe.** O `insert` tenta gravar `data_manual: form.data`, mas
-essa coluna **não existe** em `itens_nfe` no banco de produção — conferido direto no
-banco pela ferramenta de linha de comando do Supabase, não deduzido do código. Ou seja:
-**mesmo com o `fazenda_id` corrigido, o botão "Adicionar" continua falhando ao salvar
-hoje.** Decisão dele: **criar migração nova para a coluna que falta**, em vez de
-reaproveitar `created_at`.
-
-Já corrigidos nesta branch:
-- mensagem de erro escondia o motivo real — `err instanceof Error` não reconhece erro
-  vindo do Supabase, então aparecia texto genérico;
-- a categoria escolhida por ele era jogada fora quando o produto já existia no catálogo.
-
-Em andamento quando a sessão parou:
-- menu "Centro de Custo" oferece 22 categorias e o banco só aceitava 18 (faltavam
-  `adjuvante`, `manutencao`, `alimentacao`, `outros`) → migração
-  `014_add_categorias_faltantes.sql`;
-- o mesmo `fazenda_id` ausente em `web/app/(app)/estoque/hooks/use-estoque-data.ts`
-  (`ajustarEstoque`, `criarInsumo`, `converterUnidade`).
-
-**Próximo passo, nesta ordem — a ordem importa:** esperar a migração de categorias
-terminar, **só então** criar a migração da coluna `data_manual` (se as duas forem
-criadas juntas, colidem no número do arquivo); depois consolidar e commitar tudo.
-
-**Ainda não resolvidos, menor prioridade:**
-- índice único de nome de insumo é **global**, não por fazenda — vira problema no dia em
-  que a segunda fazenda tiver dados;
-- se o segundo `insert` falhar, sobra insumo "órfão" no catálogo (impacto baixo).
-
-Achados de menor risco, não-bloqueantes, deixados para depois: `recarregar()` zera a
-lista de produtos se a API cair na mesma falha que gerou o aviso; índice único de nome
-de insumo não conhece fazenda (vira problema quando a 2ª fazenda tiver dados reais);
-projeto `web` não tem ESLint configurado, só o `tsc` confere automaticamente.
-
-**Dois bugs-irmãos, mesma causa raiz, fora desta branch:** `financeiro/page.tsx`
-(`handleAdd`) — **em andamento na branch `heuristic-rubin-2a59d0`, ver seção acima**;
-`operacoes/page.tsx` — **corrigido e mergeado, PR #51, ver seção NO AR no topo deste
-arquivo.**
+Do conserto do botão "Adicionar" (PR #50, ver seção NO AR): índice único de nome de
+insumo é **global**, não por fazenda — vira problema no dia em que a segunda fazenda
+tiver dados; se o segundo `insert` falhar, sobra insumo "órfão" no catálogo (impacto
+baixo); `recarregar()` zera a lista de produtos se a API cair na mesma falha que gerou
+o aviso; projeto `web` não tem ESLint configurado, só o `tsc` confere automaticamente.
 
 ## 🔴 As 66 toneladas da SYAGRI (dele, não do sistema)
 
@@ -305,22 +362,6 @@ pensado para produto agrícola, não serviço. Não corrigido, não é urgente.
 Construir suporte de verdade é trabalho grande (cada prefeitura formata do seu jeito) —
 só vale quando a frequência justificar.
 
-## ✅ Reorganização da tela `/estoque` — CONCLUÍDA e mergeada (06/08 08h12)
-
-PR #47 mergeado (squash `c66289d`), branch e worktree limpos. Virou abas
-Produtos/Histórico, ordenar por data de entrada (clicando no cabeçalho da coluna, nas
-duas abas), Excluir escondido atrás de um menu "⋯", arquivo de ~1000 linhas quebrado em
-hooks + componentes. 13 tarefas + revisão final + 1 adicional, tudo via
-subagent-driven-development num worktree isolado (nunca tocou a `main` até o merge).
-Migração `010_estoque_created_at.sql` aplicada em produção e confirmada por ele
-(`sem_entrada_registrada=0` de `71`). Testado logado por ele antes do merge.
-Detalhe completo: `docs/superpowers/plans/2026-08-05-reorganizacao-estoque.md`.
-
-**Achado fora do escopo, virou tarefa separada:** `GET /estoque` não filtra por
-`fazenda_id` (usa chave de serviço, ignora RLS) — numa instalação multi-fazenda mistura
-o estoque de todas. Pré-existente, não é desta branch. Chip criado pra sessão
-separada (`task_2d190249`).
-
 ## ⚠️ `precisaCriarLancamento` — deliberadamente NÃO consertado
 
 `api/src/services/contas/pagamento.ts`: nota de remessa pode gerar boleto sem gasto;
@@ -350,6 +391,33 @@ Detalhe de cada um: `.superpowers/sdd/2026-07-31-contas-a-pagar-fase2/progress.m
 ---
 
 # 3. HISTÓRICO — do mais novo para o mais velho
+
+## 07/08/2026 — faxina do repositório, e a armadilha do squash merge
+
+Sobravam 4 pastas de worktree órfãs e 9 branches locais de sessões antigas, todas de
+trabalho já mergeado. Tudo apagado (local e remoto), `main` sincronizada com o GitHub.
+Para reconferir a qualquer momento, em vez de confiar neste parágrafo:
+
+```bash
+git worktree list && git branch -a
+```
+
+**A lição, que já custou um alarme falso nesta mesma sessão:** os PRs deste repositório
+entram por *squash merge* — o GitHub junta todos os commits do ramo num só, com
+identificador novo. Por isso `git rev-list --count origin/main..<ramo>` **sempre** acusa
+commits "exclusivos" num ramo já mergeado, e `git branch --contains <sha>` não acha nada
+na `main`. Isso parece trabalho perdido e não é. Aconteceu com o
+`worktree-nfe-upload-manual`: 8 commits pareciam correção de segurança parada há 2 dias,
+mas tinham entrado no PR #46 no dia anterior — arquivo por arquivo, idênticos à `main`.
+
+**Antes de declarar que um ramo tem trabalho perdido, confira por CONTEÚDO:**
+
+```bash
+gh pr list --state all --head <ramo>
+git diff --stat origin/main <ramo> -- <arquivo-chave>
+```
+
+PR MERGED, ou diff vazio, significa que o trabalho entrou.
 
 ## 04/08/2026 — o que o conserto do CFOP ensinou
 
