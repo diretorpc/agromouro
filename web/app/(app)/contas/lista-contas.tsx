@@ -54,7 +54,7 @@ export function ListaContas({ contas, onPagar, onDispensar, onDesfazer, onEditar
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead className="w-[160px]">Fornecedor</TableHead>
+          <TableHead className="w-[220px]">Fornecedor</TableHead>
           <TableHead>Descrição</TableHead>
           <TableHead className="w-[110px]">Vencimento</TableHead>
           <TableHead className="w-[150px] text-right">Valor</TableHead>
@@ -109,11 +109,14 @@ export function ListaContas({ contas, onPagar, onDispensar, onDesfazer, onEditar
           }
           return (
             <TableRow key={conta.id}>
-              <TableCell className="text-sm font-medium max-w-[160px] truncate" title={conta.fornecedor ?? ''}>
+              <TableCell className="text-sm font-medium max-w-[220px] whitespace-normal break-words">
                 {conta.fornecedor ?? '—'}
               </TableCell>
-              <TableCell className="text-sm max-w-[220px] truncate" title={conta.descricao}>
-                {conta.descricao}
+              <TableCell className="text-sm max-w-[280px]">
+                <p className="truncate" title={conta.descricao}>{conta.descricao}</p>
+                {conta.nota_fiscal_id && conta.notas_fiscais && (
+                  <p className="text-xs text-muted-foreground">NF {conta.notas_fiscais.numero}</p>
+                )}
               </TableCell>
               <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                 {conta.vencimento

@@ -26,6 +26,9 @@ export type ContaAPI = Conta & {
   total_parcelas: number | null
   created_at: string
   contas_recorrentes: { avisar_dias_antes: number; periodicidade: string } | null
+  // Número da nota fiscal que originou a conta — vem do join com notas_fiscais
+  // (ver rota GET /contas). null para conta fixa/avulsa (sem nota_fiscal_id).
+  notas_fiscais: { numero: string } | null
 }
 
 // Conta encerrada (paga ou dispensada) não entra em nenhum total pendente, não

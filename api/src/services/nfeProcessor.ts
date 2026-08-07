@@ -521,7 +521,13 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' | '
       // mesmo depois da atribuição — e gravarContasDaNota exige `string`.
       if (!nfeId) throw new Error('id da nota indisponível para gravar boletos')
       const resultado = await gravarContasDaNota(
-        { numero, emitenteNome, dataEmissao, valorTotal, formaPagamento, duplicatas },
+        {
+          numero, emitenteNome, dataEmissao, valorTotal, formaPagamento, duplicatas,
+          // itensSeguros (cortado em 200, calculado na seção 1) — não `items` cru:
+          // a descrição da conta não pode falar de itens que nem entraram no
+          // processamento de estoque/financeiro logo acima.
+          items: itensSeguros.map(i => ({ descricao: i.description })),
+        },
         nfeId,
         fazenda_id,
       )

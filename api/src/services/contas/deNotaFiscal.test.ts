@@ -8,6 +8,7 @@ const base: DadosParaConta = {
   valorTotal:     30600,
   formaPagamento: '15',
   duplicatas:     [{ numero: '001', vencimento: '2026-07-21', valor: 30600 }],
+  items:          [{ descricao: 'DIESEL S10' }],
 }
 
 describe('motivoSemBoleto', () => {
@@ -31,6 +32,15 @@ describe('motivoSemBoleto', () => {
   })
   it('90 (sem pagamento) NAO gera boleto', () => {
     expect(motivoSemBoleto('90')).toBe('a nota diz que não há pagamento')
+  })
+  it('17 (PIX) nao gera boleto', () => {
+    expect(motivoSemBoleto('17')).toBe('a nota diz PIX')
+  })
+  it('18 (transferencia/carteira digital) nao gera boleto', () => {
+    expect(motivoSemBoleto('18')).toBe('a nota diz transferência bancária ou carteira digital')
+  })
+  it('20 (PIX estatico) nao gera boleto', () => {
+    expect(motivoSemBoleto('20')).toBe('a nota diz PIX')
   })
   // '16' (depósito bancário), '19' (cashback/crédito virtual) e '21' (crédito
   // em loja) foram avaliados e propositalmente NÃO entraram em MOTIVO_SEM_BOLETO
@@ -56,6 +66,20 @@ describe('contasDaNota — nota de entrega futura (tPag 90)', () => {
     })
     expect(r).toHaveLength(1)
     expect(r[0].vencimento).toBe('2026-09-15')
+  })
+
+  it('REGRESSAO (achada pelo Apolo, 06/08/2026): tPag 90 com duplicata SEM data mas COM valor DEVE gerar a conta, com vencimento null', () => {
+    // <dup><nDup>1</nDup><vDup>5000.00</vDup></dup> sem <dVenc> — duplicata real,
+    // so sem data. Exigir vencimento (criterio anterior) fazia isso convergir com
+    // duplicata vazia e a nota inteira sumir: R$ 5.000 sem virar boleto e sem
+    // nenhuma linha na mensagem do WhatsApp avisando.
+    const r = contasDaNota({
+      ...base, formaPagamento: '90',
+      duplicatas: [{ numero: '001', vencimento: null, valor: 5000 }],
+    })
+    expect(r).toHaveLength(1)
+    expect(r[0].vencimento).toBeNull()
+    expect(r[0].valor).toBe(5000)
   })
 
   it('regressao do cartao: tPag 05 com duplicata continua sem gerar conta (METAL AGRICOLA 51843)', () => {
@@ -106,6 +130,73 @@ describe('contasDaNota — nota de entrega futura (tPag 90)', () => {
     })
     expect(r).toEqual([])
   })
+
+  it('dinheiro (01) nao cede a duplicata: mesmo com vencimento futuro real, nao gera conta', () => {
+    const r = contasDaNota({
+      ...base, formaPagamento: '01',
+      duplicatas: [{ numero: '001', vencimento: '2026-08-01', valor: 355 }],
+    })
+    expect(r).toEqual([])
+  })
+
+  it('cartao de debito (04) nao cede a duplicata: mesmo com vencimento futuro real, nao gera conta', () => {
+    const r = contasDaNota({
+      ...base, formaPagamento: '04',
+      duplicatas: [{ numero: '001', vencimento: '2026-08-01', valor: 355 }],
+    })
+    expect(r).toEqual([])
+  })
+})
+
+describe('contasDaNota — PIX/transferencia (tPag 17/18/20) cedem a duplicata igual ao 90', () => {
+  it('caso real USINA UBERABA S/A nota 16246: tPag 18, R$ 88.939,27, SEM duplicata: nao gera conta', () => {
+    const r = contasDaNota({
+      ...base, formaPagamento: '18', valorTotal: 88939.27, duplicatas: [],
+    })
+    expect(r).toEqual([])
+  })
+
+  it('REGRESSAO (achada pelo Apolo): tPag 18 COM duplicata de vencimento futuro DEVE gerar a conta', () => {
+    // tPag descreve o MEIO (transferência), nao o MOMENTO: a compra pode ter sido
+    // combinada com entrada e saldo a prazo. Perder este boleto e o bug que motivou
+    // a correcao inteira.
+    const r = contasDaNota({
+      ...base, formaPagamento: '18',
+      duplicatas: [{ numero: '001', vencimento: '2026-11-15', valor: 88939.27 }],
+    })
+    expect(r).toHaveLength(1)
+    expect(r[0].vencimento).toBe('2026-11-15')
+    expect(r[0].valor).toBe(88939.27)
+  })
+
+  it('tPag 17 (PIX dinamico) COM duplicata tambem gera a conta', () => {
+    const r = contasDaNota({
+      ...base, formaPagamento: '17',
+      duplicatas: [{ numero: '001', vencimento: '2026-11-15', valor: 68939.27 }],
+    })
+    expect(r).toHaveLength(1)
+    expect(r[0].vencimento).toBe('2026-11-15')
+  })
+
+  it('tPag 20 (PIX estatico) COM duplicata tambem gera a conta', () => {
+    const r = contasDaNota({
+      ...base, formaPagamento: '20',
+      duplicatas: [{ numero: '001', vencimento: '2026-11-15', valor: 1000 }],
+    })
+    expect(r).toHaveLength(1)
+  })
+
+  it('tPag 17 sem duplicata: nao gera conta', () => {
+    expect(contasDaNota({ ...base, formaPagamento: '17', duplicatas: [] })).toEqual([])
+  })
+
+  it('tPag 18 com duplicata VAZIA (numero preenchido, sem vencimento nem valor — <dup> so com numero no XML): nao gera conta, igual a sem duplicata nenhuma (caso USINA UBERABA)', () => {
+    const r = contasDaNota({
+      ...base, formaPagamento: '18',
+      duplicatas: [{ numero: '001', vencimento: null, valor: null }],
+    })
+    expect(r).toEqual([])
+  })
 })
 
 describe('parcelasDescartadasDaNota — tPag 90 concorda com contasDaNota', () => {
@@ -133,6 +224,20 @@ describe('parcelasDescartadasDaNota — tPag 90 concorda com contasDaNota', () =
   })
 })
 
+describe('parcelasDescartadasDaNota — tPag 17/18 (PIX/transferencia) sem duplicata', () => {
+  it('tPag 18 sem duplicata: lista vazia, igual ao padrao ja testado pro 05', () => {
+    const nfe = { ...base, formaPagamento: '18', duplicatas: [] }
+    expect(contasDaNota(nfe)).toEqual([])
+    expect(parcelasDescartadasDaNota(nfe)).toEqual([])
+  })
+
+  it('tPag 17 sem duplicata: lista vazia', () => {
+    const nfe = { ...base, formaPagamento: '17', duplicatas: [] }
+    expect(contasDaNota(nfe)).toEqual([])
+    expect(parcelasDescartadasDaNota(nfe)).toEqual([])
+  })
+})
+
 describe('contasDaNota', () => {
   it('uma duplicata vira uma conta 1 de 1', () => {
     const r = contasDaNota(base)
@@ -145,7 +250,7 @@ describe('contasDaNota', () => {
   })
 
   it('descricao de parcela unica nao mostra numero de parcela', () => {
-    expect(contasDaNota(base)[0].descricao).toBe('TRIANGULO DIESEL TRR LTDA — NF 4516')
+    expect(contasDaNota(base)[0].descricao).toBe('DIESEL S10')
   })
 
   it('tres duplicatas viram tres contas numeradas, cada uma com seu valor', () => {
@@ -157,7 +262,7 @@ describe('contasDaNota', () => {
     expect(r).toHaveLength(3)
     expect(r.map(c => c.numero_parcela)).toEqual([1, 2, 3])
     expect(r.every(c => c.total_parcelas === 3)).toBe(true)
-    expect(r[1].descricao).toBe('TRIANGULO DIESEL TRR LTDA — NF 4516 (2/3)')
+    expect(r[1].descricao).toBe('DIESEL S10 (2/3)')
     expect(r.map(c => c.vencimento)).toEqual(['2026-08-15', '2026-09-15', '2026-10-15'])
   })
 
@@ -248,6 +353,97 @@ describe('contasDaNota', () => {
   })
 })
 
+// A descricao da conta mostra os PRODUTOS/SERVICOS da nota, nao o fornecedor
+// repetido (a tela ja tem uma coluna Fornecedor separada). Testado via
+// contasDaNota (sem duplicata, pra isolar so a construcao da descricao do
+// resto da logica de parcela) porque resumoDosItens/descricaoDaConta nao sao
+// exportadas de proposito — sao detalhe interno desta funcao.
+describe('contasDaNota — descricao mostra os itens da nota, nao o fornecedor', () => {
+  it('1 item: mostra so o nome do produto', () => {
+    const r = contasDaNota({ ...base, duplicatas: [], items: [
+      { descricao: 'Glifosato 20L' },
+    ]})
+    expect(r[0].descricao).toBe('Glifosato 20L')
+  })
+
+  it('2 itens: junta com "e"', () => {
+    const r = contasDaNota({ ...base, duplicatas: [], items: [
+      { descricao: 'Glifosato 20L' },
+      { descricao: 'Ureia 50kg' },
+    ]})
+    expect(r[0].descricao).toBe('Glifosato 20L e Ureia 50kg')
+  })
+
+  it('3 itens: virgula entre os dois primeiros, "e" antes do ultimo', () => {
+    const r = contasDaNota({ ...base, duplicatas: [], items: [
+      { descricao: 'Glifosato 20L' },
+      { descricao: 'Ureia 50kg' },
+      { descricao: '2,4-D 5L' },
+    ]})
+    expect(r[0].descricao).toBe('Glifosato 20L, Ureia 50kg e 2,4-D 5L')
+  })
+
+  it('4 itens: trunca nos 2 primeiros + "e mais 2 itens" (plural)', () => {
+    const r = contasDaNota({ ...base, duplicatas: [], items: [
+      { descricao: 'Glifosato 20L' },
+      { descricao: 'Ureia 50kg' },
+      { descricao: '2,4-D 5L' },
+      { descricao: 'Adjuvante 1L' },
+    ]})
+    expect(r[0].descricao).toBe('Glifosato 20L, Ureia 50kg e mais 2 itens')
+  })
+
+  it('5 itens: continua truncando nos 2 primeiros, contagem do resto sobe', () => {
+    const r = contasDaNota({ ...base, duplicatas: [], items: [
+      { descricao: 'Glifosato 20L' },
+      { descricao: 'Ureia 50kg' },
+      { descricao: '2,4-D 5L' },
+      { descricao: 'Adjuvante 1L' },
+      { descricao: 'Fungicida 10L' },
+    ]})
+    expect(r[0].descricao).toBe('Glifosato 20L, Ureia 50kg e mais 3 itens')
+  })
+
+  it('items vazio: cai no formato antigo (fornecedor — NF numero), defensivo — descricao nunca fica em branco', () => {
+    const r = contasDaNota({ ...base, duplicatas: [], items: [] })
+    expect(r[0].descricao).toBe('TRIANGULO DIESEL TRR LTDA — NF 4516')
+  })
+
+  it('item repetido (mesmo nome, varias linhas — lotes/precos diferentes): aparece 1 vez so (regressao Apolo 06/08/2026, nota real de 52 linhas do mesmo produto)', () => {
+    const itensRepetidos = Array.from({ length: 52 }, () => ({ descricao: 'SOJA EM GRAOS DE TERCEIROS' }))
+    const r = contasDaNota({ ...base, duplicatas: [], items: itensRepetidos })
+    expect(r[0].descricao).toBe('SOJA EM GRAOS DE TERCEIROS')
+  })
+
+  it('item repetido com espacos extras ao redor tambem conta como o mesmo produto', () => {
+    const r = contasDaNota({ ...base, duplicatas: [], items: [
+      { descricao: 'Glifosato 20L' },
+      { descricao: '  Glifosato 20L  ' },
+    ]})
+    expect(r[0].descricao).toBe('Glifosato 20L')
+  })
+
+  it('item com nome so de espacos e ignorado, nao vira celula vazia', () => {
+    const r = contasDaNota({ ...base, duplicatas: [], items: [
+      { descricao: 'Glifosato 20L' },
+      { descricao: '   ' },
+    ]})
+    expect(r[0].descricao).toBe('Glifosato 20L')
+  })
+
+  it('items com parcelas (mais de uma duplicata): resumo dos itens + sufixo de parcela', () => {
+    const r = contasDaNota({ ...base, items: [
+      { descricao: 'Glifosato 20L' },
+      { descricao: 'Ureia 50kg' },
+    ], duplicatas: [
+      { numero: '001', vencimento: '2026-08-15', valor: 15300 },
+      { numero: '002', vencimento: '2026-09-15', valor: 15300 },
+    ]})
+    expect(r[0].descricao).toBe('Glifosato 20L e Ureia 50kg (1/2)')
+    expect(r[1].descricao).toBe('Glifosato 20L e Ureia 50kg (2/2)')
+  })
+})
+
 describe('contasDaNota — duplicata(s) completamente vazia(s)', () => {
   it('uma duplicata sem data E sem valor: cai no caminho de "sem duplicata", com o valor TOTAL da nota', () => {
     const r = contasDaNota({ ...base, duplicatas: [
@@ -258,7 +454,10 @@ describe('contasDaNota — duplicata(s) completamente vazia(s)', () => {
     expect(r[0].valor).toBe(30600) // valorTotal do `base`, nao null
     expect(r[0].numero_parcela).toBe(1)
     expect(r[0].total_parcelas).toBe(1)
-    expect(r[0].descricao).toBe('TRIANGULO DIESEL TRR LTDA — NF 4516')
+    // Descricao vem do resumo dos itens da nota (base.items = 'DIESEL S10'), nao do
+    // formato antigo "fornecedor — NF numero" — essa troca e de outra correcao (ver
+    // describe 'contasDaNota — descricao mostra os itens da nota' acima).
+    expect(r[0].descricao).toBe('DIESEL S10')
   })
 
   it('duas duplicatas, ambas sem data e sem valor: uma unica conta com o valor total, nao duas vazias', () => {
@@ -375,8 +574,8 @@ describe('contasDaNota — uma parcela ruim nao pode derrubar as boas', () => {
     // completo por engano. "1/3" seguido de "3/3" (sem "2/3") é o próprio aviso.
     expect(r.map(c => c.numero_parcela)).toEqual([1, 3])
     expect(r.every(c => c.total_parcelas === 3)).toBe(true)
-    expect(r[0].descricao).toBe('TRIANGULO DIESEL TRR LTDA — NF 4516 (1/3)')
-    expect(r[1].descricao).toBe('TRIANGULO DIESEL TRR LTDA — NF 4516 (3/3)')
+    expect(r[0].descricao).toBe('DIESEL S10 (1/3)')
+    expect(r[1].descricao).toBe('DIESEL S10 (3/3)')
   })
 
   it('todas as parcelas ruins: nao devolve lista vazia (indistinguivel de "nao gera boleto") — lanca erro', () => {

@@ -38,6 +38,7 @@ const base: DadosParaConta = {
   valorTotal:     30600,
   formaPagamento: '15',
   duplicatas:     [{ numero: '001', vencimento: '2026-07-21', valor: 30600 }],
+  items:          [{ descricao: 'DIESEL S10' }],
 }
 
 beforeEach(() => { estado.erroUpsert = null })

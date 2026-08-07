@@ -74,7 +74,7 @@ contaRoutes.get('/', async (req, res, next) => {
 
     const { data, error } = await supabase
       .from('contas_a_pagar')
-      .select('*, contas_recorrentes(avisar_dias_antes, periodicidade)')
+      .select('*, contas_recorrentes(avisar_dias_antes, periodicidade), notas_fiscais(numero)')
       .eq('fazenda_id', fazendaId)
       .order('vencimento', { ascending: true })
 
