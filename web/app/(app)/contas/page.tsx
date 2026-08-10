@@ -17,7 +17,7 @@ import { api } from '@/lib/api'
 import { FormularioContaFixa } from './formulario-conta-fixa'
 import { FormularioContaAvulsa } from './formulario-conta-avulsa'
 import { DialogoVencimento } from './dialogo-vencimento'
-import { ListaContas, fmtBRL } from './lista-contas'
+import { ListaContas, fmtBRL, type SortColuna } from './lista-contas'
 import { ENCERRADAS, type Conta, type ContaAPI } from './tipos'
 import { hojeISO, diasEntre } from './datas'
 
@@ -110,6 +110,21 @@ function contaBateMes(c: ContaAPI, filtroMes: string, hoje: string): boolean {
   return c.vencimento.startsWith(filtroMes)
 }
 
+// Ordena o RESTO da lista (abaixo do grupo "sem data" fixo no topo — ver
+// contasFiltradas). Não decide sozinha quem fica em cima; isso continua sendo
+// só a regra de "sem data sobe" em contasFiltradas.
+function compararContasPorColuna(a: ContaAPI, b: ContaAPI, coluna: SortColuna, direcao: 'asc' | 'desc'): number {
+  let cmp = 0
+  switch (coluna) {
+    case 'fornecedor': cmp = (a.fornecedor ?? '').localeCompare(b.fornecedor ?? ''); break
+    case 'descricao':  cmp = a.descricao.localeCompare(b.descricao); break
+    case 'vencimento': cmp = (a.vencimento ?? '').localeCompare(b.vencimento ?? ''); break
+    case 'valor':      cmp = (a.valor ?? 0) - (b.valor ?? 0); break
+    case 'categoria':  cmp = (a.categoria ?? 'Sem categoria').localeCompare(b.categoria ?? 'Sem categoria'); break
+  }
+  return direcao === 'asc' ? cmp : -cmp
+}
+
 // ─── Formulários auxiliares (estado local dos diálogos) ───────────────────────
 
 type PagamentoForm = { data_pagamento: string; valor_pago: string }
@@ -121,8 +136,19 @@ export default function ContasPage() {
   const [filtro, setFiltro]           = useState<FiltroStatus>('todas')
   const [filtroTipo, setFiltroTipo]   = useState<FiltroTipo>('todos')
   const [filtroMes, setFiltroMes]     = useState(() => hojeISO().slice(0, 7))
+  const [sortColuna, setSortColuna]   = useState<SortColuna>('vencimento')
+  const [sortDirecao, setSortDirecao] = useState<'asc' | 'desc'>('asc')
   const [visivelCount, setVisivelCount] = useState(50)
   const [salvando, setSalvando]       = useState(false)
+
+  function handleSort(coluna: SortColuna) {
+    if (coluna === sortColuna) {
+      setSortDirecao(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortColuna(coluna)
+      setSortDirecao('asc')
+    }
+  }
 
   const [valorDialog, setValorDialog] = useState<ContaAPI | null>(null)
   const [valorInput, setValorInput]   = useState('')
@@ -186,7 +212,7 @@ export default function ContasPage() {
       const aSemData = !a.vencimento && !ENCERRADAS.has(a.status)
       const bSemData = !b.vencimento && !ENCERRADAS.has(b.status)
       if (aSemData !== bSemData) return aSemData ? -1 : 1
-      return (a.vencimento ?? '').localeCompare(b.vencimento ?? '')
+      return compararContasPorColuna(a, b, sortColuna, sortDirecao)
     })
 
   const contasExibidas = contasFiltradas.slice(0, visivelCount)
@@ -455,6 +481,9 @@ export default function ContasPage() {
             onDesfazer={abrirDesfazerDialog}
             onEditarValor={abrirValorDialog}
             onInformarData={setDataDialog}
+            sortColuna={sortColuna}
+            sortDirecao={sortDirecao}
+            onSort={handleSort}
           />
           {contasFiltradas.length > visivelCount && (
             <div className="text-center py-3 border-t">

@@ -8,7 +8,7 @@ function setUrlParam(key: string, value: string, dflt = 'todos') {
   else p.set(key, value)
   window.history.replaceState(null, '', p.toString() ? `?${p}` : window.location.pathname)
 }
-import { DollarSign, TrendingDown, Package, Filter, Plus, Pencil, Trash2, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react'
+import { DollarSign, TrendingDown, Package, Filter, Plus, Pencil, Trash2, AlertTriangle } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip,
   ResponsiveContainer, Cell, LabelList,
@@ -27,6 +27,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { SortableTableHead } from '@/components/ui/sortable-table-head'
 import { supabase } from '@/lib/supabase'
 import { useFazenda } from '@/context/fazenda-context'
 
@@ -180,6 +181,24 @@ function contaComoGasto(item: Pick<ItemFinanceiro, 'conta_como_compra'>): boolea
   return item.conta_como_compra !== false
 }
 
+type SortColunaFinanceiro = 'descricao' | 'quantidade' | 'valor_unitario' | 'valor_total' | 'centro_custo' | 'origem' | 'data_emissao'
+
+function compararItensPorColuna(a: ItemFinanceiro, b: ItemFinanceiro, coluna: SortColunaFinanceiro, direcao: 'asc' | 'desc'): number {
+  let cmp = 0
+  switch (coluna) {
+    case 'descricao':      cmp = a.descricao.localeCompare(b.descricao); break
+    case 'quantidade':     cmp = a.quantidade - b.quantidade; break
+    case 'valor_unitario': cmp = a.valor_unitario - b.valor_unitario; break
+    case 'valor_total':    cmp = a.valor_total - b.valor_total; break
+    case 'centro_custo':   cmp = tipoLabel(a.centro_custo).localeCompare(tipoLabel(b.centro_custo)); break
+    // origem nulo conta como NF-e pro resto da tela (ver okOrigem no filtro,
+    // mais abaixo neste mesmo arquivo) — mantém a mesma regra aqui.
+    case 'origem':         cmp = (a.origem ?? 'nfe').localeCompare(b.origem ?? 'nfe'); break
+    case 'data_emissao':   cmp = (a.data_emissao ?? '').localeCompare(b.data_emissao ?? ''); break
+  }
+  return direcao === 'asc' ? cmp : -cmp
+}
+
 function FormFields({ form, setForm }: { form: FormData; setForm: React.Dispatch<React.SetStateAction<FormData>> }) {
   return (
     <div className="space-y-3">
@@ -268,10 +287,20 @@ export default function FinanceiroPage() {
   const [filtroCentro, setFiltroCentro] = useState('todos')
   const [filtroMes, setFiltroMes] = useState(MES_PADRAO)
   const [filtroOrigem, setFiltroOrigem] = useState<'todos' | 'nfe' | 'cartao' | 'manual' | 'conta'>('todos')
-  const [sortData, setSortData] = useState<'desc' | 'asc'>('desc')
+  const [sortColuna, setSortColuna]   = useState<SortColunaFinanceiro>('data_emissao')
+  const [sortDirecao, setSortDirecao] = useState<'asc' | 'desc'>('desc')
   const [verTodasCategorias, setVerTodasCategorias] = useState(false)
   const [visivelCount, setVisivelCount] = useState(20)
   const { fazendaAtiva } = useFazenda()
+
+  function handleSort(coluna: SortColunaFinanceiro) {
+    if (coluna === sortColuna) {
+      setSortDirecao(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortColuna(coluna)
+      setSortDirecao('asc')
+    }
+  }
 
   const [addDialog, setAddDialog] = useState(false)
   const [addErro, setAddErro] = useState<string | null>(null)
@@ -520,11 +549,7 @@ export default function FinanceiroPage() {
       const okOrigem = filtroOrigem === 'todos' || i.origem === filtroOrigem || (filtroOrigem === 'nfe' && (i.origem === 'nfe' || i.origem === null))
       return okCentro && okMes && okOrigem
     })
-    .sort((a, b) => {
-      const da = a.data_emissao ?? ''
-      const db = b.data_emissao ?? ''
-      return sortData === 'desc' ? db.localeCompare(da) : da.localeCompare(db)
-    })
+    .sort((a, b) => compararItensPorColuna(a, b, sortColuna, sortDirecao))
 
   // Só os itens que CONTAM como gasto entram nas somas de dinheiro — um item
   // com conta_como_compra === false (já cobrado em outra nota, bonificação,
@@ -775,24 +800,13 @@ export default function FinanceiroPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[200px]">Produto / Serviço</TableHead>
-                <TableHead className="w-[90px] text-right">Qtd.</TableHead>
-                <TableHead className="w-[110px] text-right">Valor Unit.</TableHead>
-                <TableHead className="w-[120px] text-right">Valor Total</TableHead>
-                <TableHead className="w-[140px]">Centro de Custo</TableHead>
-                <TableHead className="w-[160px]">Origem</TableHead>
-                <TableHead className="w-[90px]">
-                  <button
-                    onClick={() => setSortData(s => s === 'desc' ? 'asc' : 'desc')}
-                    className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-                    aria-label={sortData === 'desc' ? 'Ordenado: mais recente primeiro. Clique para inverter' : 'Ordenado: mais antigo primeiro. Clique para inverter'}
-                  >
-                    Data
-                    {sortData === 'desc'
-                      ? <ArrowDown className="h-3 w-3" aria-hidden="true" />
-                      : <ArrowUp className="h-3 w-3" aria-hidden="true" />}
-                  </button>
-                </TableHead>
+                <SortableTableHead className="w-[200px]" ativo={sortColuna === 'descricao'} direcao={sortDirecao} onClick={() => handleSort('descricao')}>Produto / Serviço</SortableTableHead>
+                <SortableTableHead className="w-[90px] text-right" numeric ativo={sortColuna === 'quantidade'} direcao={sortDirecao} onClick={() => handleSort('quantidade')}>Qtd.</SortableTableHead>
+                <SortableTableHead className="w-[110px] text-right" numeric ativo={sortColuna === 'valor_unitario'} direcao={sortDirecao} onClick={() => handleSort('valor_unitario')}>Valor Unit.</SortableTableHead>
+                <SortableTableHead className="w-[120px] text-right" numeric ativo={sortColuna === 'valor_total'} direcao={sortDirecao} onClick={() => handleSort('valor_total')}>Valor Total</SortableTableHead>
+                <SortableTableHead className="w-[140px]" ativo={sortColuna === 'centro_custo'} direcao={sortDirecao} onClick={() => handleSort('centro_custo')}>Centro de Custo</SortableTableHead>
+                <SortableTableHead className="w-[160px]" ativo={sortColuna === 'origem'} direcao={sortDirecao} onClick={() => handleSort('origem')}>Origem</SortableTableHead>
+                <SortableTableHead className="w-[90px]" ativo={sortColuna === 'data_emissao'} direcao={sortDirecao} onClick={() => handleSort('data_emissao')}>Data</SortableTableHead>
                 <TableHead className="w-[72px]" />
               </TableRow>
             </TableHeader>

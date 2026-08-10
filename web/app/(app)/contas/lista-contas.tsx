@@ -9,7 +9,13 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/action-menu'
+import { SortableTableHead } from '@/components/ui/sortable-table-head'
 import { ENCERRADAS, type ContaAPI, type Conta } from './tipos'
+
+// Declarado aqui (não em page.tsx) para não duplicar a mesma verdade em dois
+// lugares — page.tsx importa este tipo de volta, mesmo padrão que `fmtBRL`
+// já segue neste arquivo.
+export type SortColuna = 'fornecedor' | 'descricao' | 'vencimento' | 'valor' | 'categoria'
 
 type Props = {
   contas:          ContaAPI[]
@@ -19,6 +25,9 @@ type Props = {
   onDesfazer:      (c: ContaAPI) => void
   onEditarValor:   (c: ContaAPI) => void
   onInformarData:  (c: ContaAPI) => void
+  sortColuna:      SortColuna
+  sortDirecao:     'asc' | 'desc'
+  onSort:          (coluna: SortColuna) => void
 }
 
 // ─── Formatação (mesmo padrão do resto do site — ver financeiro/page.tsx) ─────
@@ -49,16 +58,16 @@ const STATUS_STYLE: Record<Conta['status'], string> = {
   dispensada: 'bg-gray-100 text-gray-600 border-gray-200',
 }
 
-export function ListaContas({ contas, onPagar, onDispensar, onDesfazer, onEditarValor, onInformarData }: Props) {
+export function ListaContas({ contas, onPagar, onDispensar, onDesfazer, onEditarValor, onInformarData, sortColuna, sortDirecao, onSort }: Props) {
   return (
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead className="w-[220px]">Fornecedor</TableHead>
-          <TableHead>Descrição</TableHead>
-          <TableHead className="w-[110px]">Vencimento</TableHead>
-          <TableHead className="w-[150px] text-right">Valor</TableHead>
-          <TableHead className="w-[140px]">Categoria</TableHead>
+          <SortableTableHead className="w-[220px]" ativo={sortColuna === 'fornecedor'} direcao={sortDirecao} onClick={() => onSort('fornecedor')}>Fornecedor</SortableTableHead>
+          <SortableTableHead ativo={sortColuna === 'descricao'} direcao={sortDirecao} onClick={() => onSort('descricao')}>Descrição</SortableTableHead>
+          <SortableTableHead className="w-[110px]" ativo={sortColuna === 'vencimento'} direcao={sortDirecao} onClick={() => onSort('vencimento')}>Vencimento</SortableTableHead>
+          <SortableTableHead className="w-[150px] text-right" numeric ativo={sortColuna === 'valor'} direcao={sortDirecao} onClick={() => onSort('valor')}>Valor</SortableTableHead>
+          <SortableTableHead className="w-[140px]" ativo={sortColuna === 'categoria'} direcao={sortDirecao} onClick={() => onSort('categoria')}>Categoria</SortableTableHead>
           <TableHead className="w-[110px]">Status</TableHead>
           <TableHead className="w-[60px]" />
         </TableRow>
