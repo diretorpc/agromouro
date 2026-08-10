@@ -261,6 +261,7 @@ export default function FinanceiroPage() {
   const [filtroMes, setFiltroMes] = useState(() => new Date().toISOString().slice(0, 7))
   const [filtroOrigem, setFiltroOrigem] = useState<'todos' | 'nfe' | 'cartao' | 'manual' | 'conta'>('todos')
   const [sortData, setSortData] = useState<'desc' | 'asc'>('desc')
+  const [verTodasCategorias, setVerTodasCategorias] = useState(false)
   const { fazendaAtiva } = useFazenda()
 
   const [addDialog, setAddDialog] = useState(false)
@@ -531,6 +532,7 @@ export default function FinanceiroPage() {
   const chartData = Object.entries(porCategoria)
     .map(([key, value]) => ({ key, label: tipoLabel(key), value }))
     .sort((a, b) => b.value - a.value)
+  const chartDataExibido = verTodasCategorias ? chartData : chartData.slice(0, 5)
 
   if (loading) return <PageSkeleton />
   // Precisa vir ANTES de qualquer render de conteúdo — inclusive antes do
@@ -614,9 +616,9 @@ export default function FinanceiroPage() {
           </CardHeader>
           <CardContent className="overflow-x-auto pt-2">
             <div style={{ minWidth: 360 }}>
-              <ResponsiveContainer width="100%" height={chartData.length * 52 + 16}>
+              <ResponsiveContainer width="100%" height={chartDataExibido.length * 52 + 16}>
                 <BarChart
-                  data={chartData}
+                  data={chartDataExibido}
                   layout="vertical"
                   margin={{ top: 0, right: 180, bottom: 0, left: 8 }}
                   barSize={22}
@@ -646,7 +648,7 @@ export default function FinanceiroPage() {
                     }}
                   />
                   <Bar dataKey="value" radius={[0, 5, 5, 0]}>
-                    {chartData.map(entry => (
+                    {chartDataExibido.map(entry => (
                       <Cell key={entry.key} fill={CENTRO_CUSTO_COLOR[entry.key] ?? '#94a3b8'} />
                     ))}
                     <LabelList
@@ -669,6 +671,17 @@ export default function FinanceiroPage() {
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
+              {chartData.length > 5 && (
+                <div className="text-center mt-2">
+                  <Button
+                    variant="link"
+                    size="sm"
+                    onClick={() => setVerTodasCategorias(v => !v)}
+                  >
+                    {verTodasCategorias ? 'Ver só as 5 maiores' : `Ver todas as ${chartData.length} categorias`}
+                  </Button>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
