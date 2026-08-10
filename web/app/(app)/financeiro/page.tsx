@@ -800,12 +800,12 @@ export default function FinanceiroPage() {
           <Table className="border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
             <TableHeader>
               <TableRow>
-                <SortableTableHead className="w-[200px]" ativo={sortColuna === 'descricao'} direcao={sortDirecao} onClick={() => handleSort('descricao')}>Produto / Serviço</SortableTableHead>
-                <SortableTableHead className="w-[90px] text-right" numeric ativo={sortColuna === 'quantidade'} direcao={sortDirecao} onClick={() => handleSort('quantidade')}>Qtd.</SortableTableHead>
+                <SortableTableHead className="w-[220px]" ativo={sortColuna === 'descricao'} direcao={sortDirecao} onClick={() => handleSort('descricao')}>Produto / Serviço</SortableTableHead>
+                <SortableTableHead className="w-[70px] text-right" numeric ativo={sortColuna === 'quantidade'} direcao={sortDirecao} onClick={() => handleSort('quantidade')}>Qtd.</SortableTableHead>
                 <SortableTableHead className="w-[110px] text-right" numeric ativo={sortColuna === 'valor_unitario'} direcao={sortDirecao} onClick={() => handleSort('valor_unitario')}>Valor Unit.</SortableTableHead>
                 <SortableTableHead className="w-[120px] text-right" numeric ativo={sortColuna === 'valor_total'} direcao={sortDirecao} onClick={() => handleSort('valor_total')}>Valor Total</SortableTableHead>
                 <SortableTableHead className="w-[140px]" ativo={sortColuna === 'centro_custo'} direcao={sortDirecao} onClick={() => handleSort('centro_custo')}>Centro de Custo</SortableTableHead>
-                <SortableTableHead className="w-[160px]" ativo={sortColuna === 'origem'} direcao={sortDirecao} onClick={() => handleSort('origem')}>Origem</SortableTableHead>
+                <SortableTableHead className="w-[180px]" ativo={sortColuna === 'origem'} direcao={sortDirecao} onClick={() => handleSort('origem')}>Origem</SortableTableHead>
                 <SortableTableHead className="w-[90px]" ativo={sortColuna === 'data_emissao'} direcao={sortDirecao} onClick={() => handleSort('data_emissao')}>Data</SortableTableHead>
                 <TableHead className="w-[72px]" />
               </TableRow>
@@ -829,7 +829,7 @@ export default function FinanceiroPage() {
                 </TableRow>
               ) : itensExibidos.map(item => (
                 <TableRow key={item.id}>
-                  <TableCell className="font-medium text-sm max-w-[200px] truncate" title={item.descricao}>
+                  <TableCell className="font-medium text-sm whitespace-normal break-words">
                     {item.descricao}
                   </TableCell>
                   <TableCell className="text-right text-sm text-muted-foreground">
@@ -881,14 +881,9 @@ export default function FinanceiroPage() {
                     ) : (
                       <div>
                         <p className="font-medium text-xs">NF {item.nota_numero}</p>
-                        <Tooltip>
-                          <TooltipTrigger className="text-xs text-muted-foreground truncate max-w-[150px] cursor-default block w-full text-left bg-transparent border-0 p-0 font-normal">
-                            {item.emitente_nome}
-                          </TooltipTrigger>
-                          <TooltipContent side="top" className="max-w-xs text-xs">
-                            {item.emitente_nome}
-                          </TooltipContent>
-                        </Tooltip>
+                        <p className="text-xs text-muted-foreground whitespace-normal break-words">
+                          {item.emitente_nome}
+                        </p>
                       </div>
                     )}
                   </TableCell>

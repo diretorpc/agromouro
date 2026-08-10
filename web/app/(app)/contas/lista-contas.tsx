@@ -121,8 +121,8 @@ export function ListaContas({ contas, onPagar, onDispensar, onDesfazer, onEditar
               <TableCell className="text-sm font-medium max-w-[220px] whitespace-normal break-words">
                 {conta.fornecedor ?? '—'}
               </TableCell>
-              <TableCell className="text-sm max-w-[280px]">
-                <p className="truncate" title={conta.descricao}>{conta.descricao}</p>
+              <TableCell className="text-sm max-w-[280px] whitespace-normal break-words">
+                <p>{conta.descricao}</p>
                 {conta.nota_fiscal_id && conta.notas_fiscais && (
                   <p className="text-xs text-muted-foreground">NF {conta.notas_fiscais.numero}</p>
                 )}
