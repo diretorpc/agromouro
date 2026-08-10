@@ -11,6 +11,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Separator } from '@/components/ui/separator'
 import { api } from '@/lib/api'
 import { FormularioContaFixa } from './formulario-conta-fixa'
 import { FormularioContaAvulsa } from './formulario-conta-avulsa'
@@ -310,51 +311,56 @@ export default function ContasPage() {
       </div>
 
       {/* ── KPIs ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <CalendarClock className="h-4 w-4" />Vence esta semana
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold tabular-nums">{fmtBRL(totais.semanaConfirmado)}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">confirmado</p>
-            <p className="text-base font-semibold text-amber-600 tabular-nums mt-2">
-              + {fmtBRL(totais.semanaEstimado)}
-            </p>
-            <p className="text-xs text-amber-600/80">estimado</p>
-          </CardContent>
-        </Card>
+      <div className="space-y-4">
+        <p className="text-sm font-semibold text-muted-foreground">Resumo</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                <CalendarClock className="h-4 w-4" />Vence esta semana
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold tabular-nums">{fmtBRL(totais.semanaConfirmado)}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">confirmado</p>
+              <p className="text-base font-semibold text-amber-600 tabular-nums mt-2">
+                + {fmtBRL(totais.semanaEstimado)}
+              </p>
+              <p className="text-xs text-amber-600/80">estimado</p>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4" />Atrasado
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-red-600 tabular-nums">{fmtBRL(totais.atrasadoTotal)}</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {totais.atrasadoQtd} {totais.atrasadoQtd === 1 ? 'conta atrasada' : 'contas atrasadas'}
-            </p>
-          </CardContent>
-        </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4" />Atrasado
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold text-red-600 tabular-nums">{fmtBRL(totais.atrasadoTotal)}</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {totais.atrasadoQtd} {totais.atrasadoQtd === 1 ? 'conta atrasada' : 'contas atrasadas'}
+              </p>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Clock className="h-4 w-4" />Aguardando
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold tabular-nums">{totais.aguardandoQtd}</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {totais.aguardandoQtd === 1 ? 'conta sem valor confirmado' : 'contas sem valor confirmado'}
-            </p>
-          </CardContent>
-        </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                <Clock className="h-4 w-4" />Aguardando
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold tabular-nums">{totais.aguardandoQtd}</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {totais.aguardandoQtd === 1 ? 'conta sem valor confirmado' : 'contas sem valor confirmado'}
+              </p>
+            </CardContent>
+          </Card>
+        </div>
       </div>
+
+      <Separator />
 
       {/* ── Lista ── */}
       <Card>
