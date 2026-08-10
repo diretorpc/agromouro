@@ -79,6 +79,22 @@ const FILTROS_TIPO: { value: FiltroTipo; label: string }[] = [
   { value: 'nota',  label: 'Boletos de nota' },
 ]
 
+function contaBateTipo(c: ContaAPI, filtroTipo: FiltroTipo): boolean {
+  if (filtroTipo === 'todos') return true
+  if (filtroTipo === 'fixas') return c.nota_fiscal_id === null
+  return c.nota_fiscal_id !== null
+}
+
+// "Todas" esconde as dispensadas de propósito (pedido de 10/08/2026): elas são
+// contas que o Matheus marcou como "não vai ter cobrança" e só poluíam a fila.
+// Não é bug — continuam acessíveis pelo botão "Dispensadas".
+function contaBateFiltro(c: ContaAPI, filtro: FiltroStatus, hoje: string): boolean {
+  if (filtro === 'todas')          return c.status !== 'dispensada'
+  if (filtro === 'sem-vencimento') return !ENCERRADAS.has(c.status) && !c.vencimento
+  if (filtro === 'atrasada')       return !ENCERRADAS.has(c.status) && !!c.vencimento && diasEntre(hoje, c.vencimento) < 0
+  return c.status === filtro
+}
+
 // ─── Formulários auxiliares (estado local dos diálogos) ───────────────────────
 
 type PagamentoForm = { data_pagamento: string; valor_pago: string }
@@ -139,23 +155,7 @@ export default function ContasPage() {
   const totais = calcularTotais(contas, hoje)
 
   const contasFiltradas = contas
-    .filter(c => {
-      const okTipo =
-        filtroTipo === 'todos' ? true :
-        filtroTipo === 'fixas' ? c.nota_fiscal_id === null :
-                                 c.nota_fiscal_id !== null
-
-      if (!okTipo) return false
-
-      // "Todas" esconde as dispensadas de propósito (pedido de 10/08/2026): elas são
-      // contas que o Matheus marcou como "não vai ter cobrança" e só poluíam a fila.
-      // Só 'dispensada' é escondida. 'paga' CONTINUA aparecendo em "Todas": é
-      // histórico de pagamento e ele quer conferir.
-      if (filtro === 'todas')          return c.status !== 'dispensada'
-      if (filtro === 'sem-vencimento') return !ENCERRADAS.has(c.status) && !c.vencimento
-      if (filtro === 'atrasada')       return !ENCERRADAS.has(c.status) && !!c.vencimento && diasEntre(hoje, c.vencimento) < 0
-      return c.status === filtro
-    })
+    .filter(c => contaBateTipo(c, filtroTipo) && contaBateFiltro(c, filtro, hoje))
     // Conta sem data sobe para o topo: é a única que exige ação do Matheus
     // para o sistema voltar a funcionar sozinho. Enterrada no meio da lista,
     // ela some — e é justamente a que o sistema não consegue vigiar.
@@ -389,11 +389,7 @@ export default function ContasPage() {
             </Select>
             <div className="flex flex-wrap gap-2">
               {FILTROS.map(o => {
-                const n = o.value === 'sem-vencimento'
-                  ? contas.filter(c => !ENCERRADAS.has(c.status) && !c.vencimento).length
-                  : o.value === 'dispensada'
-                  ? contas.filter(c => c.status === 'dispensada').length
-                  : 0
+                const n = contas.filter(c => contaBateTipo(c, filtroTipo) && contaBateFiltro(c, o.value, hoje)).length
                 return (
                   <Button
                     key={o.value}
