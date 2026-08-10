@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { supabase } from '@/lib/supabase'
 import { useFazenda } from '@/context/fazenda-context'
@@ -564,7 +565,9 @@ export default function FinanceiroPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="space-y-4">
+        <p className="text-sm font-semibold text-muted-foreground">Resumo do mês</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
@@ -609,9 +612,9 @@ export default function FinanceiroPage() {
             </p>
           </CardContent>
         </Card>
-      </div>
+        </div>
 
-      {chartData.length > 0 && (
+        {chartData.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
@@ -690,7 +693,10 @@ export default function FinanceiroPage() {
             </div>
           </CardContent>
         </Card>
-      )}
+        )}
+      </div>
+
+      <Separator />
 
       <Card>
         <CardHeader className="space-y-3">
