@@ -262,6 +262,7 @@ export default function FinanceiroPage() {
   const [filtroOrigem, setFiltroOrigem] = useState<'todos' | 'nfe' | 'cartao' | 'manual' | 'conta'>('todos')
   const [sortData, setSortData] = useState<'desc' | 'asc'>('desc')
   const [verTodasCategorias, setVerTodasCategorias] = useState(false)
+  const [visivelCount, setVisivelCount] = useState(20)
   const { fazendaAtiva } = useFazenda()
 
   const [addDialog, setAddDialog] = useState(false)
@@ -357,6 +358,8 @@ export default function FinanceiroPage() {
     if (centro !== null) setFiltroCentro(centro)
     if (origem && ['todos', 'nfe', 'cartao', 'manual', 'conta'].includes(origem)) setFiltroOrigem(origem)
   }, [])
+
+  useEffect(() => { setVisivelCount(20) }, [filtroMes, filtroCentro, filtroOrigem])
 
   async function handleAdd() {
     // Sem fazenda ativa não há como preencher fazenda_id (NOT NULL + RLS
@@ -521,6 +524,8 @@ export default function FinanceiroPage() {
   // etc.) continua na lista abaixo, com o crachá explicando por quê, mas não
   // soma no Total de Despesas nem no gráfico por categoria.
   const itensQueContam = itensFiltrados.filter(contaComoGasto)
+
+  const itensExibidos = itensFiltrados.slice(0, visivelCount)
 
   const totalGeral = itensQueContam.reduce((s, i) => s + i.valor_total, 0)
   const porCategoria = itensQueContam.reduce<Record<string, number>>((acc, i) => {
@@ -795,7 +800,7 @@ export default function FinanceiroPage() {
                     )}
                   </TableCell>
                 </TableRow>
-              ) : itensFiltrados.map(item => (
+              ) : itensExibidos.map(item => (
                 <TableRow key={item.id}>
                   <TableCell className="font-medium text-sm max-w-[200px] truncate" title={item.descricao}>
                     {item.descricao}
@@ -908,6 +913,17 @@ export default function FinanceiroPage() {
               </TableFooter>
             )}
           </Table>
+          {itensFiltrados.length > visivelCount && (
+            <div className="text-center py-3 border-t">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setVisivelCount(c => c + 20)}
+              >
+                Carregar mais {Math.min(20, itensFiltrados.length - visivelCount)}
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
