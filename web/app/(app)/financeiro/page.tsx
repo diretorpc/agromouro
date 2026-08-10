@@ -961,20 +961,24 @@ export default function FinanceiroPage() {
                 const primeiro = grupo.itens[0]
                 const valorTotalGrupo = grupo.itens.reduce((s, i) => s + i.valor_total, 0)
                 const categoriasGrupo = Array.from(new Set(grupo.itens.map(i => i.centro_custo)))
+                const temItemQueNaoConta = grupo.itens.some(i => i.conta_como_compra === false)
 
                 return (
                   <Fragment key={grupo.chave}>
-                    <TableRow
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => toggleNota(grupo.chave)}
-                    >
+                    <TableRow className="hover:bg-muted/50">
                       <TableCell className="font-medium text-sm">
-                        <span className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => toggleNota(grupo.chave)}
+                          aria-expanded={expandido}
+                          aria-label={`${expandido ? 'Recolher' : 'Expandir'} os ${grupo.itens.length} itens desta nota`}
+                          className="inline-flex items-center gap-1.5 text-left hover:text-foreground transition-colors"
+                        >
                           {expandido
                             ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
                             : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />}
                           {grupo.itens.length} itens desta nota
-                        </span>
+                        </button>
                       </TableCell>
                       <TableCell className="text-right text-sm text-muted-foreground">—</TableCell>
                       <TableCell className="text-right text-sm text-muted-foreground">—</TableCell>
@@ -990,6 +994,21 @@ export default function FinanceiroPage() {
                               {tipoLabel(c)}
                             </Badge>
                           ))}
+                          {temItemQueNaoConta && (
+                            <Tooltip>
+                              <TooltipTrigger className="cursor-default bg-transparent border-0 p-0">
+                                <Badge variant="outline" className="text-xs bg-slate-100 text-slate-600 border-slate-200">
+                                  Inclui item que não conta como gasto
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="max-w-xs text-xs">
+                                Um ou mais itens desta nota não entram no Total de Despesas — o valor
+                                já foi cobrado em outra nota, foi recebido sem custo (bonificação/amostra),
+                                ou é mercadoria que só passou pela fazenda sem virar compra. Expanda a
+                                nota pra ver qual item é.
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell className="text-sm w-[180px]">
