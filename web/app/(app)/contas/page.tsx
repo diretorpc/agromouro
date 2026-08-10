@@ -89,6 +89,7 @@ export default function ContasPage() {
   const [erroCarregar, setErroCarregar] = useState<string | null>(null)
   const [filtro, setFiltro]           = useState<FiltroStatus>('todas')
   const [filtroTipo, setFiltroTipo]   = useState<FiltroTipo>('todos')
+  const [visivelCount, setVisivelCount] = useState(20)
   const [salvando, setSalvando]       = useState(false)
 
   const [valorDialog, setValorDialog] = useState<ContaAPI | null>(null)
@@ -131,6 +132,9 @@ export default function ContasPage() {
     if (f && FILTROS.some(o => o.value === f)) setFiltro(f as FiltroStatus)
   }, [])
 
+  // Reset paginação ao trocar filtro de status ou tipo
+  useEffect(() => { setVisivelCount(20) }, [filtro, filtroTipo])
+
   const hoje = hojeISO()
   const totais = calcularTotais(contas, hoje)
 
@@ -161,6 +165,8 @@ export default function ContasPage() {
       if (aSemData !== bSemData) return aSemData ? -1 : 1
       return (a.vencimento ?? '').localeCompare(b.vencimento ?? '')
     })
+
+  const contasExibidas = contasFiltradas.slice(0, visivelCount)
 
   // ─── Ações: registrar valor real ─────────────────────────────────────────
 
@@ -404,7 +410,7 @@ export default function ContasPage() {
         </CardHeader>
         <CardContent className="p-0">
           <ListaContas
-            contas={contasFiltradas}
+            contas={contasExibidas}
             hoje={hoje}
             onPagar={abrirPagarDialog}
             onDispensar={abrirDispensarDialog}
@@ -412,6 +418,17 @@ export default function ContasPage() {
             onEditarValor={abrirValorDialog}
             onInformarData={setDataDialog}
           />
+          {contasFiltradas.length > visivelCount && (
+            <div className="text-center py-3 border-t">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setVisivelCount(c => c + 20)}
+              >
+                Carregar mais {Math.min(20, contasFiltradas.length - visivelCount)}
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
