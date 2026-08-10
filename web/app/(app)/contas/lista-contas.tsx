@@ -60,7 +60,7 @@ const STATUS_STYLE: Record<Conta['status'], string> = {
 
 export function ListaContas({ contas, onPagar, onDispensar, onDesfazer, onEditarValor, onInformarData, sortColuna, sortDirecao, onSort }: Props) {
   return (
-    <Table>
+    <Table className="border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
       <TableHeader>
         <TableRow>
           <SortableTableHead className="w-[220px]" ativo={sortColuna === 'fornecedor'} direcao={sortDirecao} onClick={() => onSort('fornecedor')}>Fornecedor</SortableTableHead>

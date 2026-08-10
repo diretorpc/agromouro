@@ -797,7 +797,7 @@ export default function FinanceiroPage() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <Table>
+          <Table className="border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
             <TableHeader>
               <TableRow>
                 <SortableTableHead className="w-[200px]" ativo={sortColuna === 'descricao'} direcao={sortDirecao} onClick={() => handleSort('descricao')}>Produto / Serviço</SortableTableHead>
