@@ -258,7 +258,7 @@ export default function FinanceiroPage() {
   // como tela vazia.
   const [erroCarregamento, setErroCarregamento] = useState(false)
   const [filtroCentro, setFiltroCentro] = useState('todos')
-  const [filtroMes, setFiltroMes] = useState('todos')
+  const [filtroMes, setFiltroMes] = useState(() => new Date().toISOString().slice(0, 7))
   const [filtroOrigem, setFiltroOrigem] = useState<'todos' | 'nfe' | 'cartao' | 'manual' | 'conta'>('todos')
   const [sortData, setSortData] = useState<'desc' | 'asc'>('desc')
   const { fazendaAtiva } = useFazenda()
@@ -769,7 +769,17 @@ export default function FinanceiroPage() {
               {itensFiltrados.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={8} className="text-center text-muted-foreground py-10">
-                    Nenhum lançamento encontrado.
+                    <p>Nenhum lançamento encontrado{filtroMes !== 'todos' ? ' neste mês' : ''}.</p>
+                    {filtroMes !== 'todos' && (
+                      <Button
+                        variant="link"
+                        size="sm"
+                        className="mt-1"
+                        onClick={() => { setFiltroMes('todos'); setUrlParam('mes', 'todos') }}
+                      >
+                        Ver todos os meses
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ) : itensFiltrados.map(item => (
