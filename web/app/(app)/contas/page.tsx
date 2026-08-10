@@ -110,7 +110,7 @@ export default function ContasPage() {
   const [erroCarregar, setErroCarregar] = useState<string | null>(null)
   const [filtro, setFiltro]           = useState<FiltroStatus>('todas')
   const [filtroTipo, setFiltroTipo]   = useState<FiltroTipo>('todos')
-  const [visivelCount, setVisivelCount] = useState(20)
+  const [visivelCount, setVisivelCount] = useState(50)
   const [salvando, setSalvando]       = useState(false)
 
   const [valorDialog, setValorDialog] = useState<ContaAPI | null>(null)
@@ -154,7 +154,7 @@ export default function ContasPage() {
   }, [])
 
   // Reset paginação ao trocar filtro de status ou tipo
-  useEffect(() => { setVisivelCount(20) }, [filtro, filtroTipo])
+  useEffect(() => { setVisivelCount(50) }, [filtro, filtroTipo])
 
   const hoje = hojeISO()
   const totais = calcularTotais(contas, hoje)
@@ -324,7 +324,7 @@ export default function ContasPage() {
 
       {/* ── KPIs ── */}
       <div className="space-y-4">
-        <p className="text-sm font-semibold text-muted-foreground">Resumo</p>
+        <p className="text-sm font-semibold text-muted-foreground">Resumo geral</p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Card>
             <CardHeader className="pb-2">
@@ -424,9 +424,9 @@ export default function ContasPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setVisivelCount(c => c + 20)}
+                onClick={() => setVisivelCount(c => c + 50)}
               >
-                Carregar mais {Math.min(20, contasFiltradas.length - visivelCount)}
+                Carregar mais {Math.min(50, contasFiltradas.length - visivelCount)}
               </Button>
             </div>
           )}
