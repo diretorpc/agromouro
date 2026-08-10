@@ -11,11 +11,13 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Separator } from '@/components/ui/separator'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
 import { FormularioContaFixa } from './formulario-conta-fixa'
 import { FormularioContaAvulsa } from './formulario-conta-avulsa'
 import { DialogoVencimento } from './dialogo-vencimento'
-import { ListaContas, fmtBRL } from './lista-contas'
+import { ListaContas, fmtBRL, type SortColuna } from './lista-contas'
 import { ENCERRADAS, type Conta, type ContaAPI } from './tipos'
 import { hojeISO, diasEntre } from './datas'
 
@@ -56,7 +58,7 @@ export function calcularTotais(contas: Conta[], hoje: string) {
 
 // ─── Tipos da página ────────────────────────────────────────────────────────
 
-type FiltroStatus = 'todas' | 'sem-vencimento' | 'aguardando' | 'aberta' | 'atrasada' | 'paga'
+type FiltroStatus = 'todas' | 'sem-vencimento' | 'aguardando' | 'aberta' | 'atrasada' | 'paga' | 'dispensada'
 type FiltroTipo   = 'todos' | 'fixas' | 'nota'
 
 const FILTROS: { value: FiltroStatus; label: string }[] = [
@@ -66,6 +68,7 @@ const FILTROS: { value: FiltroStatus; label: string }[] = [
   { value: 'aberta',         label: 'Abertas' },
   { value: 'atrasada',       label: 'Atrasadas' },
   { value: 'paga',           label: 'Pagas' },
+  { value: 'dispensada',     label: 'Dispensadas' },
 ]
 
 // Conta fixa veio de uma regra recorrente; boleto veio de uma nota fiscal.
@@ -75,6 +78,52 @@ const FILTROS_TIPO: { value: FiltroTipo; label: string }[] = [
   { value: 'fixas', label: 'Contas fixas' },
   { value: 'nota',  label: 'Boletos de nota' },
 ]
+
+function contaBateTipo(c: ContaAPI, filtroTipo: FiltroTipo): boolean {
+  if (filtroTipo === 'todos') return true
+  if (filtroTipo === 'fixas') return c.nota_fiscal_id === null
+  return c.nota_fiscal_id !== null
+}
+
+// "Todas" esconde dispensada sempre, e paga com mais de 30 dias (pedido de
+// 10/08/2026): a aba deixa de ser um histórico infinito e vira "o que ainda
+// pede atenção ou foi resolvido recentemente". Quem quiser o histórico
+// completo de pagamento usa a aba "Pagas" — essa continua sem limite de data.
+function contaBateFiltro(c: ContaAPI, filtro: FiltroStatus, hoje: string): boolean {
+  if (filtro === 'todas') {
+    if (c.status === 'dispensada') return false
+    if (c.status === 'paga')       return diasEntre(c.data_pagamento ?? hoje, hoje) <= 30
+    return true
+  }
+  if (filtro === 'sem-vencimento') return !ENCERRADAS.has(c.status) && !c.vencimento
+  if (filtro === 'atrasada')       return !ENCERRADAS.has(c.status) && !!c.vencimento && diasEntre(hoje, c.vencimento) < 0
+  return c.status === filtro
+}
+
+// Contas atrasadas e sem vencimento pedem ação urgente, então sempre aparecem —
+// nunca somem por causa do filtro de mês (pedido do Matheus, 10/08/2026): esconder
+// dívida ativa atrás de um filtro de data seria perigoso.
+function contaBateMes(c: ContaAPI, filtroMes: string, hoje: string): boolean {
+  if (filtroMes === 'todos') return true
+  if (!c.vencimento) return true
+  if (!ENCERRADAS.has(c.status) && diasEntre(hoje, c.vencimento) < 0) return true
+  return c.vencimento.startsWith(filtroMes)
+}
+
+// Ordena o RESTO da lista (abaixo do grupo "sem data" fixo no topo — ver
+// contasFiltradas). Não decide sozinha quem fica em cima; isso continua sendo
+// só a regra de "sem data sobe" em contasFiltradas.
+function compararContasPorColuna(a: ContaAPI, b: ContaAPI, coluna: SortColuna, direcao: 'asc' | 'desc'): number {
+  let cmp = 0
+  switch (coluna) {
+    case 'fornecedor': cmp = (a.fornecedor ?? '').localeCompare(b.fornecedor ?? ''); break
+    case 'descricao':  cmp = a.descricao.localeCompare(b.descricao); break
+    case 'vencimento': cmp = (a.vencimento ?? '').localeCompare(b.vencimento ?? ''); break
+    case 'valor':      cmp = (a.valor ?? 0) - (b.valor ?? 0); break
+    case 'categoria':  cmp = (a.categoria ?? 'Sem categoria').localeCompare(b.categoria ?? 'Sem categoria'); break
+  }
+  return direcao === 'asc' ? cmp : -cmp
+}
 
 // ─── Formulários auxiliares (estado local dos diálogos) ───────────────────────
 
@@ -86,7 +135,20 @@ export default function ContasPage() {
   const [erroCarregar, setErroCarregar] = useState<string | null>(null)
   const [filtro, setFiltro]           = useState<FiltroStatus>('todas')
   const [filtroTipo, setFiltroTipo]   = useState<FiltroTipo>('todos')
+  const [filtroMes, setFiltroMes]     = useState(() => hojeISO().slice(0, 7))
+  const [sortColuna, setSortColuna]   = useState<SortColuna>('vencimento')
+  const [sortDirecao, setSortDirecao] = useState<'asc' | 'desc'>('asc')
+  const [visivelCount, setVisivelCount] = useState(50)
   const [salvando, setSalvando]       = useState(false)
+
+  function handleSort(coluna: SortColuna) {
+    if (coluna === sortColuna) {
+      setSortDirecao(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortColuna(coluna)
+      setSortDirecao('asc')
+    }
+  }
 
   const [valorDialog, setValorDialog] = useState<ContaAPI | null>(null)
   const [valorInput, setValorInput]   = useState('')
@@ -128,23 +190,21 @@ export default function ContasPage() {
     if (f && FILTROS.some(o => o.value === f)) setFiltro(f as FiltroStatus)
   }, [])
 
+  // Reset paginação ao trocar filtro de status, tipo ou mês
+  useEffect(() => { setVisivelCount(50) }, [filtro, filtroTipo, filtroMes])
+
   const hoje = hojeISO()
   const totais = calcularTotais(contas, hoje)
 
+  const meses = Array.from(
+    new Set([
+      hoje.slice(0, 7),
+      ...contas.filter(c => c.vencimento).map(c => c.vencimento!.slice(0, 7)),
+    ])
+  ).sort((a, b) => b.localeCompare(a))
+
   const contasFiltradas = contas
-    .filter(c => {
-      const okTipo =
-        filtroTipo === 'todos' ? true :
-        filtroTipo === 'fixas' ? c.nota_fiscal_id === null :
-                                 c.nota_fiscal_id !== null
-
-      if (!okTipo) return false
-
-      if (filtro === 'todas')          return true
-      if (filtro === 'sem-vencimento') return !ENCERRADAS.has(c.status) && !c.vencimento
-      if (filtro === 'atrasada')       return !ENCERRADAS.has(c.status) && !!c.vencimento && diasEntre(hoje, c.vencimento) < 0
-      return c.status === filtro
-    })
+    .filter(c => contaBateTipo(c, filtroTipo) && contaBateFiltro(c, filtro, hoje) && contaBateMes(c, filtroMes, hoje))
     // Conta sem data sobe para o topo: é a única que exige ação do Matheus
     // para o sistema voltar a funcionar sozinho. Enterrada no meio da lista,
     // ela some — e é justamente a que o sistema não consegue vigiar.
@@ -152,8 +212,10 @@ export default function ContasPage() {
       const aSemData = !a.vencimento && !ENCERRADAS.has(a.status)
       const bSemData = !b.vencimento && !ENCERRADAS.has(b.status)
       if (aSemData !== bSemData) return aSemData ? -1 : 1
-      return (a.vencimento ?? '').localeCompare(b.vencimento ?? '')
+      return compararContasPorColuna(a, b, sortColuna, sortDirecao)
     })
+
+  const contasExibidas = contasFiltradas.slice(0, visivelCount)
 
   // ─── Ações: registrar valor real ─────────────────────────────────────────
 
@@ -305,51 +367,56 @@ export default function ContasPage() {
       </div>
 
       {/* ── KPIs ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <CalendarClock className="h-4 w-4" />Vence esta semana
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold tabular-nums">{fmtBRL(totais.semanaConfirmado)}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">confirmado</p>
-            <p className="text-base font-semibold text-amber-600 tabular-nums mt-2">
-              + {fmtBRL(totais.semanaEstimado)}
-            </p>
-            <p className="text-xs text-amber-600/80">estimado</p>
-          </CardContent>
-        </Card>
+      <div className="space-y-4">
+        <p className="text-sm font-semibold text-muted-foreground">Resumo geral</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                <CalendarClock className="h-4 w-4" />Vence esta semana
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold tabular-nums">{fmtBRL(totais.semanaConfirmado)}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">confirmado</p>
+              <p className="text-base font-semibold text-amber-600 tabular-nums mt-2">
+                + {fmtBRL(totais.semanaEstimado)}
+              </p>
+              <p className="text-xs text-amber-600/80">estimado</p>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4" />Atrasado
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-red-600 tabular-nums">{fmtBRL(totais.atrasadoTotal)}</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {totais.atrasadoQtd} {totais.atrasadoQtd === 1 ? 'conta atrasada' : 'contas atrasadas'}
-            </p>
-          </CardContent>
-        </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4" />Atrasado
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold text-red-600 tabular-nums">{fmtBRL(totais.atrasadoTotal)}</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {totais.atrasadoQtd} {totais.atrasadoQtd === 1 ? 'conta atrasada' : 'contas atrasadas'}
+              </p>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Clock className="h-4 w-4" />Aguardando
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold tabular-nums">{totais.aguardandoQtd}</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {totais.aguardandoQtd === 1 ? 'conta sem valor confirmado' : 'contas sem valor confirmado'}
-            </p>
-          </CardContent>
-        </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                <Clock className="h-4 w-4" />Aguardando
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold tabular-nums">{totais.aguardandoQtd}</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {totais.aguardandoQtd === 1 ? 'conta sem valor confirmado' : 'contas sem valor confirmado'}
+              </p>
+            </CardContent>
+          </Card>
+        </div>
       </div>
+
+      <Separator />
 
       {/* ── Lista ── */}
       <Card>
@@ -362,22 +429,35 @@ export default function ContasPage() {
           </CardTitle>
           <div className="space-y-2">
             <div className="flex flex-wrap gap-2">
-              {FILTROS_TIPO.map(o => (
-                <Button
-                  key={o.value}
-                  size="sm"
-                  variant={filtroTipo === o.value ? 'default' : 'outline'}
-                  onClick={() => setFiltroTipo(o.value)}
-                >
-                  {o.label}
-                </Button>
-              ))}
+              <Select value={filtroTipo} onValueChange={v => setFiltroTipo((v ?? 'todos') as FiltroTipo)}>
+                <SelectTrigger className="w-44 h-9 text-sm">
+                  <SelectValue>{FILTROS_TIPO.find(o => o.value === filtroTipo)?.label}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {FILTROS_TIPO.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={filtroMes} onValueChange={v => setFiltroMes(v ?? 'todos')}>
+                <SelectTrigger className="w-44 h-9 text-sm">
+                  <SelectValue>
+                    {filtroMes === 'todos'
+                      ? 'Todos os meses'
+                      : (() => { const [y, mo] = filtroMes.split('-'); return new Date(+y, +mo - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) })()}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos os meses</SelectItem>
+                  {meses.map(m => (
+                    <SelectItem key={m} value={m}>
+                      {(() => { const [y, mo] = m.split('-'); return new Date(+y, +mo - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) })()}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="flex flex-wrap gap-2">
               {FILTROS.map(o => {
-                const n = o.value === 'sem-vencimento'
-                  ? contas.filter(c => !ENCERRADAS.has(c.status) && !c.vencimento).length
-                  : 0
+                const n = contas.filter(c => contaBateTipo(c, filtroTipo) && contaBateFiltro(c, o.value, hoje) && contaBateMes(c, filtroMes, hoje)).length
                 return (
                   <Button
                     key={o.value}
@@ -394,14 +474,28 @@ export default function ContasPage() {
         </CardHeader>
         <CardContent className="p-0">
           <ListaContas
-            contas={contasFiltradas}
+            contas={contasExibidas}
             hoje={hoje}
             onPagar={abrirPagarDialog}
             onDispensar={abrirDispensarDialog}
             onDesfazer={abrirDesfazerDialog}
             onEditarValor={abrirValorDialog}
             onInformarData={setDataDialog}
+            sortColuna={sortColuna}
+            sortDirecao={sortDirecao}
+            onSort={handleSort}
           />
+          {contasFiltradas.length > visivelCount && (
+            <div className="text-center py-3 border-t">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setVisivelCount(c => c + 50)}
+              >
+                Carregar mais {Math.min(50, contasFiltradas.length - visivelCount)}
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 

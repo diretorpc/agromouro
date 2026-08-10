@@ -271,6 +271,33 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
+## 🟡 Reorganização Financeiro + Contas a Pagar — pronta na branch `fix/telasfin`, não mergeada
+
+Pedido de 10/08/2026: as duas telas de dinheiro "cospem número demais na cara". Pesquisa de
+mercado (Aegro, Traction Ag/Conservis, SSCrop) confirmou o padrão: resumo separado do
+detalhe, "a pagar" nunca misturado com histórico infinito. Nada mudou por baixo (NF-e,
+WhatsApp, banco) — é reorganização de tela, 10 tarefas, todas implementadas por
+subagentes e revisadas uma a uma + o branch inteiro junto (`superpowers:subagent-driven-development`).
+
+Financeiro: abre no mês atual, gráfico top-5, lista paginada (20), filtro de origem em
+menu, resumo separado. Contas a Pagar: resumo separado (rótulo "Resumo geral" — os 3
+números não seguem o filtro de tipo, ao contrário do Financeiro), filtro de tipo em menu,
+lista paginada (50), todo filtro com quantidade (corrigiu achado do Apolo de 10/08: contador
+ignorava o filtro de tipo), "Todas" esconde paga com mais de 30 dias (aba "Pagas" continua
+sem limite).
+
+A revisão final do branch achou e corrigiu 1 bug real (o padrão de mês novo tinha quebrado
+o botão "Limpar" e a URL — corrigido). Detalhe completo, achados menores registrados e
+plano tarefa-a-tarefa: `docs/superpowers/plans/2026-08-10-reorganizacao-financeiro-contas.md`
+e `docs/superpowers/specs/2026-08-10-reorganizacao-financeiro-contas-design.md`.
+
+**PR #55 aberto** — https://github.com/diretorpc/agromouro/pull/55. **10/08, depois do PR
+aberto:** Contas a Pagar ganhou filtro de mês (por vencimento) a pedido dele — atrasada e
+sem vencimento sempre aparecem, em qualquer mês, de propósito (não somem dívida ativa
+atrás de um filtro de data). Ninguém testou visualmente no navegador ainda (sessão sem
+login) — checklist manual pronto no plano, seção "Verificação". Falta ele revisar/testar
+e mergear.
+
 ## 🟡 Pendências de baixo risco do Financeiro, deixadas para depois
 
 Do conserto do botão "Adicionar" (PR #50, ver seção NO AR): índice único de nome de

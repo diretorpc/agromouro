@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 
 function setUrlParam(key: string, value: string, dflt = 'todos') {
   const p = new URLSearchParams(window.location.search)
@@ -8,7 +8,7 @@ function setUrlParam(key: string, value: string, dflt = 'todos') {
   else p.set(key, value)
   window.history.replaceState(null, '', p.toString() ? `?${p}` : window.location.pathname)
 }
-import { DollarSign, TrendingDown, Package, Filter, Plus, Pencil, Trash2, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react'
+import { DollarSign, TrendingDown, Package, Filter, Plus, Pencil, Trash2, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip,
   ResponsiveContainer, Cell, LabelList,
@@ -25,13 +25,20 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { SortableTableHead } from '@/components/ui/sortable-table-head'
 import { supabase } from '@/lib/supabase'
 import { useFazenda } from '@/context/fazenda-context'
 
 type ItemFinanceiro = {
   id: string
   source_table: 'itens_nfe' | 'lancamentos_financeiros'
+  // Chave da nota fiscal (só existe pra itens que vieram de NF-e vinculada a
+  // uma nota real — item manual ou lançamento de cartão/manual/conta fica
+  // null). Usada só pra AGRUPAR linhas da mesma nota na tabela — nunca entra
+  // em cálculo de dinheiro.
+  nota_fiscal_id: string | null
   descricao: string
   quantidade: number
   unidade: string
@@ -179,6 +186,24 @@ function contaComoGasto(item: Pick<ItemFinanceiro, 'conta_como_compra'>): boolea
   return item.conta_como_compra !== false
 }
 
+type SortColunaFinanceiro = 'descricao' | 'quantidade' | 'valor_unitario' | 'valor_total' | 'centro_custo' | 'origem' | 'data_emissao'
+
+function compararItensPorColuna(a: ItemFinanceiro, b: ItemFinanceiro, coluna: SortColunaFinanceiro, direcao: 'asc' | 'desc'): number {
+  let cmp = 0
+  switch (coluna) {
+    case 'descricao':      cmp = a.descricao.localeCompare(b.descricao); break
+    case 'quantidade':     cmp = a.quantidade - b.quantidade; break
+    case 'valor_unitario': cmp = a.valor_unitario - b.valor_unitario; break
+    case 'valor_total':    cmp = a.valor_total - b.valor_total; break
+    case 'centro_custo':   cmp = tipoLabel(a.centro_custo).localeCompare(tipoLabel(b.centro_custo)); break
+    // origem nulo conta como NF-e pro resto da tela (ver okOrigem no filtro,
+    // mais abaixo neste mesmo arquivo) — mantém a mesma regra aqui.
+    case 'origem':         cmp = (a.origem ?? 'nfe').localeCompare(b.origem ?? 'nfe'); break
+    case 'data_emissao':   cmp = (a.data_emissao ?? '').localeCompare(b.data_emissao ?? ''); break
+  }
+  return direcao === 'asc' ? cmp : -cmp
+}
+
 function FormFields({ form, setForm }: { form: FormData; setForm: React.Dispatch<React.SetStateAction<FormData>> }) {
   return (
     <div className="space-y-3">
@@ -247,6 +272,13 @@ function FormFields({ form, setForm }: { form: FormData; setForm: React.Dispatch
   )
 }
 
+// Padrão do filtro de mês: mês atual — a tela abre já filtrada, sem mostrar
+// o histórico inteiro. Diferente de 'todos' (opção explícita "ver tudo"),
+// que continua sendo um valor à parte, escolhido pelo usuário. Achado da
+// revisão final do branch: confundir os dois fazia "Limpar" jogar a tela
+// pro histórico inteiro, e "Todos os meses" não sobrevivia a um F5.
+const MES_PADRAO = new Date().toISOString().slice(0, 7)
+
 export default function FinanceiroPage() {
   const [itens, setItens] = useState<ItemFinanceiro[]>([])
   const [loading, setLoading] = useState(true)
@@ -258,10 +290,32 @@ export default function FinanceiroPage() {
   // como tela vazia.
   const [erroCarregamento, setErroCarregamento] = useState(false)
   const [filtroCentro, setFiltroCentro] = useState('todos')
-  const [filtroMes, setFiltroMes] = useState('todos')
+  const [filtroMes, setFiltroMes] = useState(MES_PADRAO)
   const [filtroOrigem, setFiltroOrigem] = useState<'todos' | 'nfe' | 'cartao' | 'manual' | 'conta'>('todos')
-  const [sortData, setSortData] = useState<'desc' | 'asc'>('desc')
+  const [sortColuna, setSortColuna]   = useState<SortColunaFinanceiro>('data_emissao')
+  const [sortDirecao, setSortDirecao] = useState<'asc' | 'desc'>('desc')
+  const [verTodasCategorias, setVerTodasCategorias] = useState(false)
+  const [visivelCount, setVisivelCount] = useState(20)
+  const [notasExpandidas, setNotasExpandidas] = useState<Set<string>>(new Set())
   const { fazendaAtiva } = useFazenda()
+
+  function toggleNota(chave: string) {
+    setNotasExpandidas(prev => {
+      const novo = new Set(prev)
+      if (novo.has(chave)) novo.delete(chave)
+      else novo.add(chave)
+      return novo
+    })
+  }
+
+  function handleSort(coluna: SortColunaFinanceiro) {
+    if (coluna === sortColuna) {
+      setSortDirecao(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortColuna(coluna)
+      setSortDirecao('asc')
+    }
+  }
 
   const [addDialog, setAddDialog] = useState(false)
   const [addErro, setAddErro] = useState<string | null>(null)
@@ -278,7 +332,7 @@ export default function FinanceiroPage() {
     const [nfeResult, lancResult] = await Promise.all([
       supabase
         .from('itens_nfe')
-        .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, centro_custo, insumo_id, conta_como_compra, data_manual, insumos(tipo), notas_fiscais(numero, emitente_nome, data_emissao)')
+        .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, centro_custo, insumo_id, conta_como_compra, data_manual, nota_fiscal_id, insumos(tipo), notas_fiscais(numero, emitente_nome, data_emissao)')
         .order('id', { ascending: false }),
       supabase
         .from('lancamentos_financeiros')
@@ -300,6 +354,7 @@ export default function FinanceiroPage() {
     const nfeItems: ItemFinanceiro[] = (nfeResult.data ?? []).map((row: any) => ({
       id: row.id,
       source_table: 'itens_nfe' as const,
+      nota_fiscal_id: row.nota_fiscal_id,
       descricao: row.descricao,
       quantidade: row.quantidade,
       unidade: row.unidade,
@@ -323,6 +378,7 @@ export default function FinanceiroPage() {
     const lancItems: ItemFinanceiro[] = (lancResult.data ?? []).map((row: any) => ({
       id: row.id,
       source_table: 'lancamentos_financeiros' as const,
+      nota_fiscal_id: null, // lançamento de cartão/manual/conta nunca tem nota — nunca agrupa
       descricao: row.descricao,
       quantidade: 1,
       unidade: '',
@@ -352,10 +408,12 @@ export default function FinanceiroPage() {
     const mes = params.get('mes')
     const centro = params.get('centro')
     const origem = params.get('origem') as 'todos' | 'nfe' | 'cartao' | 'manual' | 'conta' | null
-    if (mes !== null && /^\d{4}-\d{2}$/.test(mes)) setFiltroMes(mes)
+    if (mes !== null && (mes === 'todos' || /^\d{4}-\d{2}$/.test(mes))) setFiltroMes(mes)
     if (centro !== null) setFiltroCentro(centro)
     if (origem && ['todos', 'nfe', 'cartao', 'manual', 'conta'].includes(origem)) setFiltroOrigem(origem)
   }, [])
+
+  useEffect(() => { setVisivelCount(20) }, [filtroMes, filtroCentro, filtroOrigem])
 
   async function handleAdd() {
     // Sem fazenda ativa não há como preencher fazenda_id (NOT NULL + RLS
@@ -494,10 +552,9 @@ export default function FinanceiroPage() {
     load()
   }
 
-  const mesAtual = new Date().toISOString().slice(0, 7) // 'YYYY-MM'
   const meses = Array.from(
     new Set([
-      mesAtual, // garante que o mês corrente aparece sempre, mesmo sem dados
+      MES_PADRAO, // garante que o mês corrente aparece sempre, mesmo sem dados
       ...itens.filter(i => i.data_emissao).map(i => i.data_emissao.slice(0, 7)),
     ])
   ).sort((a, b) => b.localeCompare(a))
@@ -509,17 +566,32 @@ export default function FinanceiroPage() {
       const okOrigem = filtroOrigem === 'todos' || i.origem === filtroOrigem || (filtroOrigem === 'nfe' && (i.origem === 'nfe' || i.origem === null))
       return okCentro && okMes && okOrigem
     })
-    .sort((a, b) => {
-      const da = a.data_emissao ?? ''
-      const db = b.data_emissao ?? ''
-      return sortData === 'desc' ? db.localeCompare(da) : da.localeCompare(db)
-    })
+    .sort((a, b) => compararItensPorColuna(a, b, sortColuna, sortDirecao))
 
   // Só os itens que CONTAM como gasto entram nas somas de dinheiro — um item
   // com conta_como_compra === false (já cobrado em outra nota, bonificação,
   // etc.) continua na lista abaixo, com o crachá explicando por quê, mas não
   // soma no Total de Despesas nem no gráfico por categoria.
   const itensQueContam = itensFiltrados.filter(contaComoGasto)
+
+  type GrupoItem = { chave: string; itens: ItemFinanceiro[] }
+
+  // Agrupa por nota fiscal, mantendo a ordem em que cada nota apareceu
+  // primeiro na lista já filtrada/ordenada — não reordena nada, só junta.
+  const grupos: GrupoItem[] = []
+  const posicaoPorChave = new Map<string, number>()
+  for (const item of itensFiltrados) {
+    const chave = item.nota_fiscal_id ?? `item-${item.id}`
+    const posicao = posicaoPorChave.get(chave)
+    if (posicao === undefined) {
+      posicaoPorChave.set(chave, grupos.length)
+      grupos.push({ chave, itens: [item] })
+    } else {
+      grupos[posicao].itens.push(item)
+    }
+  }
+
+  const gruposExibidos = grupos.slice(0, visivelCount)
 
   const totalGeral = itensQueContam.reduce((s, i) => s + i.valor_total, 0)
   const porCategoria = itensQueContam.reduce<Record<string, number>>((acc, i) => {
@@ -531,6 +603,7 @@ export default function FinanceiroPage() {
   const chartData = Object.entries(porCategoria)
     .map(([key, value]) => ({ key, label: tipoLabel(key), value }))
     .sort((a, b) => b.value - a.value)
+  const chartDataExibido = verTodasCategorias ? chartData : chartData.slice(0, 5)
 
   if (loading) return <PageSkeleton />
   // Precisa vir ANTES de qualquer render de conteúdo — inclusive antes do
@@ -538,7 +611,7 @@ export default function FinanceiroPage() {
   // Uma falha de carregamento nunca pode se parecer com "não há gasto".
   if (erroCarregamento) return <ErroCarregamento onRetry={load} />
 
-  const filtroAtivo = filtroMes !== 'todos' || filtroCentro !== 'todos' || filtroOrigem !== 'todos'
+  const filtroAtivo = filtroMes !== MES_PADRAO || filtroCentro !== 'todos' || filtroOrigem !== 'todos'
   const filtroMesLabel = filtroMes === 'todos'
     ? 'Todos os meses'
     : (() => { const [y, mo] = filtroMes.split('-').map(Number); return new Date(y, mo - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) })()
@@ -557,7 +630,9 @@ export default function FinanceiroPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="space-y-4">
+        <p className="text-sm font-semibold text-muted-foreground">Resumo do mês</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
@@ -602,9 +677,9 @@ export default function FinanceiroPage() {
             </p>
           </CardContent>
         </Card>
-      </div>
+        </div>
 
-      {chartData.length > 0 && (
+        {chartData.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
@@ -614,9 +689,9 @@ export default function FinanceiroPage() {
           </CardHeader>
           <CardContent className="overflow-x-auto pt-2">
             <div style={{ minWidth: 360 }}>
-              <ResponsiveContainer width="100%" height={chartData.length * 52 + 16}>
+              <ResponsiveContainer width="100%" height={chartDataExibido.length * 52 + 16}>
                 <BarChart
-                  data={chartData}
+                  data={chartDataExibido}
                   layout="vertical"
                   margin={{ top: 0, right: 180, bottom: 0, left: 8 }}
                   barSize={22}
@@ -646,7 +721,7 @@ export default function FinanceiroPage() {
                     }}
                   />
                   <Bar dataKey="value" radius={[0, 5, 5, 0]}>
-                    {chartData.map(entry => (
+                    {chartDataExibido.map(entry => (
                       <Cell key={entry.key} fill={CENTRO_CUSTO_COLOR[entry.key] ?? '#94a3b8'} />
                     ))}
                     <LabelList
@@ -669,10 +744,24 @@ export default function FinanceiroPage() {
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
+              {chartData.length > 5 && (
+                <div className="text-center mt-2">
+                  <Button
+                    variant="link"
+                    size="sm"
+                    onClick={() => setVerTodasCategorias(v => !v)}
+                  >
+                    {verTodasCategorias ? 'Ver só as 5 maiores' : `Ver todas as ${chartData.length} categorias`}
+                  </Button>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
-      )}
+        )}
+      </div>
+
+      <Separator />
 
       <Card>
         <CardHeader className="space-y-3">
@@ -687,30 +776,31 @@ export default function FinanceiroPage() {
             </CardTitle>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center rounded-md border border-input overflow-hidden text-xs">
-              {(['todos', 'nfe', 'cartao', 'manual', 'conta'] as const).map((o, i) => (
-                <button
-                  key={o}
-                  onClick={() => { setFiltroOrigem(o); setUrlParam('origem', o) }}
-                  className={[
-                    'px-3 py-1.5 font-medium transition-colors',
-                    i > 0 ? 'border-l border-input' : '',
-                    filtroOrigem === o
-                      ? 'bg-foreground text-background'
-                      : 'bg-background text-muted-foreground hover:text-foreground',
-                  ].join(' ')}
-                >
-                  {/* Rótulo curto de propósito: são 5 botões numa fila só, e
-                      "Conta paga" estouraria a largura do cartão no celular.
-                      O crachá da coluna Origem traz o nome completo. */}
-                  {{ todos: 'Todos', nfe: 'NF-e', cartao: 'Cartão', manual: 'Manual', conta: 'Conta' }[o]}
-                </button>
-              ))}
-            </div>
+            <Select
+              value={filtroOrigem}
+              onValueChange={v => {
+                const val = (v ?? 'todos') as typeof filtroOrigem
+                setFiltroOrigem(val)
+                setUrlParam('origem', val)
+              }}
+            >
+              <SelectTrigger className="w-40 h-9 text-sm">
+                <SelectValue>
+                  {{ todos: 'Todos', nfe: 'NF-e', cartao: 'Cartão', manual: 'Manual', conta: 'Conta paga' }[filtroOrigem]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos</SelectItem>
+                <SelectItem value="nfe">NF-e</SelectItem>
+                <SelectItem value="cartao">Cartão</SelectItem>
+                <SelectItem value="manual">Manual</SelectItem>
+                <SelectItem value="conta">Conta paga</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Filter className="h-4 w-4 text-muted-foreground" />
-            <Select value={filtroMes} onValueChange={v => { const val = v ?? 'todos'; setFiltroMes(val); setUrlParam('mes', val) }}>
+            <Select value={filtroMes} onValueChange={v => { const val = v ?? 'todos'; setFiltroMes(val); setUrlParam('mes', val, MES_PADRAO) }}>
               <SelectTrigger className="w-44 h-9 text-sm"><SelectValue>{filtroMesLabel}</SelectValue></SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos os meses</SelectItem>
@@ -733,7 +823,7 @@ export default function FinanceiroPage() {
                 variant="ghost"
                 size="sm"
                 className="h-9 text-muted-foreground"
-                onClick={() => { setFiltroMes('todos'); setFiltroCentro('todos'); setFiltroOrigem('todos'); window.history.replaceState(null, '', window.location.pathname) }}
+                onClick={() => { setFiltroMes(MES_PADRAO); setFiltroCentro('todos'); setFiltroOrigem('todos'); window.history.replaceState(null, '', window.location.pathname) }}
               >
                 Limpar
               </Button>
@@ -741,27 +831,16 @@ export default function FinanceiroPage() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <Table>
+          <Table className="border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[200px]">Produto / Serviço</TableHead>
-                <TableHead className="w-[90px] text-right">Qtd.</TableHead>
-                <TableHead className="w-[110px] text-right">Valor Unit.</TableHead>
-                <TableHead className="w-[120px] text-right">Valor Total</TableHead>
-                <TableHead className="w-[140px]">Centro de Custo</TableHead>
-                <TableHead className="w-[160px]">Origem</TableHead>
-                <TableHead className="w-[90px]">
-                  <button
-                    onClick={() => setSortData(s => s === 'desc' ? 'asc' : 'desc')}
-                    className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-                    aria-label={sortData === 'desc' ? 'Ordenado: mais recente primeiro. Clique para inverter' : 'Ordenado: mais antigo primeiro. Clique para inverter'}
-                  >
-                    Data
-                    {sortData === 'desc'
-                      ? <ArrowDown className="h-3 w-3" aria-hidden="true" />
-                      : <ArrowUp className="h-3 w-3" aria-hidden="true" />}
-                  </button>
-                </TableHead>
+                <SortableTableHead className="w-[220px]" ativo={sortColuna === 'descricao'} direcao={sortDirecao} onClick={() => handleSort('descricao')}>Produto / Serviço</SortableTableHead>
+                <SortableTableHead className="w-[70px] text-right" numeric ativo={sortColuna === 'quantidade'} direcao={sortDirecao} onClick={() => handleSort('quantidade')}>Qtd.</SortableTableHead>
+                <SortableTableHead className="w-[110px] text-right" numeric ativo={sortColuna === 'valor_unitario'} direcao={sortDirecao} onClick={() => handleSort('valor_unitario')}>Valor Unit.</SortableTableHead>
+                <SortableTableHead className="w-[120px] text-right" numeric ativo={sortColuna === 'valor_total'} direcao={sortDirecao} onClick={() => handleSort('valor_total')}>Valor Total</SortableTableHead>
+                <SortableTableHead className="w-[140px]" ativo={sortColuna === 'centro_custo'} direcao={sortDirecao} onClick={() => handleSort('centro_custo')}>Centro de Custo</SortableTableHead>
+                <SortableTableHead className="w-[180px]" ativo={sortColuna === 'origem'} direcao={sortDirecao} onClick={() => handleSort('origem')}>Origem</SortableTableHead>
+                <SortableTableHead className="w-[90px]" ativo={sortColuna === 'data_emissao'} direcao={sortDirecao} onClick={() => handleSort('data_emissao')}>Data</SortableTableHead>
                 <TableHead className="w-[72px]" />
               </TableRow>
             </TableHeader>
@@ -769,103 +848,274 @@ export default function FinanceiroPage() {
               {itensFiltrados.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={8} className="text-center text-muted-foreground py-10">
-                    Nenhum lançamento encontrado.
-                  </TableCell>
-                </TableRow>
-              ) : itensFiltrados.map(item => (
-                <TableRow key={item.id}>
-                  <TableCell className="font-medium text-sm max-w-[200px] truncate" title={item.descricao}>
-                    {item.descricao}
-                  </TableCell>
-                  <TableCell className="text-right text-sm text-muted-foreground">
-                    {item.quantidade} {item.unidade}
-                  </TableCell>
-                  <TableCell className="text-right text-sm tabular-nums">{fmtBRL(item.valor_unitario)}</TableCell>
-                  <TableCell className="text-right text-sm font-semibold tabular-nums">{fmtBRL(item.valor_total)}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-col items-start gap-1">
-                      <Badge
-                        variant="outline"
-                        className={`capitalize text-xs ${CENTRO_CUSTO_STYLE[item.centro_custo] ?? CENTRO_CUSTO_STYLE.outro}`}
+                    <p>Nenhum lançamento encontrado{filtroMes !== 'todos' ? ' neste mês' : ''}.</p>
+                    {filtroMes !== 'todos' && (
+                      <Button
+                        variant="link"
+                        size="sm"
+                        className="mt-1"
+                        onClick={() => { setFiltroMes('todos'); setUrlParam('mes', 'todos', MES_PADRAO) }}
                       >
-                        {tipoLabel(item.centro_custo)}
-                      </Badge>
-                      {/* conta_como_compra === false: o item fica na lista (o
-                          dono precisa continuar vendo que ele existe), mas não
-                          soma no Total de Despesas nem no gráfico — este crachá
-                          explica por quê, em português simples, sem código fiscal. */}
-                      {item.conta_como_compra === false && (
-                        <Tooltip>
-                          <TooltipTrigger className="cursor-default bg-transparent border-0 p-0">
-                            <Badge variant="outline" className="text-xs bg-slate-100 text-slate-600 border-slate-200">
-                              Não conta como gasto
-                            </Badge>
-                          </TooltipTrigger>
-                          <TooltipContent side="top" className="max-w-xs text-xs">
-                            Este item não entra no total porque o valor já foi cobrado em
-                            outra nota, foi recebido sem custo (bonificação/amostra), ou é
-                            mercadoria que só passou pela fazenda sem virar compra.
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm w-[160px]">
-                    {item.origem === 'cartao' ? (
-                      <Badge variant="secondary" className="text-xs">
-                        {item.cartao_apelido ?? 'Cartão'}
-                      </Badge>
-                    ) : item.origem === 'conta' ? (
-                      <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
-                        Conta paga
-                      </Badge>
-                    ) : item.origem === 'manual' ? (
-                      <span className="text-xs text-muted-foreground italic">Manual</span>
-                    ) : item.is_manual ? (
-                      <span className="text-xs text-muted-foreground italic">Manual</span>
-                    ) : (
-                      <div>
-                        <p className="font-medium text-xs">NF {item.nota_numero}</p>
-                        <Tooltip>
-                          <TooltipTrigger className="text-xs text-muted-foreground truncate max-w-[150px] cursor-default block w-full text-left bg-transparent border-0 p-0 font-normal">
-                            {item.emitente_nome}
-                          </TooltipTrigger>
-                          <TooltipContent side="top" className="max-w-xs text-xs">
-                            {item.emitente_nome}
-                          </TooltipContent>
-                        </Tooltip>
-                      </div>
+                        Ver todos os meses
+                      </Button>
                     )}
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                    {item.data_emissao ? fmtDate(item.data_emissao) : '—'}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-0.5">
-                      {item.source_table === 'itens_nfe' && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          aria-label="Editar lançamento"
-                          className="hover:bg-blue-50 hover:text-blue-600"
-                          onClick={() => abrirEdicao(item)}
-                        >
-                          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label="Excluir lançamento"
-                        className="hover:bg-red-50 hover:text-red-600 text-red-400"
-                        onClick={() => setDeleteItem(item)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                      </Button>
-                    </div>
-                  </TableCell>
                 </TableRow>
-              ))}
+              ) : gruposExibidos.map(grupo => {
+                const multiplo = grupo.itens.length > 1
+
+                if (!multiplo) {
+                  const item = grupo.itens[0]
+                  return (
+                    <TableRow key={item.id}>
+                      <TableCell className="font-medium text-sm whitespace-normal break-words">
+                        {item.descricao}
+                      </TableCell>
+                      <TableCell className="text-right text-sm text-muted-foreground">
+                        {item.quantidade} {item.unidade}
+                      </TableCell>
+                      <TableCell className="text-right text-sm tabular-nums">{fmtBRL(item.valor_unitario)}</TableCell>
+                      <TableCell className="text-right text-sm font-semibold tabular-nums">{fmtBRL(item.valor_total)}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-col items-start gap-1">
+                          <Badge
+                            variant="outline"
+                            className={`capitalize text-xs ${CENTRO_CUSTO_STYLE[item.centro_custo] ?? CENTRO_CUSTO_STYLE.outro}`}
+                          >
+                            {tipoLabel(item.centro_custo)}
+                          </Badge>
+                          {/* conta_como_compra === false: o item fica na lista (o
+                              dono precisa continuar vendo que ele existe), mas não
+                              soma no Total de Despesas nem no gráfico — este crachá
+                              explica por quê, em português simples, sem código fiscal. */}
+                          {item.conta_como_compra === false && (
+                            <Tooltip>
+                              <TooltipTrigger className="cursor-default bg-transparent border-0 p-0">
+                                <Badge variant="outline" className="text-xs bg-slate-100 text-slate-600 border-slate-200">
+                                  Não conta como gasto
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="max-w-xs text-xs">
+                                Este item não entra no total porque o valor já foi cobrado em
+                                outra nota, foi recebido sem custo (bonificação/amostra), ou é
+                                mercadoria que só passou pela fazenda sem virar compra.
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm w-[160px]">
+                        {item.origem === 'cartao' ? (
+                          <Badge variant="secondary" className="text-xs">
+                            {item.cartao_apelido ?? 'Cartão'}
+                          </Badge>
+                        ) : item.origem === 'conta' ? (
+                          <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
+                            Conta paga
+                          </Badge>
+                        ) : item.origem === 'manual' ? (
+                          <span className="text-xs text-muted-foreground italic">Manual</span>
+                        ) : item.is_manual ? (
+                          <span className="text-xs text-muted-foreground italic">Manual</span>
+                        ) : (
+                          <div>
+                            <p className="font-medium text-xs">NF {item.nota_numero}</p>
+                            <p className="text-xs text-muted-foreground whitespace-normal break-words">
+                              {item.emitente_nome}
+                            </p>
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                        {item.data_emissao ? fmtDate(item.data_emissao) : '—'}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-0.5">
+                          {item.source_table === 'itens_nfe' && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              aria-label="Editar lançamento"
+                              className="hover:bg-blue-50 hover:text-blue-600"
+                              onClick={() => abrirEdicao(item)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            aria-label="Excluir lançamento"
+                            className="hover:bg-red-50 hover:text-red-600 text-red-400"
+                            onClick={() => setDeleteItem(item)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                }
+
+                const expandido = notasExpandidas.has(grupo.chave)
+                const primeiro = grupo.itens[0]
+                const valorTotalGrupo = grupo.itens.reduce((s, i) => s + i.valor_total, 0)
+                const categoriasGrupo = Array.from(new Set(grupo.itens.map(i => i.centro_custo)))
+                const temItemQueNaoConta = grupo.itens.some(i => i.conta_como_compra === false)
+
+                return (
+                  <Fragment key={grupo.chave}>
+                    <TableRow className="hover:bg-muted/50">
+                      <TableCell className="font-medium text-sm">
+                        <button
+                          type="button"
+                          onClick={() => toggleNota(grupo.chave)}
+                          aria-expanded={expandido}
+                          aria-label={`${expandido ? 'Recolher' : 'Expandir'} os ${grupo.itens.length} itens desta nota`}
+                          className="inline-flex items-center gap-1.5 text-left hover:text-foreground transition-colors"
+                        >
+                          {expandido
+                            ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                            : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />}
+                          {grupo.itens.length} itens desta nota
+                        </button>
+                      </TableCell>
+                      <TableCell className="text-right text-sm text-muted-foreground">—</TableCell>
+                      <TableCell className="text-right text-sm text-muted-foreground">—</TableCell>
+                      <TableCell className="text-right text-sm font-semibold tabular-nums">{fmtBRL(valorTotalGrupo)}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {categoriasGrupo.map(c => (
+                            <Badge
+                              key={c}
+                              variant="outline"
+                              className={`capitalize text-xs ${CENTRO_CUSTO_STYLE[c] ?? CENTRO_CUSTO_STYLE.outro}`}
+                            >
+                              {tipoLabel(c)}
+                            </Badge>
+                          ))}
+                          {temItemQueNaoConta && (
+                            <Tooltip>
+                              <TooltipTrigger className="cursor-default bg-transparent border-0 p-0">
+                                <Badge variant="outline" className="text-xs bg-slate-100 text-slate-600 border-slate-200">
+                                  Inclui item que não conta como gasto
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="max-w-xs text-xs">
+                                Um ou mais itens desta nota não entram no Total de Despesas — o valor
+                                já foi cobrado em outra nota, foi recebido sem custo (bonificação/amostra),
+                                ou é mercadoria que só passou pela fazenda sem virar compra. Expanda a
+                                nota pra ver qual item é.
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm w-[180px]">
+                        <div>
+                          <p className="font-medium text-xs">NF {primeiro.nota_numero}</p>
+                          <p className="text-xs text-muted-foreground whitespace-normal break-words">
+                            {primeiro.emitente_nome}
+                          </p>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                        {primeiro.data_emissao ? fmtDate(primeiro.data_emissao) : '—'}
+                      </TableCell>
+                      <TableCell />
+                    </TableRow>
+                    {expandido && grupo.itens.map(item => (
+                      <TableRow key={item.id} className="bg-muted/20">
+                        <TableCell className="font-medium text-sm whitespace-normal break-words">
+                          {item.descricao}
+                        </TableCell>
+                        <TableCell className="text-right text-sm text-muted-foreground">
+                          {item.quantidade} {item.unidade}
+                        </TableCell>
+                        <TableCell className="text-right text-sm tabular-nums">{fmtBRL(item.valor_unitario)}</TableCell>
+                        <TableCell className="text-right text-sm font-semibold tabular-nums">{fmtBRL(item.valor_total)}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-col items-start gap-1">
+                            <Badge
+                              variant="outline"
+                              className={`capitalize text-xs ${CENTRO_CUSTO_STYLE[item.centro_custo] ?? CENTRO_CUSTO_STYLE.outro}`}
+                            >
+                              {tipoLabel(item.centro_custo)}
+                            </Badge>
+                            {/* conta_como_compra === false: o item fica na lista (o
+                                dono precisa continuar vendo que ele existe), mas não
+                                soma no Total de Despesas nem no gráfico — este crachá
+                                explica por quê, em português simples, sem código fiscal. */}
+                            {item.conta_como_compra === false && (
+                              <Tooltip>
+                                <TooltipTrigger className="cursor-default bg-transparent border-0 p-0">
+                                  <Badge variant="outline" className="text-xs bg-slate-100 text-slate-600 border-slate-200">
+                                    Não conta como gasto
+                                  </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-xs text-xs">
+                                  Este item não entra no total porque o valor já foi cobrado em
+                                  outra nota, foi recebido sem custo (bonificação/amostra), ou é
+                                  mercadoria que só passou pela fazenda sem virar compra.
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm w-[160px]">
+                          {item.origem === 'cartao' ? (
+                            <Badge variant="secondary" className="text-xs">
+                              {item.cartao_apelido ?? 'Cartão'}
+                            </Badge>
+                          ) : item.origem === 'conta' ? (
+                            <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
+                              Conta paga
+                            </Badge>
+                          ) : item.origem === 'manual' ? (
+                            <span className="text-xs text-muted-foreground italic">Manual</span>
+                          ) : item.is_manual ? (
+                            <span className="text-xs text-muted-foreground italic">Manual</span>
+                          ) : (
+                            <div>
+                              <p className="font-medium text-xs">NF {item.nota_numero}</p>
+                              <p className="text-xs text-muted-foreground whitespace-normal break-words">
+                                {item.emitente_nome}
+                              </p>
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                          {item.data_emissao ? fmtDate(item.data_emissao) : '—'}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-0.5">
+                            {item.source_table === 'itens_nfe' && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                aria-label="Editar lançamento"
+                                className="hover:bg-blue-50 hover:text-blue-600"
+                                onClick={() => abrirEdicao(item)}
+                              >
+                                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              aria-label="Excluir lançamento"
+                              className="hover:bg-red-50 hover:text-red-600 text-red-400"
+                              onClick={() => setDeleteItem(item)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </Fragment>
+                )
+              })}
             </TableBody>
             {itensFiltrados.length > 0 && (
               <TableFooter>
@@ -885,6 +1135,17 @@ export default function FinanceiroPage() {
               </TableFooter>
             )}
           </Table>
+          {grupos.length > visivelCount && (
+            <div className="text-center py-3 border-t">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setVisivelCount(c => c + 20)}
+              >
+                Carregar mais {Math.min(20, grupos.length - visivelCount)}
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
