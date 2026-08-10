@@ -85,11 +85,16 @@ function contaBateTipo(c: ContaAPI, filtroTipo: FiltroTipo): boolean {
   return c.nota_fiscal_id !== null
 }
 
-// "Todas" esconde as dispensadas de propósito (pedido de 10/08/2026): elas são
-// contas que o Matheus marcou como "não vai ter cobrança" e só poluíam a fila.
-// Não é bug — continuam acessíveis pelo botão "Dispensadas".
+// "Todas" esconde dispensada sempre, e paga com mais de 30 dias (pedido de
+// 10/08/2026): a aba deixa de ser um histórico infinito e vira "o que ainda
+// pede atenção ou foi resolvido recentemente". Quem quiser o histórico
+// completo de pagamento usa a aba "Pagas" — essa continua sem limite de data.
 function contaBateFiltro(c: ContaAPI, filtro: FiltroStatus, hoje: string): boolean {
-  if (filtro === 'todas')          return c.status !== 'dispensada'
+  if (filtro === 'todas') {
+    if (c.status === 'dispensada') return false
+    if (c.status === 'paga')       return diasEntre(c.data_pagamento ?? hoje, hoje) <= 30
+    return true
+  }
   if (filtro === 'sem-vencimento') return !ENCERRADAS.has(c.status) && !c.vencimento
   if (filtro === 'atrasada')       return !ENCERRADAS.has(c.status) && !!c.vencimento && diasEntre(hoje, c.vencimento) < 0
   return c.status === filtro
