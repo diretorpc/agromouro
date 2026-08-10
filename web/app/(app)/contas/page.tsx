@@ -56,7 +56,7 @@ export function calcularTotais(contas: Conta[], hoje: string) {
 
 // ─── Tipos da página ────────────────────────────────────────────────────────
 
-type FiltroStatus = 'todas' | 'sem-vencimento' | 'aguardando' | 'aberta' | 'atrasada' | 'paga'
+type FiltroStatus = 'todas' | 'sem-vencimento' | 'aguardando' | 'aberta' | 'atrasada' | 'paga' | 'dispensada'
 type FiltroTipo   = 'todos' | 'fixas' | 'nota'
 
 const FILTROS: { value: FiltroStatus; label: string }[] = [
@@ -66,6 +66,7 @@ const FILTROS: { value: FiltroStatus; label: string }[] = [
   { value: 'aberta',         label: 'Abertas' },
   { value: 'atrasada',       label: 'Atrasadas' },
   { value: 'paga',           label: 'Pagas' },
+  { value: 'dispensada',     label: 'Dispensadas' },
 ]
 
 // Conta fixa veio de uma regra recorrente; boleto veio de uma nota fiscal.
@@ -140,7 +141,11 @@ export default function ContasPage() {
 
       if (!okTipo) return false
 
-      if (filtro === 'todas')          return true
+      // "Todas" esconde as dispensadas de propósito (pedido de 10/08/2026): elas são
+      // contas que o Matheus marcou como "não vai ter cobrança" e só poluíam a fila.
+      // Só 'dispensada' é escondida. 'paga' CONTINUA aparecendo em "Todas": é
+      // histórico de pagamento e ele quer conferir.
+      if (filtro === 'todas')          return c.status !== 'dispensada'
       if (filtro === 'sem-vencimento') return !ENCERRADAS.has(c.status) && !c.vencimento
       if (filtro === 'atrasada')       return !ENCERRADAS.has(c.status) && !!c.vencimento && diasEntre(hoje, c.vencimento) < 0
       return c.status === filtro
@@ -377,6 +382,8 @@ export default function ContasPage() {
               {FILTROS.map(o => {
                 const n = o.value === 'sem-vencimento'
                   ? contas.filter(c => !ENCERRADAS.has(c.status) && !c.vencimento).length
+                  : o.value === 'dispensada'
+                  ? contas.filter(c => c.status === 'dispensada').length
                   : 0
                 return (
                   <Button
