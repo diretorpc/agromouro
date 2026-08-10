@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 
 function setUrlParam(key: string, value: string, dflt = 'todos') {
   const p = new URLSearchParams(window.location.search)
@@ -8,7 +8,7 @@ function setUrlParam(key: string, value: string, dflt = 'todos') {
   else p.set(key, value)
   window.history.replaceState(null, '', p.toString() ? `?${p}` : window.location.pathname)
 }
-import { DollarSign, TrendingDown, Package, Filter, Plus, Pencil, Trash2, AlertTriangle } from 'lucide-react'
+import { DollarSign, TrendingDown, Package, Filter, Plus, Pencil, Trash2, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip,
   ResponsiveContainer, Cell, LabelList,
@@ -34,6 +34,11 @@ import { useFazenda } from '@/context/fazenda-context'
 type ItemFinanceiro = {
   id: string
   source_table: 'itens_nfe' | 'lancamentos_financeiros'
+  // Chave da nota fiscal (só existe pra itens que vieram de NF-e vinculada a
+  // uma nota real — item manual ou lançamento de cartão/manual/conta fica
+  // null). Usada só pra AGRUPAR linhas da mesma nota na tabela — nunca entra
+  // em cálculo de dinheiro.
+  nota_fiscal_id: string | null
   descricao: string
   quantidade: number
   unidade: string
@@ -291,7 +296,17 @@ export default function FinanceiroPage() {
   const [sortDirecao, setSortDirecao] = useState<'asc' | 'desc'>('desc')
   const [verTodasCategorias, setVerTodasCategorias] = useState(false)
   const [visivelCount, setVisivelCount] = useState(20)
+  const [notasExpandidas, setNotasExpandidas] = useState<Set<string>>(new Set())
   const { fazendaAtiva } = useFazenda()
+
+  function toggleNota(chave: string) {
+    setNotasExpandidas(prev => {
+      const novo = new Set(prev)
+      if (novo.has(chave)) novo.delete(chave)
+      else novo.add(chave)
+      return novo
+    })
+  }
 
   function handleSort(coluna: SortColunaFinanceiro) {
     if (coluna === sortColuna) {
@@ -317,7 +332,7 @@ export default function FinanceiroPage() {
     const [nfeResult, lancResult] = await Promise.all([
       supabase
         .from('itens_nfe')
-        .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, centro_custo, insumo_id, conta_como_compra, data_manual, insumos(tipo), notas_fiscais(numero, emitente_nome, data_emissao)')
+        .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, centro_custo, insumo_id, conta_como_compra, data_manual, nota_fiscal_id, insumos(tipo), notas_fiscais(numero, emitente_nome, data_emissao)')
         .order('id', { ascending: false }),
       supabase
         .from('lancamentos_financeiros')
@@ -339,6 +354,7 @@ export default function FinanceiroPage() {
     const nfeItems: ItemFinanceiro[] = (nfeResult.data ?? []).map((row: any) => ({
       id: row.id,
       source_table: 'itens_nfe' as const,
+      nota_fiscal_id: row.nota_fiscal_id,
       descricao: row.descricao,
       quantidade: row.quantidade,
       unidade: row.unidade,
@@ -362,6 +378,7 @@ export default function FinanceiroPage() {
     const lancItems: ItemFinanceiro[] = (lancResult.data ?? []).map((row: any) => ({
       id: row.id,
       source_table: 'lancamentos_financeiros' as const,
+      nota_fiscal_id: null, // lançamento de cartão/manual/conta nunca tem nota — nunca agrupa
       descricao: row.descricao,
       quantidade: 1,
       unidade: '',
@@ -557,7 +574,24 @@ export default function FinanceiroPage() {
   // soma no Total de Despesas nem no gráfico por categoria.
   const itensQueContam = itensFiltrados.filter(contaComoGasto)
 
-  const itensExibidos = itensFiltrados.slice(0, visivelCount)
+  type GrupoItem = { chave: string; itens: ItemFinanceiro[] }
+
+  // Agrupa por nota fiscal, mantendo a ordem em que cada nota apareceu
+  // primeiro na lista já filtrada/ordenada — não reordena nada, só junta.
+  const grupos: GrupoItem[] = []
+  const posicaoPorChave = new Map<string, number>()
+  for (const item of itensFiltrados) {
+    const chave = item.nota_fiscal_id ?? `item-${item.id}`
+    const posicao = posicaoPorChave.get(chave)
+    if (posicao === undefined) {
+      posicaoPorChave.set(chave, grupos.length)
+      grupos.push({ chave, itens: [item] })
+    } else {
+      grupos[posicao].itens.push(item)
+    }
+  }
+
+  const gruposExibidos = grupos.slice(0, visivelCount)
 
   const totalGeral = itensQueContam.reduce((s, i) => s + i.valor_total, 0)
   const porCategoria = itensQueContam.reduce<Record<string, number>>((acc, i) => {
@@ -827,95 +861,242 @@ export default function FinanceiroPage() {
                     )}
                   </TableCell>
                 </TableRow>
-              ) : itensExibidos.map(item => (
-                <TableRow key={item.id}>
-                  <TableCell className="font-medium text-sm whitespace-normal break-words">
-                    {item.descricao}
-                  </TableCell>
-                  <TableCell className="text-right text-sm text-muted-foreground">
-                    {item.quantidade} {item.unidade}
-                  </TableCell>
-                  <TableCell className="text-right text-sm tabular-nums">{fmtBRL(item.valor_unitario)}</TableCell>
-                  <TableCell className="text-right text-sm font-semibold tabular-nums">{fmtBRL(item.valor_total)}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-col items-start gap-1">
-                      <Badge
-                        variant="outline"
-                        className={`capitalize text-xs ${CENTRO_CUSTO_STYLE[item.centro_custo] ?? CENTRO_CUSTO_STYLE.outro}`}
-                      >
-                        {tipoLabel(item.centro_custo)}
-                      </Badge>
-                      {/* conta_como_compra === false: o item fica na lista (o
-                          dono precisa continuar vendo que ele existe), mas não
-                          soma no Total de Despesas nem no gráfico — este crachá
-                          explica por quê, em português simples, sem código fiscal. */}
-                      {item.conta_como_compra === false && (
-                        <Tooltip>
-                          <TooltipTrigger className="cursor-default bg-transparent border-0 p-0">
-                            <Badge variant="outline" className="text-xs bg-slate-100 text-slate-600 border-slate-200">
-                              Não conta como gasto
+              ) : gruposExibidos.map(grupo => {
+                const multiplo = grupo.itens.length > 1
+
+                if (!multiplo) {
+                  const item = grupo.itens[0]
+                  return (
+                    <TableRow key={item.id}>
+                      <TableCell className="font-medium text-sm whitespace-normal break-words">
+                        {item.descricao}
+                      </TableCell>
+                      <TableCell className="text-right text-sm text-muted-foreground">
+                        {item.quantidade} {item.unidade}
+                      </TableCell>
+                      <TableCell className="text-right text-sm tabular-nums">{fmtBRL(item.valor_unitario)}</TableCell>
+                      <TableCell className="text-right text-sm font-semibold tabular-nums">{fmtBRL(item.valor_total)}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-col items-start gap-1">
+                          <Badge
+                            variant="outline"
+                            className={`capitalize text-xs ${CENTRO_CUSTO_STYLE[item.centro_custo] ?? CENTRO_CUSTO_STYLE.outro}`}
+                          >
+                            {tipoLabel(item.centro_custo)}
+                          </Badge>
+                          {/* conta_como_compra === false: o item fica na lista (o
+                              dono precisa continuar vendo que ele existe), mas não
+                              soma no Total de Despesas nem no gráfico — este crachá
+                              explica por quê, em português simples, sem código fiscal. */}
+                          {item.conta_como_compra === false && (
+                            <Tooltip>
+                              <TooltipTrigger className="cursor-default bg-transparent border-0 p-0">
+                                <Badge variant="outline" className="text-xs bg-slate-100 text-slate-600 border-slate-200">
+                                  Não conta como gasto
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="max-w-xs text-xs">
+                                Este item não entra no total porque o valor já foi cobrado em
+                                outra nota, foi recebido sem custo (bonificação/amostra), ou é
+                                mercadoria que só passou pela fazenda sem virar compra.
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm w-[160px]">
+                        {item.origem === 'cartao' ? (
+                          <Badge variant="secondary" className="text-xs">
+                            {item.cartao_apelido ?? 'Cartão'}
+                          </Badge>
+                        ) : item.origem === 'conta' ? (
+                          <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
+                            Conta paga
+                          </Badge>
+                        ) : item.origem === 'manual' ? (
+                          <span className="text-xs text-muted-foreground italic">Manual</span>
+                        ) : item.is_manual ? (
+                          <span className="text-xs text-muted-foreground italic">Manual</span>
+                        ) : (
+                          <div>
+                            <p className="font-medium text-xs">NF {item.nota_numero}</p>
+                            <p className="text-xs text-muted-foreground whitespace-normal break-words">
+                              {item.emitente_nome}
+                            </p>
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                        {item.data_emissao ? fmtDate(item.data_emissao) : '—'}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-0.5">
+                          {item.source_table === 'itens_nfe' && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              aria-label="Editar lançamento"
+                              className="hover:bg-blue-50 hover:text-blue-600"
+                              onClick={() => abrirEdicao(item)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            aria-label="Excluir lançamento"
+                            className="hover:bg-red-50 hover:text-red-600 text-red-400"
+                            onClick={() => setDeleteItem(item)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                }
+
+                const expandido = notasExpandidas.has(grupo.chave)
+                const primeiro = grupo.itens[0]
+                const valorTotalGrupo = grupo.itens.reduce((s, i) => s + i.valor_total, 0)
+                const categoriasGrupo = Array.from(new Set(grupo.itens.map(i => i.centro_custo)))
+
+                return (
+                  <Fragment key={grupo.chave}>
+                    <TableRow
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => toggleNota(grupo.chave)}
+                    >
+                      <TableCell className="font-medium text-sm">
+                        <span className="inline-flex items-center gap-1.5">
+                          {expandido
+                            ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                            : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />}
+                          {grupo.itens.length} itens desta nota
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right text-sm text-muted-foreground">—</TableCell>
+                      <TableCell className="text-right text-sm text-muted-foreground">—</TableCell>
+                      <TableCell className="text-right text-sm font-semibold tabular-nums">{fmtBRL(valorTotalGrupo)}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {categoriasGrupo.map(c => (
+                            <Badge
+                              key={c}
+                              variant="outline"
+                              className={`capitalize text-xs ${CENTRO_CUSTO_STYLE[c] ?? CENTRO_CUSTO_STYLE.outro}`}
+                            >
+                              {tipoLabel(c)}
                             </Badge>
-                          </TooltipTrigger>
-                          <TooltipContent side="top" className="max-w-xs text-xs">
-                            Este item não entra no total porque o valor já foi cobrado em
-                            outra nota, foi recebido sem custo (bonificação/amostra), ou é
-                            mercadoria que só passou pela fazenda sem virar compra.
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm w-[160px]">
-                    {item.origem === 'cartao' ? (
-                      <Badge variant="secondary" className="text-xs">
-                        {item.cartao_apelido ?? 'Cartão'}
-                      </Badge>
-                    ) : item.origem === 'conta' ? (
-                      <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
-                        Conta paga
-                      </Badge>
-                    ) : item.origem === 'manual' ? (
-                      <span className="text-xs text-muted-foreground italic">Manual</span>
-                    ) : item.is_manual ? (
-                      <span className="text-xs text-muted-foreground italic">Manual</span>
-                    ) : (
-                      <div>
-                        <p className="font-medium text-xs">NF {item.nota_numero}</p>
-                        <p className="text-xs text-muted-foreground whitespace-normal break-words">
-                          {item.emitente_nome}
-                        </p>
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                    {item.data_emissao ? fmtDate(item.data_emissao) : '—'}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-0.5">
-                      {item.source_table === 'itens_nfe' && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          aria-label="Editar lançamento"
-                          className="hover:bg-blue-50 hover:text-blue-600"
-                          onClick={() => abrirEdicao(item)}
-                        >
-                          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label="Excluir lançamento"
-                        className="hover:bg-red-50 hover:text-red-600 text-red-400"
-                        onClick={() => setDeleteItem(item)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm w-[180px]">
+                        <div>
+                          <p className="font-medium text-xs">NF {primeiro.nota_numero}</p>
+                          <p className="text-xs text-muted-foreground whitespace-normal break-words">
+                            {primeiro.emitente_nome}
+                          </p>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                        {primeiro.data_emissao ? fmtDate(primeiro.data_emissao) : '—'}
+                      </TableCell>
+                      <TableCell />
+                    </TableRow>
+                    {expandido && grupo.itens.map(item => (
+                      <TableRow key={item.id} className="bg-muted/20">
+                        <TableCell className="font-medium text-sm whitespace-normal break-words">
+                          {item.descricao}
+                        </TableCell>
+                        <TableCell className="text-right text-sm text-muted-foreground">
+                          {item.quantidade} {item.unidade}
+                        </TableCell>
+                        <TableCell className="text-right text-sm tabular-nums">{fmtBRL(item.valor_unitario)}</TableCell>
+                        <TableCell className="text-right text-sm font-semibold tabular-nums">{fmtBRL(item.valor_total)}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-col items-start gap-1">
+                            <Badge
+                              variant="outline"
+                              className={`capitalize text-xs ${CENTRO_CUSTO_STYLE[item.centro_custo] ?? CENTRO_CUSTO_STYLE.outro}`}
+                            >
+                              {tipoLabel(item.centro_custo)}
+                            </Badge>
+                            {/* conta_como_compra === false: o item fica na lista (o
+                                dono precisa continuar vendo que ele existe), mas não
+                                soma no Total de Despesas nem no gráfico — este crachá
+                                explica por quê, em português simples, sem código fiscal. */}
+                            {item.conta_como_compra === false && (
+                              <Tooltip>
+                                <TooltipTrigger className="cursor-default bg-transparent border-0 p-0">
+                                  <Badge variant="outline" className="text-xs bg-slate-100 text-slate-600 border-slate-200">
+                                    Não conta como gasto
+                                  </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-xs text-xs">
+                                  Este item não entra no total porque o valor já foi cobrado em
+                                  outra nota, foi recebido sem custo (bonificação/amostra), ou é
+                                  mercadoria que só passou pela fazenda sem virar compra.
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm w-[160px]">
+                          {item.origem === 'cartao' ? (
+                            <Badge variant="secondary" className="text-xs">
+                              {item.cartao_apelido ?? 'Cartão'}
+                            </Badge>
+                          ) : item.origem === 'conta' ? (
+                            <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
+                              Conta paga
+                            </Badge>
+                          ) : item.origem === 'manual' ? (
+                            <span className="text-xs text-muted-foreground italic">Manual</span>
+                          ) : item.is_manual ? (
+                            <span className="text-xs text-muted-foreground italic">Manual</span>
+                          ) : (
+                            <div>
+                              <p className="font-medium text-xs">NF {item.nota_numero}</p>
+                              <p className="text-xs text-muted-foreground whitespace-normal break-words">
+                                {item.emitente_nome}
+                              </p>
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                          {item.data_emissao ? fmtDate(item.data_emissao) : '—'}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-0.5">
+                            {item.source_table === 'itens_nfe' && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                aria-label="Editar lançamento"
+                                className="hover:bg-blue-50 hover:text-blue-600"
+                                onClick={() => abrirEdicao(item)}
+                              >
+                                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              aria-label="Excluir lançamento"
+                              className="hover:bg-red-50 hover:text-red-600 text-red-400"
+                              onClick={() => setDeleteItem(item)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </Fragment>
+                )
+              })}
             </TableBody>
             {itensFiltrados.length > 0 && (
               <TableFooter>
@@ -935,14 +1116,14 @@ export default function FinanceiroPage() {
               </TableFooter>
             )}
           </Table>
-          {itensFiltrados.length > visivelCount && (
+          {grupos.length > visivelCount && (
             <div className="text-center py-3 border-t">
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setVisivelCount(c => c + 20)}
               >
-                Carregar mais {Math.min(20, itensFiltrados.length - visivelCount)}
+                Carregar mais {Math.min(20, grupos.length - visivelCount)}
               </Button>
             </div>
           )}
