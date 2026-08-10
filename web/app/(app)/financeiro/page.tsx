@@ -705,26 +705,27 @@ export default function FinanceiroPage() {
             </CardTitle>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center rounded-md border border-input overflow-hidden text-xs">
-              {(['todos', 'nfe', 'cartao', 'manual', 'conta'] as const).map((o, i) => (
-                <button
-                  key={o}
-                  onClick={() => { setFiltroOrigem(o); setUrlParam('origem', o) }}
-                  className={[
-                    'px-3 py-1.5 font-medium transition-colors',
-                    i > 0 ? 'border-l border-input' : '',
-                    filtroOrigem === o
-                      ? 'bg-foreground text-background'
-                      : 'bg-background text-muted-foreground hover:text-foreground',
-                  ].join(' ')}
-                >
-                  {/* Rótulo curto de propósito: são 5 botões numa fila só, e
-                      "Conta paga" estouraria a largura do cartão no celular.
-                      O crachá da coluna Origem traz o nome completo. */}
-                  {{ todos: 'Todos', nfe: 'NF-e', cartao: 'Cartão', manual: 'Manual', conta: 'Conta' }[o]}
-                </button>
-              ))}
-            </div>
+            <Select
+              value={filtroOrigem}
+              onValueChange={v => {
+                const val = (v ?? 'todos') as typeof filtroOrigem
+                setFiltroOrigem(val)
+                setUrlParam('origem', val)
+              }}
+            >
+              <SelectTrigger className="w-40 h-9 text-sm">
+                <SelectValue>
+                  {{ todos: 'Todos', nfe: 'NF-e', cartao: 'Cartão', manual: 'Manual', conta: 'Conta paga' }[filtroOrigem]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos</SelectItem>
+                <SelectItem value="nfe">NF-e</SelectItem>
+                <SelectItem value="cartao">Cartão</SelectItem>
+                <SelectItem value="manual">Manual</SelectItem>
+                <SelectItem value="conta">Conta paga</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Filter className="h-4 w-4 text-muted-foreground" />
