@@ -291,9 +291,12 @@ o botão "Limpar" e a URL — corrigido). Detalhe completo, achados menores regi
 plano tarefa-a-tarefa: `docs/superpowers/plans/2026-08-10-reorganizacao-financeiro-contas.md`
 e `docs/superpowers/specs/2026-08-10-reorganizacao-financeiro-contas-design.md`.
 
-**PR #55 aberto** — https://github.com/diretorpc/agromouro/pull/55. Ninguém testou
-visualmente no navegador ainda (sessão sem login) — checklist manual pronto no plano,
-seção "Verificação". Falta ele revisar/testar e mergear.
+**PR #55 aberto** — https://github.com/diretorpc/agromouro/pull/55. **10/08, depois do PR
+aberto:** Contas a Pagar ganhou filtro de mês (por vencimento) a pedido dele — atrasada e
+sem vencimento sempre aparecem, em qualquer mês, de propósito (não somem dívida ativa
+atrás de um filtro de data). Ninguém testou visualmente no navegador ainda (sessão sem
+login) — checklist manual pronto no plano, seção "Verificação". Falta ele revisar/testar
+e mergear.
 
 ## 🟡 Pendências de baixo risco do Financeiro, deixadas para depois
 
