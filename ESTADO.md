@@ -291,9 +291,9 @@ o botão "Limpar" e a URL — corrigido). Detalhe completo, achados menores regi
 plano tarefa-a-tarefa: `docs/superpowers/plans/2026-08-10-reorganizacao-financeiro-contas.md`
 e `docs/superpowers/specs/2026-08-10-reorganizacao-financeiro-contas-design.md`.
 
-**Falta:** ele decidir merge local / Pull Request / deixar como está — nenhuma decisão
-tomada ainda. Ninguém testou visualmente no navegador ainda (sessão sem login) — checklist
-manual pronto no plano, seção "Verificação".
+**PR #55 aberto** — https://github.com/diretorpc/agromouro/pull/55. Ninguém testou
+visualmente no navegador ainda (sessão sem login) — checklist manual pronto no plano,
+seção "Verificação". Falta ele revisar/testar e mergear.
 
 ## 🟡 Pendências de baixo risco do Financeiro, deixadas para depois
 
