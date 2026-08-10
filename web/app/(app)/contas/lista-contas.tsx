@@ -221,6 +221,8 @@ export function ListaContas({ contas, onPagar, onDispensar, onDesfazer, onEditar
           const primeira = grupo.contas[0]
           const valorTotalGrupo = grupo.contas.reduce((s, c) => s + (c.valor ?? 0), 0)
           const algumEstimado = grupo.contas.some(c => c.valor_estimado)
+          const todosSemValor = grupo.contas.every(c => c.valor === null)
+          const algumSemValor = !todosSemValor && grupo.contas.some(c => c.valor === null)
           const categoriasGrupo = Array.from(new Set(grupo.contas.map(c => c.categoria ?? 'Sem categoria')))
 
           return (
@@ -250,14 +252,23 @@ export function ListaContas({ contas, onPagar, onDispensar, onDesfazer, onEditar
                   {primeira.vencimento ? fmtDate(primeira.vencimento) : '—'}
                 </TableCell>
                 <TableCell className="text-right text-sm">
-                  <div>
-                    <p className="font-semibold tabular-nums">{fmtBRL(valorTotalGrupo)}</p>
-                    {algumEstimado && (
-                      <Badge variant="outline" className="text-[10px] mt-0.5 bg-amber-50 text-amber-700 border-amber-200">
-                        estimado
-                      </Badge>
-                    )}
-                  </div>
+                  {todosSemValor ? (
+                    <span className="text-muted-foreground">—</span>
+                  ) : (
+                    <div>
+                      <p className="font-semibold tabular-nums">{fmtBRL(valorTotalGrupo)}</p>
+                      {algumEstimado && (
+                        <Badge variant="outline" className="text-[10px] mt-0.5 bg-amber-50 text-amber-700 border-amber-200">
+                          estimado
+                        </Badge>
+                      )}
+                      {algumSemValor && (
+                        <Badge variant="outline" className="text-[10px] mt-0.5 bg-slate-100 text-slate-600 border-slate-200">
+                          valor incompleto
+                        </Badge>
+                      )}
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell className="text-sm">
                   <div className="flex flex-wrap gap-1">
