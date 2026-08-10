@@ -248,6 +248,13 @@ function FormFields({ form, setForm }: { form: FormData; setForm: React.Dispatch
   )
 }
 
+// Padrão do filtro de mês: mês atual — a tela abre já filtrada, sem mostrar
+// o histórico inteiro. Diferente de 'todos' (opção explícita "ver tudo"),
+// que continua sendo um valor à parte, escolhido pelo usuário. Achado da
+// revisão final do branch: confundir os dois fazia "Limpar" jogar a tela
+// pro histórico inteiro, e "Todos os meses" não sobrevivia a um F5.
+const MES_PADRAO = new Date().toISOString().slice(0, 7)
+
 export default function FinanceiroPage() {
   const [itens, setItens] = useState<ItemFinanceiro[]>([])
   const [loading, setLoading] = useState(true)
@@ -259,7 +266,7 @@ export default function FinanceiroPage() {
   // como tela vazia.
   const [erroCarregamento, setErroCarregamento] = useState(false)
   const [filtroCentro, setFiltroCentro] = useState('todos')
-  const [filtroMes, setFiltroMes] = useState(() => new Date().toISOString().slice(0, 7))
+  const [filtroMes, setFiltroMes] = useState(MES_PADRAO)
   const [filtroOrigem, setFiltroOrigem] = useState<'todos' | 'nfe' | 'cartao' | 'manual' | 'conta'>('todos')
   const [sortData, setSortData] = useState<'desc' | 'asc'>('desc')
   const [verTodasCategorias, setVerTodasCategorias] = useState(false)
@@ -355,7 +362,7 @@ export default function FinanceiroPage() {
     const mes = params.get('mes')
     const centro = params.get('centro')
     const origem = params.get('origem') as 'todos' | 'nfe' | 'cartao' | 'manual' | 'conta' | null
-    if (mes !== null && /^\d{4}-\d{2}$/.test(mes)) setFiltroMes(mes)
+    if (mes !== null && (mes === 'todos' || /^\d{4}-\d{2}$/.test(mes))) setFiltroMes(mes)
     if (centro !== null) setFiltroCentro(centro)
     if (origem && ['todos', 'nfe', 'cartao', 'manual', 'conta'].includes(origem)) setFiltroOrigem(origem)
   }, [])
@@ -499,10 +506,9 @@ export default function FinanceiroPage() {
     load()
   }
 
-  const mesAtual = new Date().toISOString().slice(0, 7) // 'YYYY-MM'
   const meses = Array.from(
     new Set([
-      mesAtual, // garante que o mês corrente aparece sempre, mesmo sem dados
+      MES_PADRAO, // garante que o mês corrente aparece sempre, mesmo sem dados
       ...itens.filter(i => i.data_emissao).map(i => i.data_emissao.slice(0, 7)),
     ])
   ).sort((a, b) => b.localeCompare(a))
@@ -546,7 +552,7 @@ export default function FinanceiroPage() {
   // Uma falha de carregamento nunca pode se parecer com "não há gasto".
   if (erroCarregamento) return <ErroCarregamento onRetry={load} />
 
-  const filtroAtivo = filtroMes !== 'todos' || filtroCentro !== 'todos' || filtroOrigem !== 'todos'
+  const filtroAtivo = filtroMes !== MES_PADRAO || filtroCentro !== 'todos' || filtroOrigem !== 'todos'
   const filtroMesLabel = filtroMes === 'todos'
     ? 'Todos os meses'
     : (() => { const [y, mo] = filtroMes.split('-').map(Number); return new Date(y, mo - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) })()
@@ -735,7 +741,7 @@ export default function FinanceiroPage() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Filter className="h-4 w-4 text-muted-foreground" />
-            <Select value={filtroMes} onValueChange={v => { const val = v ?? 'todos'; setFiltroMes(val); setUrlParam('mes', val) }}>
+            <Select value={filtroMes} onValueChange={v => { const val = v ?? 'todos'; setFiltroMes(val); setUrlParam('mes', val, MES_PADRAO) }}>
               <SelectTrigger className="w-44 h-9 text-sm"><SelectValue>{filtroMesLabel}</SelectValue></SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos os meses</SelectItem>
@@ -758,7 +764,7 @@ export default function FinanceiroPage() {
                 variant="ghost"
                 size="sm"
                 className="h-9 text-muted-foreground"
-                onClick={() => { setFiltroMes('todos'); setFiltroCentro('todos'); setFiltroOrigem('todos'); window.history.replaceState(null, '', window.location.pathname) }}
+                onClick={() => { setFiltroMes(MES_PADRAO); setFiltroCentro('todos'); setFiltroOrigem('todos'); window.history.replaceState(null, '', window.location.pathname) }}
               >
                 Limpar
               </Button>
@@ -800,7 +806,7 @@ export default function FinanceiroPage() {
                         variant="link"
                         size="sm"
                         className="mt-1"
-                        onClick={() => { setFiltroMes('todos'); setUrlParam('mes', 'todos') }}
+                        onClick={() => { setFiltroMes('todos'); setUrlParam('mes', 'todos', MES_PADRAO) }}
                       >
                         Ver todos os meses
                       </Button>
