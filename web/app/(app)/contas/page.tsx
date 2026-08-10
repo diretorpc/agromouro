@@ -100,6 +100,16 @@ function contaBateFiltro(c: ContaAPI, filtro: FiltroStatus, hoje: string): boole
   return c.status === filtro
 }
 
+// Contas atrasadas e sem vencimento pedem ação urgente, então sempre aparecem —
+// nunca somem por causa do filtro de mês (pedido do Matheus, 10/08/2026): esconder
+// dívida ativa atrás de um filtro de data seria perigoso.
+function contaBateMes(c: ContaAPI, filtroMes: string, hoje: string): boolean {
+  if (filtroMes === 'todos') return true
+  if (!c.vencimento) return true
+  if (!ENCERRADAS.has(c.status) && diasEntre(hoje, c.vencimento) < 0) return true
+  return c.vencimento.startsWith(filtroMes)
+}
+
 // ─── Formulários auxiliares (estado local dos diálogos) ───────────────────────
 
 type PagamentoForm = { data_pagamento: string; valor_pago: string }
@@ -110,6 +120,7 @@ export default function ContasPage() {
   const [erroCarregar, setErroCarregar] = useState<string | null>(null)
   const [filtro, setFiltro]           = useState<FiltroStatus>('todas')
   const [filtroTipo, setFiltroTipo]   = useState<FiltroTipo>('todos')
+  const [filtroMes, setFiltroMes]     = useState(() => hojeISO().slice(0, 7))
   const [visivelCount, setVisivelCount] = useState(50)
   const [salvando, setSalvando]       = useState(false)
 
@@ -153,14 +164,21 @@ export default function ContasPage() {
     if (f && FILTROS.some(o => o.value === f)) setFiltro(f as FiltroStatus)
   }, [])
 
-  // Reset paginação ao trocar filtro de status ou tipo
-  useEffect(() => { setVisivelCount(50) }, [filtro, filtroTipo])
+  // Reset paginação ao trocar filtro de status, tipo ou mês
+  useEffect(() => { setVisivelCount(50) }, [filtro, filtroTipo, filtroMes])
 
   const hoje = hojeISO()
   const totais = calcularTotais(contas, hoje)
 
+  const meses = Array.from(
+    new Set([
+      hoje.slice(0, 7),
+      ...contas.filter(c => c.vencimento).map(c => c.vencimento!.slice(0, 7)),
+    ])
+  ).sort((a, b) => b.localeCompare(a))
+
   const contasFiltradas = contas
-    .filter(c => contaBateTipo(c, filtroTipo) && contaBateFiltro(c, filtro, hoje))
+    .filter(c => contaBateTipo(c, filtroTipo) && contaBateFiltro(c, filtro, hoje) && contaBateMes(c, filtroMes, hoje))
     // Conta sem data sobe para o topo: é a única que exige ação do Matheus
     // para o sistema voltar a funcionar sozinho. Enterrada no meio da lista,
     // ela some — e é justamente a que o sistema não consegue vigiar.
@@ -384,17 +402,36 @@ export default function ContasPage() {
             </span>
           </CardTitle>
           <div className="space-y-2">
-            <Select value={filtroTipo} onValueChange={v => setFiltroTipo((v ?? 'todos') as FiltroTipo)}>
-              <SelectTrigger className="w-44 h-9 text-sm">
-                <SelectValue>{FILTROS_TIPO.find(o => o.value === filtroTipo)?.label}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {FILTROS_TIPO.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <div className="flex flex-wrap gap-2">
+              <Select value={filtroTipo} onValueChange={v => setFiltroTipo((v ?? 'todos') as FiltroTipo)}>
+                <SelectTrigger className="w-44 h-9 text-sm">
+                  <SelectValue>{FILTROS_TIPO.find(o => o.value === filtroTipo)?.label}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {FILTROS_TIPO.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={filtroMes} onValueChange={v => setFiltroMes(v ?? 'todos')}>
+                <SelectTrigger className="w-44 h-9 text-sm">
+                  <SelectValue>
+                    {filtroMes === 'todos'
+                      ? 'Todos os meses'
+                      : (() => { const [y, mo] = filtroMes.split('-'); return new Date(+y, +mo - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) })()}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos os meses</SelectItem>
+                  {meses.map(m => (
+                    <SelectItem key={m} value={m}>
+                      {(() => { const [y, mo] = m.split('-'); return new Date(+y, +mo - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) })()}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="flex flex-wrap gap-2">
               {FILTROS.map(o => {
-                const n = contas.filter(c => contaBateTipo(c, filtroTipo) && contaBateFiltro(c, o.value, hoje)).length
+                const n = contas.filter(c => contaBateTipo(c, filtroTipo) && contaBateFiltro(c, o.value, hoje) && contaBateMes(c, filtroMes, hoje)).length
                 return (
                   <Button
                     key={o.value}
