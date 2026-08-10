@@ -24,6 +24,46 @@
 
 # 1. NO AR — o que o sistema já faz
 
+## Reorganização Financeiro + Contas a Pagar — PR #55 mergeado (squash) em 10/08/2026
+
+https://github.com/diretorpc/agromouro/pull/55 — branch `fix/telasfin` apagada (local e remoto)
+depois do merge. ⚠️ Mesmo padrão de incerteza de outros itens desta seção: Vercel faz deploy
+automático no push pra `main`, **não confirmado de fora** que já está servindo o código novo, e
+o Matheus ainda não testou visualmente no navegador com login de verdade.
+
+Pedido de 10/08/2026: as duas telas de dinheiro "cospem número demais na cara". Pesquisa de
+mercado (Aegro, Traction Ag/Conservis, SSCrop) confirmou o padrão: resumo separado do detalhe,
+"a pagar" nunca misturado com histórico infinito. Nada mudou por baixo (NF-e, WhatsApp, banco)
+— é reorganização de tela. 10 tarefas do plano original implementadas por subagentes e
+revisadas uma a uma + o branch inteiro junto (`superpowers:subagent-driven-development`), mais
+4 rodadas de ajuste pontual pedidas por ele depois de testar ao vivo. Detalhe completo, achados
+menores registrados e plano tarefa-a-tarefa: `docs/superpowers/plans/2026-08-10-reorganizacao-financeiro-contas.md`
+e `docs/superpowers/specs/2026-08-10-reorganizacao-financeiro-contas-design.md`.
+
+**Financeiro:** abre no mês atual (era "todos os meses"), gráfico top-5 categorias, lista
+paginada (20/vez), filtro de origem em menu, resumo separado do detalhe, grade completa nas
+células (bordas, estilo escolhido por ele em protótipo visual), texto longo quebra linha em
+vez de cortar com "...", **nota com mais de 1 item vira 1 linha resumida expansível** (soma o
+valor, mostra selo por categoria, avisa se algum item não conta como gasto).
+
+**Contas a Pagar:** dispensada some da aba "Todas" por padrão (aba "Dispensadas" dedicada),
+resumo separado (rótulo "Resumo geral" — os 3 números não seguem o filtro de tipo, ao
+contrário do Financeiro), filtro de tipo em menu, filtro de mês por vencimento (atrasada e sem
+vencimento sempre aparecem, em qualquer mês — decisão de segurança, não some dívida ativa),
+lista paginada (50/vez), todo filtro com quantidade (corrigiu achado do Apolo de 10/08: contador
+ignorava o filtro de tipo), "Todas" esconde paga com mais de 30 dias (aba "Pagas" sem limite),
+mesma grade/texto-sem-corte do Financeiro, **boleto agrupado só quando nota + vencimento + status
+forem iguais** (parcela com vencimento diferente NUNCA agrupa — decisão dele, evita esconder
+data de pagamento).
+
+**Ordenação por coluna** (clicar no título tipo "Vencimento"/"Valor" reordena, clica de novo
+inverte) — nas duas telas, generalizado do que só existia na coluna Data do Financeiro.
+
+A revisão final do branch achou e corrigiu 1 bug real (padrão de mês novo tinha quebrado o
+botão "Limpar" e a URL). Duas rodadas de agrupamento por nota (Financeiro e Contas) tiveram
+achado de dinheiro corrigido antes do merge: crachá de "não conta como gasto"/"valor
+incompleto" escondido na linha resumida.
+
 ## Upload manual de XML — porta cega fechada, no ar desde 05/08/2026
 
 **PR #46 mergeado** (`3ea4f04`, squash) — https://github.com/diretorpc/agromouro/pull/46.
@@ -271,33 +311,6 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
-## 🟡 Reorganização Financeiro + Contas a Pagar — pronta na branch `fix/telasfin`, não mergeada
-
-Pedido de 10/08/2026: as duas telas de dinheiro "cospem número demais na cara". Pesquisa de
-mercado (Aegro, Traction Ag/Conservis, SSCrop) confirmou o padrão: resumo separado do
-detalhe, "a pagar" nunca misturado com histórico infinito. Nada mudou por baixo (NF-e,
-WhatsApp, banco) — é reorganização de tela, 10 tarefas, todas implementadas por
-subagentes e revisadas uma a uma + o branch inteiro junto (`superpowers:subagent-driven-development`).
-
-Financeiro: abre no mês atual, gráfico top-5, lista paginada (20), filtro de origem em
-menu, resumo separado. Contas a Pagar: resumo separado (rótulo "Resumo geral" — os 3
-números não seguem o filtro de tipo, ao contrário do Financeiro), filtro de tipo em menu,
-lista paginada (50), todo filtro com quantidade (corrigiu achado do Apolo de 10/08: contador
-ignorava o filtro de tipo), "Todas" esconde paga com mais de 30 dias (aba "Pagas" continua
-sem limite).
-
-A revisão final do branch achou e corrigiu 1 bug real (o padrão de mês novo tinha quebrado
-o botão "Limpar" e a URL — corrigido). Detalhe completo, achados menores registrados e
-plano tarefa-a-tarefa: `docs/superpowers/plans/2026-08-10-reorganizacao-financeiro-contas.md`
-e `docs/superpowers/specs/2026-08-10-reorganizacao-financeiro-contas-design.md`.
-
-**PR #55 aberto** — https://github.com/diretorpc/agromouro/pull/55. **10/08, depois do PR
-aberto:** Contas a Pagar ganhou filtro de mês (por vencimento) a pedido dele — atrasada e
-sem vencimento sempre aparecem, em qualquer mês, de propósito (não somem dívida ativa
-atrás de um filtro de data). Ninguém testou visualmente no navegador ainda (sessão sem
-login) — checklist manual pronto no plano, seção "Verificação". Falta ele revisar/testar
-e mergear.
-
 ## 🟡 Pendências de baixo risco do Financeiro, deixadas para depois
 
 Do conserto do botão "Adicionar" (PR #50, ver seção NO AR): índice único de nome de
@@ -305,6 +318,17 @@ insumo é **global**, não por fazenda — vira problema no dia em que a segunda
 tiver dados; se o segundo `insert` falhar, sobra insumo "órfão" no catálogo (impacto
 baixo); `recarregar()` zera a lista de produtos se a API cair na mesma falha que gerou
 o aviso; projeto `web` não tem ESLint configurado, só o `tsc` confere automaticamente.
+
+## 🟡 Achados menores deixados de propósito no PR #55 (Financeiro + Contas)
+
+Nenhum é dinheiro errado — todos foram revisados e classificados como não-bloqueantes.
+Detalhe completo em `.superpowers/sdd/2026-08-10-reorganizacao-financeiro-contas/progress.md`
+(esse arquivo não é versionado — some se o worktree for limpo; o resumo abaixo é o que sobrevive):
+agrupamento na Contas acontece depois da paginação (pode reordenar visualmente ou uma linha
+"sumir" ao clicar "Carregar mais" — decisão deliberada, não bug); `aria-label` do botão
+"expandir nota" sobrepõe o texto visível pro leitor de tela, igual nas duas telas; item sem
+data no Financeiro fica invisível dentro de um filtro de mês específico, sem aviso; lista vazia
+da Contas não tem atalho "ver tudo" como o Financeiro já ganhou.
 
 ## 🔴 As 66 toneladas da SYAGRI (dele, não do sistema)
 
