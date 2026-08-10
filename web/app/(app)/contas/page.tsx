@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
 import { FormularioContaFixa } from './formulario-conta-fixa'
 import { FormularioContaAvulsa } from './formulario-conta-avulsa'
@@ -372,18 +373,14 @@ export default function ContasPage() {
             </span>
           </CardTitle>
           <div className="space-y-2">
-            <div className="flex flex-wrap gap-2">
-              {FILTROS_TIPO.map(o => (
-                <Button
-                  key={o.value}
-                  size="sm"
-                  variant={filtroTipo === o.value ? 'default' : 'outline'}
-                  onClick={() => setFiltroTipo(o.value)}
-                >
-                  {o.label}
-                </Button>
-              ))}
-            </div>
+            <Select value={filtroTipo} onValueChange={v => setFiltroTipo((v ?? 'todos') as FiltroTipo)}>
+              <SelectTrigger className="w-44 h-9 text-sm">
+                <SelectValue>{FILTROS_TIPO.find(o => o.value === filtroTipo)?.label}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {FILTROS_TIPO.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
             <div className="flex flex-wrap gap-2">
               {FILTROS.map(o => {
                 const n = o.value === 'sem-vencimento'
