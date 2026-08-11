@@ -16,6 +16,8 @@ type FormState = {
   categoria: string
   vencimento: string
   valor: string
+  parcelado: boolean
+  quantidadeParcelas: string
 }
 
 const FORM_VAZIO: FormState = {
@@ -24,6 +26,8 @@ const FORM_VAZIO: FormState = {
   categoria: '',
   vencimento: '',
   valor: '',
+  parcelado: false,
+  quantidadeParcelas: '',
 }
 
 type Props = {
@@ -47,11 +51,17 @@ export function FormularioContaAvulsa({ open, onOpenChange, onSalvo, categoriasE
   const valorNum    = parseFloat(form.valor)
   const valorValido = form.valor !== '' && !isNaN(valorNum) && valorNum >= 0
 
-  const podeSalvar = form.descricao.trim() !== '' && form.vencimento !== '' && valorValido
+  const parcelasNum    = parseInt(form.quantidadeParcelas, 10)
+  const parcelasValido = !form.parcelado ||
+    (Number.isInteger(parcelasNum) && parcelasNum >= 2 && parcelasNum <= 60)
+
+  const podeSalvar = form.descricao.trim() !== '' && form.vencimento !== '' && valorValido && parcelasValido
 
   async function handleSalvar() {
     if (!podeSalvar) {
-      setErro('Preencha descrição, vencimento e valor.')
+      setErro(form.parcelado && !parcelasValido
+        ? 'Quantidade de parcelas precisa ser um número entre 2 e 60.'
+        : 'Preencha descrição, vencimento e valor.')
       return
     }
     setSalvando(true)
@@ -63,6 +73,7 @@ export function FormularioContaAvulsa({ open, onOpenChange, onSalvo, categoriasE
         categoria:  form.categoria.trim() || undefined,
         vencimento: form.vencimento,
         valor:      valorNum,
+        parcelas:   form.parcelado ? parcelasNum : undefined,
       })
       onSalvo()
       fechar()
@@ -111,7 +122,7 @@ export function FormularioContaAvulsa({ open, onOpenChange, onSalvo, categoriasE
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label>Vencimento</Label>
+              <Label>{form.parcelado ? 'Vencimento da 1ª parcela' : 'Vencimento'}</Label>
               <Input
                 type="date"
                 value={form.vencimento}
@@ -119,7 +130,7 @@ export function FormularioContaAvulsa({ open, onOpenChange, onSalvo, categoriasE
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Valor (R$)</Label>
+              <Label>Valor (R$){form.parcelado ? ' — de cada parcela' : ''}</Label>
               <Input
                 type="number" min="0" step="0.01" placeholder="0,00"
                 value={form.valor}
@@ -127,6 +138,31 @@ export function FormularioContaAvulsa({ open, onOpenChange, onSalvo, categoriasE
               />
             </div>
           </div>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.parcelado}
+              onChange={e => setForm(f => ({ ...f, parcelado: e.target.checked }))}
+              className="h-4 w-4 rounded border-gray-300 accent-green-600"
+            />
+            Parcelar esta conta
+          </label>
+
+          {form.parcelado && (
+            <div className="space-y-1.5">
+              <Label>Quantidade de parcelas</Label>
+              <Input
+                type="number" min="2" max="60" placeholder="Ex: 4"
+                value={form.quantidadeParcelas}
+                onChange={e => setForm(f => ({ ...f, quantidadeParcelas: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground">
+                Cria {Number.isInteger(parcelasNum) && parcelasNum >= 2 ? parcelasNum : 'N'} contas, uma por mês a
+                partir do vencimento acima, todas com o mesmo valor.
+              </p>
+            </div>
+          )}
         </div>
 
         {erro && (
@@ -136,7 +172,11 @@ export function FormularioContaAvulsa({ open, onOpenChange, onSalvo, categoriasE
         <DialogFooter>
           <Button variant="outline" onClick={fechar}>Cancelar</Button>
           <Button onClick={handleSalvar} disabled={salvando || !podeSalvar}>
-            {salvando ? 'Salvando…' : 'Salvar'}
+            {salvando
+              ? 'Salvando…'
+              : form.parcelado && parcelasValido
+                ? `Salvar ${parcelasNum} parcelas`
+                : 'Salvar'}
           </Button>
         </DialogFooter>
       </DialogContent>
