@@ -40,6 +40,7 @@ export const CATEGORIAS_FINANCEIRAS = [
   { value: 'frete', label: 'Frete' },
   { value: 'operacional', label: 'Operacional' },
   { value: 'rh', label: 'Mão de Obra (RH)' },
+  { value: 'royalties', label: 'Royalties' },
   { value: 'outro', label: 'Outro' },
   { value: 'manutencao', label: 'Manutenção' },
   { value: 'alimentacao', label: 'Alimentação' },
@@ -58,7 +59,7 @@ export function categoriaLabel(value: string): string {
 // de cartão de crédito — dado errado sobre a origem do dinheiro, não só feio.
 // Achado do Apolo, 11/08/2026.
 export const CATEGORIAS_CONTAS_A_PAGAR = CATEGORIAS_FINANCEIRAS.filter(c =>
-  (['manutencao', 'combustivel', 'servico', 'rh', 'frete', 'alimentacao', 'outro'] as readonly string[]).includes(c.value)
+  (['manutencao', 'combustivel', 'servico', 'rh', 'frete', 'alimentacao', 'royalties', 'outro'] as readonly string[]).includes(c.value)
 )
 
 // Troca cada letra acentuada pela versão sem acento (á → a, ç → c, ...) antes
