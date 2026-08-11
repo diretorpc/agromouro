@@ -232,6 +232,7 @@ contaRoutes.post('/', async (req, res, next) => {
       .select()
 
     if (error) throw error
+    if (!data?.length) throw new Error('Falha ao criar conta: nenhuma linha retornada pelo insert')
     res.status(201).json(body.parcelas ? data : data?.[0])
   } catch (err) {
     if (err instanceof z.ZodError) {
