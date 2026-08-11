@@ -158,7 +158,7 @@ export function FormularioContaAvulsa({ open, onOpenChange, onSalvo, categoriasE
                 onChange={e => setForm(f => ({ ...f, quantidadeParcelas: e.target.value }))}
               />
               <p className="text-xs text-muted-foreground">
-                Cria {Number.isInteger(parcelasNum) && parcelasNum >= 2 ? parcelasNum : 'N'} contas, uma por mês a
+                Cria {form.parcelado && parcelasValido ? parcelasNum : 'N'} contas, uma por mês a
                 partir do vencimento acima, todas com o mesmo valor.
               </p>
             </div>

@@ -645,7 +645,7 @@ export default function ContasPage() {
       <FormularioContaAvulsa
         open={novaAvulsaOpen}
         onOpenChange={setNovaAvulsaOpen}
-        onSalvo={load}
+        onSalvo={() => { setFiltroMes('todos'); load() }}
         categoriasExistentes={categoriasExistentes}
       />
     </div>
