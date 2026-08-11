@@ -4,6 +4,7 @@ import { supabase } from '../services/supabase'
 import { sincronizarOcorrencias } from '../services/contas/sincronizar'
 import { precisaCriarLancamento, montarLancamento } from '../services/contas/pagamento'
 import { competenciaDoMes } from '../services/contas/datas'
+import { montarParcelas } from '../services/contas/parcelamento'
 
 export const contaRoutes = Router()
 
@@ -48,6 +49,7 @@ const avulsaSchema = z.object({
   categoria:  z.string().nullable().optional(),
   vencimento: z.string().regex(ISO),
   valor:      z.number().nonnegative(),
+  parcelas:   z.number().int().min(2).max(60).optional(),
 })
 
 const edicaoSchema = z.object({
@@ -190,28 +192,47 @@ contaRoutes.patch('/recorrentes/:id', async (req, res, next) => {
   }
 })
 
-// ─── POST /contas — conta avulsa ──────────────────────────────────────────────
+// ─── POST /contas — conta avulsa (parcelada ou não) ───────────────────────────
 contaRoutes.post('/', async (req, res, next) => {
   try {
     const fazendaId = fazendaDe(req)
     if (!fazendaId) return res.status(400).json({ error: 'Fazenda não identificada' })
 
     const body = avulsaSchema.parse(req.body)
+    const fornecedor = body.fornecedor ?? null
+    const categoria  = body.categoria ?? null
+
+    // Sem `parcelas`: uma linha só, comportamento idêntico ao de antes desta
+    // mudança. Com `parcelas`: N linhas, um único insert atômico — ou todas
+    // nascem juntas, ou nenhuma nasce (ver docs/superpowers/specs/2026-08-11-
+    // contas-avulsa-parcelamento-design.md).
+    const linhas = body.parcelas
+      ? montarParcelas({
+          descricao:  body.descricao,
+          fornecedor,
+          categoria,
+          vencimento: body.vencimento,
+          valor:      body.valor,
+          parcelas:   body.parcelas,
+        })
+      : [{
+          descricao:      body.descricao,
+          fornecedor,
+          categoria,
+          vencimento:     body.vencimento,
+          valor:          body.valor,
+          competencia:    `${body.vencimento.slice(0, 7)}-01`,
+          valor_estimado: false,
+          status:         'aberta',
+        }]
 
     const { data, error } = await supabase
       .from('contas_a_pagar')
-      .insert({
-        ...body,
-        competencia:    `${body.vencimento.slice(0, 7)}-01`,
-        valor_estimado: false,
-        status:         'aberta',
-        fazenda_id:     fazendaId,
-      })
+      .insert(linhas.map(l => ({ ...l, fazenda_id: fazendaId })))
       .select()
-      .single()
 
     if (error) throw error
-    res.status(201).json(data)
+    res.status(201).json(body.parcelas ? data : data?.[0])
   } catch (err) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({ error: 'Dados inválidos', detalhes: err.errors })
