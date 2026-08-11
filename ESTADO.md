@@ -311,7 +311,10 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
-## ✅ Categoria de Contas a Pagar duplicava barra no gráfico do Financeiro — corrigido, revisado 4x, testado ao vivo, NÃO COMMITADO (11/08/2026)
+## ✅ Categoria de Contas a Pagar duplicava barra no gráfico do Financeiro — corrigido, revisado 4x, testado ao vivo, commitado (11/08/2026)
+
+Commit `b7b9003` — enviado ao GitHub (`main`) em 11/08/2026, **deploy conferido por ele em
+produção no mesmo dia. Fechado.**
 
 Ele achou ao vivo: gráfico "Gastos por Categoria" mostrava DUAS barras "Manutenção" —
 uma de item de nota fiscal (R$ 140,14, chave oficial `manutencao`) e outra de uma conta
