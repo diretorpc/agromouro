@@ -64,6 +64,38 @@ botão "Limpar" e a URL). Duas rodadas de agrupamento por nota (Financeiro e Con
 achado de dinheiro corrigido antes do merge: crachá de "não conta como gasto"/"valor
 incompleto" escondido na linha resumida.
 
+## Categoria oficial unificada + parcelamento em Contas a Pagar — commitado e enviado ao GitHub em 11/08/2026
+
+Push feito (`f0f87ca`, `main`) — ⚠️ mesmo padrão de incerteza dos outros itens desta seção:
+deploy automático da Vercel esperado, **ele testa em produção depois do push** (não é um
+teste feito por mim antes de enviar, dessa vez).
+
+**Parte 1 — categoria duplicava barra no gráfico "Gastos por Categoria" do Financeiro.**
+"Manutenção" digitado à mão numa conta paga virava categoria diferente de `manutencao`
+vinda de nota fiscal — duas barras pro que era a mesma coisa. `web/lib/centro-custo.ts`
+(novo) virou a lista oficial única, com função que casa texto digitado à mão com a
+categoria oficial ignorando acento/maiúscula. Revisado 4x pelo Apolo (achado crítico na
+1ª rodada: caixa de sugestão de categoria podia cobrir o botão Salvar e trocar a
+categoria escolhida sem avisar — corrigido). Categoria "Royalties" adicionada à lista
+depois, a pedido dele (commit `85649b2`).
+
+**Parte 2 — parcelamento em "Nova conta avulsa".** Pedido dele: em vez de cadastrar uma
+compra parcelada (ex: trator em 4x) uma parcela de cada vez, uma caixinha "Parcelar esta
+conta" cria as N contas de uma vez — mesmo valor em cada uma (não divide, decisão dele),
+vencimento um mês depois do anterior, descrição ganha "(i/N)" sozinha. Backend gera as N
+linhas e insere todas juntas (atômico — ou nasce tudo, ou nada). Feito com
+`superpowers:subagent-driven-development` (3 tarefas, cada uma com implementador +
+revisor próprios) + revisão final do branch inteiro — achou e corrigiu 1 bug real antes
+do merge: filtro de mês da tela escondia as parcelas recém-criadas (a maioria vence em
+mês futuro), parecendo que o salvamento tinha falhado calado. Desenho completo:
+`docs/superpowers/specs/2026-08-11-contas-avulsa-parcelamento-design.md`; plano
+tarefa-a-tarefa: `docs/superpowers/plans/2026-08-11-contas-avulsa-parcelamento.md`.
+
+**Ainda não testado ao vivo por ninguém** (nem por mim — tela atrás de login, proibido eu
+digitar senha; nem por ele, ainda) — 245/245 testes do backend e checagem de tipos do
+frontend passaram, mas o teste real (criar 4 parcelas de verdade, conferir que aparecem e
+que uma conta normal sem parcelar continua igual) fica para ele em produção.
+
 ## Upload manual de XML — porta cega fechada, no ar desde 05/08/2026
 
 **PR #46 mergeado** (`3ea4f04`, squash) — https://github.com/diretorpc/agromouro/pull/46.
@@ -310,78 +342,6 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 ---
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
-
-## ✅ Categoria de Contas a Pagar duplicava barra no gráfico do Financeiro — corrigido, revisado 4x, testado ao vivo, commitado (11/08/2026)
-
-Commit `b7b9003` — enviado ao GitHub (`main`) em 11/08/2026, **deploy conferido por ele em
-produção no mesmo dia. Fechado.**
-
-Ele achou ao vivo: gráfico "Gastos por Categoria" mostrava DUAS barras "Manutenção" —
-uma de item de nota fiscal (R$ 140,14, chave oficial `manutencao`) e outra de uma conta
-avulsa que ele tinha acabado de marcar como paga (R$ 1.460,69, chave = texto digitado à
-mão "Manutenção", com acento e maiúscula — nunca comparado com a lista oficial antes de
-virar chave de agrupamento).
-
-**Causa raiz:** `contas_a_pagar.categoria` é texto livre (sem tabela, sem enum, de
-propósito — decisão já registrada em [[financeiro-centro-custo-por-item]]). Ao pagar
-uma conta, `api/src/services/contas/pagamento.ts` (`montarLancamento`) copia esse texto
-literal pra `lancamentos_financeiros.categoria`. A tela Financeiro usa esse valor direto
-como chave de agrupamento do gráfico — sem normalizar contra a lista oficial que os
-itens de NF-e/cartão/manual já usam (`manutencao`, `combustivel`, ...).
-
-**Conserto (duas partes, aprovadas por ele antes de eu mexer):**
-1. `web/lib/centro-custo.ts` (novo) — lista oficial `CATEGORIAS_FINANCEIRAS` (movida sem
-   alteração do array `TIPOS` que vivia hardcoded em `financeiro/page.tsx`) +
-   `normalizarCategoria()`, que casa texto digitado à mão com a categoria oficial
-   ignorando acento/maiúscula. `financeiro/page.tsx` passou a normalizar a categoria de
-   TODO lançamento (`lancamentos_financeiros`) antes de agrupar — conserta a barra
-   duplicada de hoje sem tocar em nenhum dado gravado (é normalização em memória, toda
-   vez que a tela carrega).
-2. `web/app/(app)/contas/page.tsx` — o campo Categoria de "Nova conta avulsa" (ver item
-   abaixo) agora sugere a lista oficial também, não só o que já foi digitado antes.
-
-**Mesma sessão também trocou** o campo Categoria de "Nova conta avulsa" E "Nova conta
-fixa" de texto solto pra um componente com sugestão (`web/components/ui/combobox.tsx`,
-novo — embrulha `@base-ui/react/autocomplete`, já era dependência do projeto via o
-Select, **nenhuma lib nova foi instalada**). Pedido original dele, antes de notar o bug
-do gráfico. Sugestão é um subconjunto (`CATEGORIAS_CONTAS_A_PAGAR`, em `centro-custo.ts`)
-— não a lista de 22 categorias agrícolas inteira, e sem "Outros (cartão)".
-
-**3 rodadas de revisão do Apolo, todas aplicadas:**
-1ª (Combobox): achou **crítico** — lista de sugestão podia cobrir o botão Salvar (abria
-sozinha ao clicar no campo), um clique errado selecionava categoria sem querer e SEM
-mostrar erro, próximo clique salvava com dado errado calado. Corrigido: lista só abre
-digitando agora. Também achado alto (popup vazio cobria o campo Valor) e baixos
-(re-render, memo) — todos corrigidos.
-2ª (centro-custo/Financeiro): achou alto (categoria FORA da lista oficial, tipo "Energia"
-digitado diferente em meses diferentes, continuava duplicando — corrigido, agora
-padroniza espaço/maiúscula mesmo sem achar categoria oficial), médio (conta fixa tinha
-ficado sem sugestão — corrigido) e médio (sugestão incluía "Outros (cartão)", que faria
-o Financeiro rotular boleto pago como gasto de cartão — corrigido, subconjunto próprio).
-3ª (fechamento): achou médio (a normalização nova, ao rodar em TODO lançamento, também
-capitalizava as 7 categorias de cartão fora da lista — "tejuco_gado" virava
-"Tejuco_gado" — e elas perdiam o crachá/rótulo próprio no gráfico, embora a COR da barra
-continuasse) — corrigido: só lançamento de `origem='conta'` normaliza agora, cartão/manual
-continuam intocados, byte a byte iguais ao código de antes desta sessão (conferido com
-`git diff` na 4ª rodada). E achado médio (conta sem categoria, campo é opcional, caía em
-"Outros (cartão)" — corrigido, cai em "Outro", que já tem cor e crachá próprios, sem
-colidir com nenhum uso existente do mesmo value). Achado baixo aceito sem correção:
-categoria digitada com acento errado ("Enérgia") ainda diverge — mitigado pela sugestão
-do campo, não fechado.
-4ª (fechamento do fechamento): só achado baixo — um comentário que descrevia errado o
-próprio conserto acima (dizia que as 7 categorias de cartão perdiam "a cor", quando só
-perdem crachá/rótulo bonito). Corrigido o texto, zero mudança de comportamento — não abri
-5ª rodada pra isso, é documentação já inteiramente ditada pelo achado da 4ª.
-
-**Estado real, sem inflar:** `npx tsc --noEmit` limpo (conferido 5x, a cada rodada).
-Ele testou ao vivo, logado, nesta mesma sessão, os dois pontos que faltavam: (1) gráfico
-sem duplicata + caixa de sugestão mostrando categorias, (2) Salvar não rouba clique da
-lista de sugestão mais, e "Nova conta fixa" com sugestão também — **os dois "deu certo"**.
-**NADA commitado — e os dois arquivos novos (`combobox.tsx`, `centro-custo.ts`) aparecem
-como "não rastreado" (`??`) no `git status`:** um `git commit -am` sem `git add` explícito
-nos dois sobe os 4 arquivos que os importam sem eles, e a Vercel derruba o build com
-"Module not found". Próximo passo: `git add` explícito dos 2 arquivos novos + os 4
-modificados, revisar o diff junto com ele, e só então commitar (nunca commitar sem pedir).
 
 ## 🟡 Pendências de baixo risco do Financeiro, deixadas para depois
 
