@@ -30,6 +30,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { SortableTableHead } from '@/components/ui/sortable-table-head'
 import { supabase } from '@/lib/supabase'
 import { useFazenda } from '@/context/fazenda-context'
+import { CATEGORIAS_FINANCEIRAS, normalizarCategoria, categoriaLabel } from '@/lib/centro-custo'
 
 type ItemFinanceiro = {
   id: string
@@ -73,30 +74,7 @@ const FORM_VAZIO: FormData = {
   valor_unitario: '', centro_custo: 'outro', data: new Date().toISOString().slice(0, 10),
 }
 
-const TIPOS = [
-  { value: 'herbicida', label: 'Herbicida' },
-  { value: 'fungicida', label: 'Fungicida' },
-  { value: 'inseticida', label: 'Inseticida' },
-  { value: 'adjuvante', label: 'Adjuvante' },
-  { value: 'biologico', label: 'Biológico' },
-  { value: 'fertilizante_n', label: 'Fertilizante N' },
-  { value: 'fertilizante_p', label: 'Fertilizante P' },
-  { value: 'fertilizante_k', label: 'Fertilizante K' },
-  { value: 'fertilizante_outro', label: 'Fertilizante Outro' },
-  { value: 'calcario', label: 'Calcário' },
-  { value: 'semente', label: 'Semente' },
-  { value: 'combustivel', label: 'Combustível' },
-  { value: 'lubrificante', label: 'Lubrificante' },
-  { value: 'peca_maquina', label: 'Peça de Máquina' },
-  { value: 'servico', label: 'Serviço' },
-  { value: 'frete', label: 'Frete' },
-  { value: 'operacional', label: 'Operacional' },
-  { value: 'rh',          label: 'Mão de Obra (RH)' },
-  { value: 'outro',       label: 'Outro' },
-  { value: 'manutencao',  label: 'Manutenção' },
-  { value: 'alimentacao', label: 'Alimentação' },
-  { value: 'outros',      label: 'Outros (cartão)' },
-]
+const TIPOS = CATEGORIAS_FINANCEIRAS
 
 const CENTRO_CUSTO_STYLE: Record<string, string> = {
   herbicida:          'bg-red-100 text-red-700 border-red-200',
@@ -168,9 +146,9 @@ function fmtDate(dateStr: string) {
   return new Date(year, month - 1, day).toLocaleDateString('pt-BR')
 }
 
-function tipoLabel(value: string) {
-  return TIPOS.find(t => t.value === value)?.label ?? value
-}
+// Mesma função de web/lib/centro-custo.ts (categoriaLabel) — nome local
+// mantido porque os 9 lugares que chamam já esperam "tipoLabel".
+const tipoLabel = categoriaLabel
 
 // Decide se um item entra nas somas de dinheiro da tela (Total de Despesas,
 // gráfico por categoria, etc). Gravado pelo processador da NF-e a partir de
@@ -384,7 +362,21 @@ export default function FinanceiroPage() {
       unidade: '',
       valor_unitario: row.valor,
       valor_total: row.valor,
-      centro_custo: row.categoria ?? 'outros',
+      // Só o lançamento de CONTA vem de texto digitado à mão
+      // (contas_a_pagar.categoria) — normalizarCategoria casa "Manutenção" com
+      // o value oficial 'manutencao' pra não abrir barra nova no gráfico só
+      // por causa de acento/maiúscula. Cartão e manual já nascem com o value
+      // oficial (categorizador.ts / form ligado a TIPOS) — normalizar de novo
+      // não muda o valor, mas troca 'farmacia'/'tejuco_gado' etc (categorias
+      // de cartão fora da lista oficial, ver comentário no topo de
+      // centro-custo.ts) por versão capitalizada que não bate com nenhuma cor
+      // do gráfico, apagando a cor própria delas (achado do Apolo, 11/08/2026).
+      // Conta sem categoria (campo é opcional) cai em 'outro' — nunca em
+      // 'outros', que o rótulo já avisa ser "(cartão)": um boleto pago não é
+      // gasto de cartão.
+      centro_custo: row.origem === 'conta'
+        ? normalizarCategoria(row.categoria)
+        : (row.categoria ?? 'outros'),
       insumo_id: null,
       nota_numero: null,
       emitente_nome: '',

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Combobox } from '@/components/ui/combobox'
 import { api } from '@/lib/api'
 
 // ─── Constantes ─────────────────────────────────────────────────────────────
@@ -67,9 +68,10 @@ type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
   onSalvo: () => void
+  categoriasExistentes: string[]
 }
 
-export function FormularioContaFixa({ open, onOpenChange, onSalvo }: Props) {
+export function FormularioContaFixa({ open, onOpenChange, onSalvo, categoriasExistentes }: Props) {
   const [form, setForm]         = useState<FormState>(FORM_VAZIO)
   const [salvando, setSalvando] = useState(false)
   const [erro, setErro]         = useState<string | null>(null)
@@ -162,10 +164,11 @@ export function FormularioContaFixa({ open, onOpenChange, onSalvo }: Props) {
             </div>
             <div className="space-y-1.5">
               <Label>Categoria</Label>
-              <Input
+              <Combobox
                 placeholder="Ex: Energia, Água, Imposto…"
                 value={form.categoria}
-                onChange={e => setForm(f => ({ ...f, categoria: e.target.value }))}
+                onValueChange={categoria => setForm(f => ({ ...f, categoria }))}
+                items={categoriasExistentes}
               />
             </div>
           </div>

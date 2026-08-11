@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   CalendarClock, AlertTriangle, Clock, Plus,
 } from 'lucide-react'
@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
+import { CATEGORIAS_CONTAS_A_PAGAR } from '@/lib/centro-custo'
 import { FormularioContaFixa } from './formulario-conta-fixa'
 import { FormularioContaAvulsa } from './formulario-conta-avulsa'
 import { DialogoVencimento } from './dialogo-vencimento'
@@ -202,6 +203,18 @@ export default function ContasPage() {
       ...contas.filter(c => c.vencimento).map(c => c.vencimento!.slice(0, 7)),
     ])
   ).sort((a, b) => b.localeCompare(a))
+
+  // Sugestão pro campo Categoria dos formulários: a lista oficial (a mesma que
+  // o Financeiro usa pros itens de nota fiscal) + o que já foi digitado em
+  // alguma conta antes. Escolher uma da lista oficial evita que "Manutenção"
+  // digitado aqui vire uma categoria diferente de 'manutencao' vindo de nota
+  // fiscal — o campo continua texto livre, isto é só sugestão, não trava.
+  const categoriasExistentes = useMemo(() => Array.from(
+    new Set([
+      ...CATEGORIAS_CONTAS_A_PAGAR.map(c => c.label),
+      ...contas.map(c => c.categoria).filter((c): c is string => !!c && c.trim() !== ''),
+    ])
+  ).sort((a, b) => a.localeCompare(b, 'pt-BR')), [contas])
 
   const contasFiltradas = contas
     .filter(c => contaBateTipo(c, filtroTipo) && contaBateFiltro(c, filtro, hoje) && contaBateMes(c, filtroMes, hoje))
@@ -627,11 +640,13 @@ export default function ContasPage() {
         open={novaFixaOpen}
         onOpenChange={setNovaFixaOpen}
         onSalvo={load}
+        categoriasExistentes={categoriasExistentes}
       />
       <FormularioContaAvulsa
         open={novaAvulsaOpen}
         onOpenChange={setNovaAvulsaOpen}
         onSalvo={load}
+        categoriasExistentes={categoriasExistentes}
       />
     </div>
   )
