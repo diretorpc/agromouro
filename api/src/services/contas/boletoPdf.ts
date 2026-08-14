@@ -41,7 +41,22 @@ const DIAS_FUTURO_MAX  = 730
 export type BoletoLido = {
   valor:       number
   vencimento:  string          // 'YYYY-MM-DD'
+  // Quem cobra, para efeito de reconhecer a compra: o "Beneficiário Final"
+  // quando existir, senão o "Beneficiário".
+  //
+  // A diferença é a que decide se a trava anti-duplicata funciona. Boleto
+  // cedido a banco ou fundo traz no campo "Beneficiário" o CESSIONÁRIO (ex.:
+  // "MILAGRE FUNDO DE INVESTIMENTOS EM DIREITOS CREDITÓRIOS"), e o fornecedor
+  // de verdade — o que está na nota fiscal — aparece embaixo como "Beneficiário
+  // Final" ("UBE TERRA AGRICOLA PECAS E IMPLEMENTOS"). Usar o de cima faria
+  // duas coisas ruins: a tela mostraria um nome que o dono não reconhece, e a
+  // comparação com o fornecedor da nota nunca casaria, criando conta repetida.
+  // Medido num boleto real do Ivan em 14/08/2026.
   beneficiario: string
+  // O que estava impresso no campo "Beneficiário" quando ele é diferente do
+  // final — ou seja, o banco/fundo que cobra. Vai para a observação da conta,
+  // porque é o nome que vai aparecer no extrato bancário depois de pagar.
+  cobradoPor: string | null
   // Número do documento/nota impresso no boleto, quando houver. Só serve para o
   // dono reconhecer a compra na tela — NÃO é usado para casar com a NF-e:
   // o mesmo número existe em fornecedores diferentes (ver a trava de duplicata
@@ -88,7 +103,11 @@ const SCHEMA = {
     },
     beneficiario: {
       type: ['string', 'null'],
-      description: 'Nome de quem recebe (beneficiário/cedente), como está impresso. null se não for boleto.',
+      description: 'Nome do campo "Beneficiário" (quem recebe o dinheiro), como está impresso. null se não for boleto.',
+    },
+    beneficiarioFinal: {
+      type: ['string', 'null'],
+      description: 'Nome do campo "Beneficiário Final" ou "Sacador Avalista", quando existir. É o fornecedor de verdade nos boletos cedidos a banco ou fundo (FIDC/securitizadora). null quando o boleto não tiver esse campo.',
     },
     documento: {
       type: ['string', 'null'],
@@ -99,7 +118,7 @@ const SCHEMA = {
       description: 'Quantas cobranças distintas (parcelas) este documento contém no total. 1 para um boleto comum. Em carnê ou nota parcelada, o número total de parcelas impressas. Se for 1 ou não der para contar, responda 1. Os campos valor e vencimento devem ser sempre os da PRIMEIRA cobrança a vencer.',
     },
   },
-  required: ['ehBoleto', 'valor', 'vencimento', 'beneficiario', 'documento', 'totalDeCobrancas'],
+  required: ['ehBoleto', 'valor', 'vencimento', 'beneficiario', 'beneficiarioFinal', 'documento', 'totalDeCobrancas'],
   additionalProperties: false,
 } as const
 
@@ -127,6 +146,9 @@ function dataExiste(iso: string): boolean {
 // Exportada só para teste: é a única parte desta leitura que dá para provar sem
 // gastar uma chamada de IA por asserção — e é justamente onde mora a decisão de
 // aceitar ou recusar um boleto.
+const nome = (v: unknown): string | null =>
+  typeof v === 'string' && v.trim() ? v.trim() : null
+
 export function validarBoletoLido(bruto: any, hojeISO: string): BoletoLido | null {
   // `=== true`, não apenas verdadeiro: com a string 'false' — que é verdadeira
   // em JavaScript — a checagem frouxa aceitaria como boleto um documento que o
@@ -149,9 +171,13 @@ export function validarBoletoLido(bruto: any, hojeISO: string): BoletoLido | nul
     // que o log diz que foi lido e o que a tela mostra, que ninguém explicaria.
     valor: Math.round(valor * 100) / 100,
     vencimento,
-    beneficiario: typeof beneficiario === 'string' && beneficiario.trim()
-      ? beneficiario.trim()
-      : 'Fornecedor não identificado',
+    // O FINAL manda quando existe: é o fornecedor da nota.
+    beneficiario: nome(bruto.beneficiarioFinal) ?? nome(beneficiario) ?? 'Fornecedor não identificado',
+    // Só preenche quando os dois existem E são diferentes — num boleto comum
+    // não há cessão nenhuma para registrar.
+    cobradoPor: nome(bruto.beneficiarioFinal) && nome(beneficiario) !== nome(bruto.beneficiarioFinal)
+      ? nome(beneficiario)
+      : null,
     documento: typeof bruto.documento === 'string' && bruto.documento.trim()
       ? bruto.documento.trim()
       : null,

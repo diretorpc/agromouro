@@ -14,6 +14,7 @@ function lido(over: Record<string, unknown> = {}) {
     vencimento: '2026-09-02',
     beneficiario: 'HIGA COMERCIO E DISTRIBUICAO LTDA',
     documento: '76593',
+    beneficiarioFinal: null,
     ...over,
   }
 }
@@ -26,6 +27,7 @@ describe('validarBoletoLido — aceita boleto bom', () => {
       vencimento: '2026-09-02',
       beneficiario: 'HIGA COMERCIO E DISTRIBUICAO LTDA',
       documento: '76593',
+      cobradoPor: null,
       totalDeCobrancas: 1,
     })
   })
@@ -101,6 +103,34 @@ describe('validarBoletoLido — recusa em vez de adivinhar', () => {
     // documento que o modelo tinha acabado de dizer que nao era boleto.
     expect(validarBoletoLido(lido({ ehBoleto: 'false' }), HOJE)).toBeNull()
     expect(validarBoletoLido(lido({ ehBoleto: 'true' }), HOJE)).toBeNull()
+  })
+})
+
+// Caso real medido em 14/08/2026 (boleto do Ivan): a cobranca foi cedida a um
+// fundo, entao o campo "Beneficiario" traz o FUNDO e o fornecedor de verdade
+// esta em "Beneficiario Final". Sem esta regra a tela mostraria um nome que o
+// dono nao reconhece E a trava anti-duplicata nunca casaria com a nota.
+describe('validarBoletoLido — boleto cedido a banco ou fundo', () => {
+  it('o Beneficiario Final manda: e ele que esta na nota fiscal', () => {
+    const r = validarBoletoLido(lido({
+      beneficiario: 'MILAGRE FUNDO DE INVESTIMENTOS EM DIREITOS CREDIT N PAD',
+      beneficiarioFinal: 'UBE TERRA AGRICOLA PECAS E IMPLEMENTOS LTDA',
+    }), HOJE)
+    expect(r?.beneficiario).toBe('UBE TERRA AGRICOLA PECAS E IMPLEMENTOS LTDA')
+    // O fundo nao se perde: vai para a observacao, porque e o nome que
+    // aparece no extrato do banco depois de pagar.
+    expect(r?.cobradoPor).toBe('MILAGRE FUNDO DE INVESTIMENTOS EM DIREITOS CREDIT N PAD')
+  })
+
+  it('boleto comum (sem cessao) nao inventa cobrador', () => {
+    const r = validarBoletoLido(lido(), HOJE)
+    expect(r?.beneficiario).toBe('HIGA COMERCIO E DISTRIBUICAO LTDA')
+    expect(r?.cobradoPor).toBeNull()
+  })
+
+  it('os dois campos iguais tambem nao viram cessao', () => {
+    const r = validarBoletoLido(lido({ beneficiarioFinal: 'HIGA COMERCIO E DISTRIBUICAO LTDA' }), HOJE)
+    expect(r?.cobradoPor).toBeNull()
   })
 })
 

@@ -15,8 +15,14 @@ export type ResultadoBoletoPdf =
 // O texto é diferente do da NF-e de propósito: o motivo de conferir é outro.
 function observacaoDoPdf(b: BoletoLido, arquivo: string): string {
   const doc = b.documento ? ` (documento ${b.documento})` : ''
+  // Quem cobra vai escrito quando é diferente do fornecedor: é esse nome que
+  // aparece no extrato do banco depois de pagar, e sem ele o dono veria uma
+  // saída de "MILAGRE FUNDO" sem ligação nenhuma com a compra que fez.
+  const cessao = b.cobradoPor
+    ? ` Cobrança cedida a ${b.cobradoPor} — é esse nome que vai aparecer no extrato.`
+    : ''
   return `${PREFIXO_CONFERIR} este boleto foi lido de um PDF${doc}, não do XML da nota. ` +
-    `Confira valor e vencimento contra o papel antes de pagar. Arquivo: ${arquivo}`
+    `Confira valor e vencimento contra o papel antes de pagar.${cessao} Arquivo: ${arquivo}`
 }
 
 // Já existe conta com este mesmo valor e vencimento nesta fazenda?

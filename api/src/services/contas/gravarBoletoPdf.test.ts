@@ -46,6 +46,7 @@ const boleto: BoletoLido = {
   vencimento: '2026-09-02',
   beneficiario: 'HIGA COMERCIO E DISTRIBUICAO LTDA',
   documento: '76593',
+  cobradoPor: null,
   totalDeCobrancas: 1,
 }
 
