@@ -171,6 +171,35 @@ export async function nfeJaProcessada(
   return !!data
 }
 
+// O id da linha em `notas_fiscais`, pela mesma chave que nfeJaProcessada usa
+// (número + CNPJ + fazenda — o número sozinho não é único no mundo, é sequencial
+// POR fornecedor). Existe para o boleto lido de PDF poder se amarrar à nota que
+// chegou no mesmo e-mail: sem essa amarração, pagar esse boleto criaria um
+// segundo lançamento e o gasto apareceria dobrado nas duas telas de dinheiro
+// (achado [crítico] do Apolo, 14/08/2026 — ver contas/gravarBoletoPdf.ts).
+//
+// Devolve null quando a nota não está no banco. Erro de consulta é relançado,
+// nunca engolido: um null por falha de banco significaria "não há nota", e o
+// boleto nasceria solto — que é exatamente o defeito que isto evita.
+export async function idDaNota(
+  numero: string,
+  emitenteCnpj: string,
+  fazenda_id: string,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('notas_fiscais')
+    .select('id')
+    .eq('numero', numero)
+    .eq('emitente_cnpj', emitenteCnpj)
+    .eq('fazenda_id', fazenda_id)
+    .limit(1)
+    .maybeSingle()
+
+  if (error) throw error
+
+  return data?.id ?? null
+}
+
 // Decide estoque/não-estoque pelo NCM (determinístico).
 // Retorna null quando o NCM não é conclusivo → cai pro Haiku como fallback.
 function fronteiraPorNCM(ncm: string): boolean | null {
