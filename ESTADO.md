@@ -343,13 +343,16 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
-## 🔴 A duplicata passa a vencer o tPag — commitado em 14/08/2026, FALTA O PUSH
+## ✅ A duplicata passa a vencer o tPag — ENVIADO em 14/08/2026
 
-**Estado:** commit `cb7e531` na `main` local, revisado 2x pelo Apolo. **Falta `git push`**
-— o push foi barrado pelo classificador de permissões da sessão e precisa ser rodado pelo
-Matheus. Enquanto ele não sair, nada disso está no Railway e o defeito abaixo continua
-vivo em produção: a próxima nota de fornecedor com tPag de cartão vai perder o boleto
-igual à HIGA.
+**Estado:** commit `cb7e531` (+ `4215b0b` de registro) na `main`, enviado ao GitHub pelo
+Matheus às ~15:59 de 14/08. Revisado 2x pelo Apolo antes de subir. Deploy do Railway é
+automático a partir da `main`.
+
+**Falta a prova em produção:** ninguém viu isto rodando com nota de verdade ainda. A
+confirmação vem sozinha na próxima NF-e que chegar com forma de pagamento de cartão ou
+crédito da loja — o boleto deve nascer em Contas a Pagar com a tarja âmbar "Conferir
+antes de pagar". Até lá, funciona só em teste.
 
 **O defeito, medido com nota real.** A NF-e 76593 (HIGA COMERCIO E DISTRIBUICAO,
 R$ 642,22, emitida e processada em 03/08/2026) trazia quadro de cobrança de verdade no
