@@ -343,6 +343,139 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
+## 🔴 A duplicata passa a vencer o tPag — feito em 14/08/2026, NÃO commitado, NÃO no ar
+
+**Estado:** código escrito e testado na `main` local, **sem commit e sem push**. Estava
+com o Apolo para revisão quando a sessão acabou. Nada disso está rodando em produção —
+o defeito abaixo continua vivo no Railway até alguém commitar, enviar e o deploy sair.
+
+**O defeito, medido com nota real.** A NF-e 76593 (HIGA COMERCIO E DISTRIBUICAO,
+R$ 642,22, emitida e processada em 03/08/2026) trazia quadro de cobrança de verdade no
+XML — `<dup>` com `dVenc` 2026-09-02 e `vDup` 642,22, e `Cnd.Pag:A PRAZO` no campo
+livre. O parser leu a duplicata certinho. Quem jogou fora foi a REGRA: tPag `05`
+("crédito da loja") estava em `MOTIVO_SEM_BOLETO` e fora de `CODIGOS_QUE_CEDEM_A_DUPLICATA`
+(só `17`/`18`/`20`/`90` cediam). O boleto sumiu e o WhatsApp mandou
+*"💳 Sem boleto — a nota diz crédito da loja"* — conclusão errada com cara de certa. O
+Matheus só descobriu em 14/08, ao achar o PDF do boleto no e-mail: 11 dias de silêncio.
+
+A regra antiga tinha sido escrita em 04/08 com **uma amostra só** (METAL AGRÍCOLA nota
+51843, que usou `05` para o que o texto livre chamava de cartão de crédito). A HIGA usa
+o mesmo código para carnê a prazo. É o risco de generalizar de uma amostra: tPag
+descreve o MEIO de pagamento, não o MOMENTO, e cada fornecedor preenche do seu jeito.
+
+**A correção (decisão do Matheus, 14/08, escolhida entre 2 opções apresentadas):**
+duplicata real vence QUALQUER tPag. `CODIGOS_QUE_CEDEM_A_DUPLICATA` deixou de existir;
+`motivoSemBoletoDaNota()` devolve `null` sempre que houver duplicata real. O mapa
+`MOTIVO_SEM_BOLETO` continua existindo, mas só decide nota SEM quadro de cobrança.
+
+**A contrapartida, no mesmo trabalho** — troca um erro caro (boleto perdido) por um
+barato (boleto a mais), e barato só continua barato se o dono souber na hora. Nova
+`motivoVencidoPelaDuplicata()` (`deNotaFiscal.ts`) alimenta **três** lugares, não um:
+
+1. **WhatsApp da nota** — `linhaBoletoContraOCodigo()` (`avisoBoleto.ts`) acrescenta
+   *"👀 Confira este boleto: a nota diz crédito da loja, mas veio com cobrança marcada…"*.
+   `linhaBoleto()` ganhou um 6º parâmetro opcional para isso.
+2. **A própria conta** — `observacaoDoBoletoContraOCodigo()` grava o aviso na coluna
+   `observacao` (`gravarDeNota.ts`), e a tela de Contas mostra em âmbar na linha.
+3. **Resumo diário** — `marcaConferir()` (`resumo.ts`) põe *"👀 confira antes de pagar"*
+   na linha da conta, mais o link da tela no rodapé; a lista de colunas que o job lê
+   virou `COLUNAS_CONTA_RESUMO`, exportada de `resumo.ts` e travada por teste.
+
+**O aviso NÃO vale para tPag `17`/`18`/`20`/`90`** (PIX, transferência, "sem pagamento"),
+via `CODIGOS_QUE_JA_CEDIAM_ANTES`. Esses já cediam à duplicata desde 06/08 — ali ela
+sempre foi cobrança de verdade (revenda que embute o boleto na nota de remessa). Dizer
+"pode já ter sido pago, dispense" numa dessas empurraria o Matheus a dispensar o boleto
+mais caro do sistema: a SYAGRI de R$ 1.060.000 é tPag `90`, e remessa não tem fatura de
+cartão. Achado [alto] da 2ª rodada do Apolo, pego antes de ir pro ar.
+
+**Só o texto que começa com `PREFIXO_CONFERIR`** (`'Conferir antes de pagar:'`) vira
+alerta na tela e no resumo — nunca "tem observação". A coluna é campo livre e já guarda
+nota de auditoria escrita à mão em produção (conta `c0fbe499…`: *"Dispensada em
+04/08/2026: cobrança duplicada"*). A constante está repetida nos dois lados
+(`deNotaFiscal.ts` e `web/app/(app)/contas/tipos.ts`) porque o front não importa do back
+— **mudar o texto exige mexer nos dois**.
+
+Os itens 2 e 3 vieram do **achado [alto] do Apolo**: a mensagem da nota é enviada uma
+vez, para um número só, e a falha de envio é engolida com `console.error`. Sem persistir,
+o resumo diário cobraria esse boleto como *"🔴 urgente"* todo dia sem ressalva nenhuma —
+e se o Matheus pagasse, o dinheiro sairia duas vezes **sem aparecer em lugar nenhum do
+sistema** (`precisaCriarLancamento` devolve `false` para conta de nota, então o Financeiro
+continuaria batendo certinho; só o extrato do banco ficaria errado).
+
+`duplicataEhReal()` **não** mudou — o caso SYAGRI (duplicata vazia, R$ 1.060.000)
+continua protegido pelo mesmo critério de 06/08.
+
+Arquivos: `api/src/services/contas/deNotaFiscal.ts`, `avisoBoleto.ts`, `gravarDeNota.ts`,
+`resumo.ts`, `api/src/jobs/contas.ts`, `api/src/services/nfeProcessor.ts`,
+`web/app/(app)/contas/lista-contas.tsx` + testes em `deNotaFiscal.test.ts`,
+`gravarDeNota.test.ts`, `avisoBoleto.test.ts` e `nfeProcessor.test.ts`.
+
+HISTÓRIA de 14/08: 265/265 testes da API passando, `tsc --noEmit` limpo nos dois lados.
+**Duas rodadas de revisão do Apolo**, a segunda achando 6 problemas na correção da
+primeira — inclusive o mais grave de todos (o aviso indo parar em nota de remessa). Ele
+mediu as mutações numa cópia isolada para provar quais testes realmente travam o quê:
+zerar `marcaConferir` ou tirar `observacao` do `select` passava com a suíte inteira verde
+antes desta segunda rodada.
+O XML da HIGA foi guardado junto dos outros casos-testemunha em `.tmp/notas-exemplo/`
+(pasta **fora do git**, ver `.gitignore:49` — se a máquina for trocada, o arquivo se
+perde). Para refazer a medição ponta a ponta com um XML de verdade, em vez de confiar
+só em teste de mesa:
+
+O `-r dotenv/config` + `DOTENV_CONFIG_PATH` não são enfeite: `parseXmlNFe` mora em
+`nfeProcessor.ts`, que importa `./supabase`, que estoura na carga sem as variáveis — e o
+`.env` está na RAIZ, não em `api/`. Sem isso o comando não roda (medido: a primeira
+versão escrita aqui em 14/08 estava quebrada, achado do Apolo).
+
+```bash
+cd api && DOTENV_CONFIG_PATH=../.env npx tsx -r dotenv/config -e "import {parseXmlNFe} from './src/services/nfeProcessor';import {contasDaNota,motivoVencidoPelaDuplicata,duplicataEhReal} from './src/services/contas/deNotaFiscal';import {readFileSync} from 'fs';const d=parseXmlNFe(readFileSync(process.argv[1],'utf-8'))!;const n={numero:d.numero,emitenteNome:d.emitenteNome,dataEmissao:d.dataEmissao,valorTotal:d.valorTotal,formaPagamento:d.formaPagamento,duplicatas:d.duplicatas,items:d.items.map(i=>({descricao:i.description}))};console.log('tPag',d.formaPagamento,'| boletos',JSON.stringify(contasDaNota(n).map(c=>[c.vencimento,c.valor])),'| aviso:',motivoVencidoPelaDuplicata(d.formaPagamento,d.duplicatas.some(duplicataEhReal)))" ../.tmp/notas-exemplo/31260810476426000170550010000765931015659698-nfe.xml
+```
+
+Saída esperada para a HIGA (conferida em 14/08):
+`tPag 05 | boletos [["2026-09-02",642.22]] | aviso: a nota diz crédito da loja`
+
+**Aviso que o Apolo deixou e não foi resolvido:** na amostra de 5 XMLs do repositório, a
+ÚNICA nota que muda de comportamento com a regra nova é a METAL AGRÍCOLA 51843 — que é
+cartão de verdade (`Cnd.Pag:A VISTA;PAGAMENTO CARTAO CREDITO`) e vai gerar boleto
+fantasma **já vencido**. Ou seja: o aviso "confira este boleto" pode aparecer com
+frequência e quase sempre pedir "dispensar". Aviso que quase sempre é falso alarme é
+aviso que se aprende a ignorar. Se isso incomodar na prática, o refinamento está no
+backlog abaixo.
+
+**Próximo passo:** confirmar o deploy do Railway e conferir a próxima nota de fornecedor
+que chegar com forma de pagamento de cartão.
+
+## 🟡 Boleto da NF 76593 foi gravado À MÃO no banco — 14/08/2026
+
+Enquanto a regra acima não sobe, o boleto que faltava foi inserido direto no Supabase
+(`contas_a_pagar`, id `5d6e2ebd-e492-4275-a013-3c9012ab6173`), já com `nota_fiscal_id`
+apontando para a NF 76593 — **de propósito**: conta amarrada à nota não cria lançamento
+novo ao ser paga (`precisaCriarLancamento`, `contas/pagamento.ts`), então o gasto de
+R$ 642,22 que a nota já lançou em 03/08 não é contado duas vezes. Se tivesse sido
+cadastrada pela tela como "conta avulsa", nasceria solta e **duplicaria o gasto** no dia
+do pagamento.
+
+⚠️ **Lacuna que isto expõe:** a tela "Nova conta avulsa" não tem como vincular a conta a
+uma nota fiscal. Sempre que chegar boleto de uma nota já lançada, ou alguém edita o
+banco à mão (como hoje), ou o gasto dobra. O Matheus foi avisado e deixou a decisão de
+construir o campo para depois.
+
+## ✅ 4 notas de agosto sem boleto — CONFERIDAS pelo Matheus em 14/08, não tinham cobrança mesmo
+
+Medido em 14/08/2026: das 14 notas que entraram de 01/08 em diante, 10 geraram boleto e
+4 não, somando R$ 43.870,00 (NF 62473 SYAGRI R$ 29.150; NF 59109 SOLOS R$ 12.000;
+NF 59104 SOLOS R$ 2.580; NF 47109 TOTAL METAL R$ 140). Como o XML não é guardado
+(`xml_raw` fica vazio — ver memória `nfe-xml-nao-guardado`), o banco não sabe responder
+se elas tinham `<dup>`; só o e-mail original. **O Matheus conferiu no mesmo dia: as 4
+realmente não tinham boleto.**
+
+Conclusão que isso fecha: o estrago da regra antiga (tPag barrando duplicata real) foi
+**1 nota, a HIGA 76593** — não uma safra inteira de boletos perdidos. Vale como
+tranquilizador, não como garantia: só cobre 01/08 em diante, e a regra existe desde
+31/07. Nota anterior a isso nunca gerou boleto por outro motivo (a feature não existia).
+
+Para refazer a lista depois (comparar notas contra contas vinculadas), consultar
+`notas_fiscais` por `created_at` e cruzar com `contas_a_pagar.nota_fiscal_id`.
+
 ## 🟡 Pendências de baixo risco do Financeiro, deixadas para depois
 
 Do conserto do botão "Adicionar" (PR #50, ver seção NO AR): índice único de nome de
@@ -467,6 +600,16 @@ boleto cobra mais que o gasto lançado.
   no Railway.
 - Nota misturada (parte compra, parte remessa) lança o gasto só da parte de compra —
   comportamento correto e **travado por teste**.
+- **Duplicata parcialmente vazia** (achado [baixo] do Apolo, 14/08/2026, sem ocorrência
+  conhecida): nota com 1 duplicata real + 1 só com número de controle gera 2 contas, e a
+  segunda nasce sem valor e sem data. A mensagem sai *"2 boletos: 10/09, sem data —
+  R$ 500,00 no total"* para uma nota de R$ 1.000. Pré-existente; a mudança de 14/08 só
+  estendeu isso a cartão/dinheiro.
+- **Refinar o aviso "confira este boleto" pelo campo livre** (sugestão do Apolo, 14/08):
+  o `infCpl` separa os dois casos sozinho — HIGA diz `Cnd.Pag:A PRAZO`, METAL AGRÍCOLA diz
+  `Cnd.Pag:A VISTA;PAGAMENTO CARTAO CREDITO`. Ler isso permitiria subir o tom só quando
+  for cartão de verdade, em vez de pedir conferência em toda nota de cartão. Texto livre é
+  frágil (cada fornecedor escreve do seu jeito) — por isso é refinamento, nunca regra.
 
 Detalhe de cada um: `.superpowers/sdd/2026-07-31-contas-a-pagar-fase2/progress.md` e
 `.superpowers/sdd/2026-08-03-nfe-cfop-entrega-futura/progress.md`.

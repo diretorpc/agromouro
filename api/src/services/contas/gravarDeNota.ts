@@ -1,6 +1,7 @@
 import { supabase } from '../supabase'
 import {
-  contasDaNota, parcelasDescartadasDaNota,
+  contasDaNota, parcelasDescartadasDaNota, duplicataEhReal,
+  motivoVencidoPelaDuplicata, observacaoDoBoletoContraOCodigo,
   type ContaDeNota, type DadosParaConta, type ParcelaDescartada,
 } from './deNotaFiscal'
 
@@ -53,6 +54,14 @@ export async function gravarContasDaNota(
 
   if (contas.length === 0) return { contas: [], descartadas }
 
+  // Calculado AQUI a partir do mesmo `nfe`, em vez de recebido por parâmetro: a
+  // função pura é a única fonte da resposta, então esta gravação nunca pode
+  // divergir do que o WhatsApp diz sobre a mesma nota. Null no caso comum — a
+  // coluna `observacao` fica como sempre esteve.
+  const observacao = observacaoDoBoletoContraOCodigo(
+    motivoVencidoPelaDuplicata(nfe.formaPagamento, nfe.duplicatas.some(duplicataEhReal)),
+  )
+
   const linhas = contas.map(c => ({
     descricao:      c.descricao,
     fornecedor:     c.fornecedor,
@@ -68,6 +77,7 @@ export async function gravarContasDaNota(
     nota_fiscal_id: notaFiscalId,
     numero_parcela: c.numero_parcela,
     total_parcelas: c.total_parcelas,
+    observacao,
     fazenda_id:     fazendaId,
   }))
 

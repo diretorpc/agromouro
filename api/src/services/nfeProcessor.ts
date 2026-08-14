@@ -4,7 +4,7 @@ import { supabase } from './supabase'
 import { enviarMensagem } from './zapi'
 import { efeitoDoCfop } from './contas/cfop'
 import { gravarContasDaNota } from './contas/gravarDeNota'
-import { motivoSemBoletoDaNota, duplicataEhReal, type ContaDeNota, type ParcelaDescartada } from './contas/deNotaFiscal'
+import { motivoSemBoletoDaNota, motivoVencidoPelaDuplicata, duplicataEhReal, type ContaDeNota, type ParcelaDescartada } from './contas/deNotaFiscal'
 import { linhaBoleto } from './contas/avisoBoleto'
 import { hojeSaoPauloISO, reais } from './contas/formato'
 
@@ -618,12 +618,22 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' | '
     // gera nada), linhaBoleto() caía no ramo "contas.length === 0" com motivo nulo
     // e a mensagem do WhatsApp saía MUDA sobre boleto, quebrando a promessa de
     // avisoBoleto.ts de que "o sistema SEMPRE diz o que concluiu".
+    //
+    // O 6º argumento é o inverso do 2º: quando a duplicata VENCE um código que dizia
+    // "sem cobrança" (mudança de 14/08/2026, ver deNotaFiscal.ts), o boleto é criado
+    // e a mensagem pede conferência em vez de calar. `temDuplicata` é calculado uma
+    // vez e passado para as duas funções de propósito — se cada uma recalculasse por
+    // conta própria, uma futura divergência entre elas faria a mensagem afirmar duas
+    // coisas opostas sobre a mesma nota.
+    const temDuplicataReal = duplicatas.some(duplicataEhReal)
+
     mensagem += linhaBoleto(
       contasCriadas,
-      motivoSemBoletoDaNota(formaPagamento, duplicatas.some(duplicataEhReal)),
+      motivoSemBoletoDaNota(formaPagamento, temDuplicataReal),
       hojeSaoPauloISO(),
       erroContas,
       parcelasPerdidas,
+      motivoVencidoPelaDuplicata(formaPagamento, temDuplicataReal),
     )
 
     // Finding 1b (revisão final) — avisa quando o boleto que ACABOU de ser criado

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { contasDaNota, motivoSemBoleto, parcelasDescartadasDaNota, type DadosParaConta } from './deNotaFiscal'
+import { contasDaNota, motivoSemBoleto, motivoVencidoPelaDuplicata, parcelasDescartadasDaNota, type DadosParaConta } from './deNotaFiscal'
 
 const base: DadosParaConta = {
   numero:         '4516',
@@ -82,20 +82,68 @@ describe('contasDaNota — nota de entrega futura (tPag 90)', () => {
     expect(r[0].valor).toBe(5000)
   })
 
-  it('regressao do cartao: tPag 05 com duplicata continua sem gerar conta (METAL AGRICOLA 51843)', () => {
+  // Caso real HIGA COMERCIO nota 76593 (14/08/2026): tPag '05', duplicata com
+  // dVenc 2026-09-02 e vDup 642,22, "Cnd.Pag:A PRAZO" no campo livre. A regra
+  // anterior (cartao/dinheiro nao cedem) jogou esse boleto fora calado e o
+  // WhatsApp disse "Sem boleto — a nota diz credito da loja". Boleto de verdade,
+  // achado 11 dias depois no PDF do e-mail. Desde entao a duplicata vence o tPag.
+  it('caso HIGA 76593: tPag 05 com duplicata real GERA a conta (a duplicata vence o codigo)', () => {
     const r = contasDaNota({
       ...base, formaPagamento: '05',
-      duplicatas: [{ numero: '001', vencimento: '2026-08-01', valor: 355 }],
+      duplicatas: [{ numero: '001', vencimento: '2026-09-02', valor: 642.22 }],
     })
-    expect(r).toEqual([])
+    expect(r).toHaveLength(1)
+    expect(r[0].vencimento).toBe('2026-09-02')
+    expect(r[0].valor).toBe(642.22)
   })
 
-  it('regressao do cartao: tPag 03 com duplicata continua sem gerar conta', () => {
+  it('tPag 03 (cartao de credito) com duplicata real GERA a conta — boleto a mais se dispensa, boleto a menos vence calado', () => {
     const r = contasDaNota({
       ...base, formaPagamento: '03',
       duplicatas: [{ numero: '001', vencimento: '2026-08-01', valor: 355 }],
     })
-    expect(r).toEqual([])
+    expect(r).toHaveLength(1)
+    expect(r[0].valor).toBe(355)
+  })
+
+  // A contrapartida do teste acima: quando a duplicata vence um codigo de "sem
+  // cobranca", o dono PRECISA ser avisado, senao paga o boleto fantasma e a
+  // fatura do cartao. Sem esta prova, a mudanca de 14/08/2026 fica pela metade.
+  it('tPag 05/03 com duplicata: motivoVencidoPelaDuplicata devolve o motivo, para o WhatsApp pedir conferencia', () => {
+    expect(motivoVencidoPelaDuplicata('05', true)).toBe('a nota diz crédito da loja')
+    expect(motivoVencidoPelaDuplicata('03', true)).toBe('a nota diz cartão de crédito')
+  })
+
+  it('sem conflito nenhum: motivoVencidoPelaDuplicata devolve null (nao enche a mensagem a toa)', () => {
+    // Sem duplicata nao ha nada que a duplicata pudesse vencer...
+    expect(motivoVencidoPelaDuplicata('05', false)).toBeNull()
+    // ...e um codigo que nunca disse "sem boleto" nao tem motivo a vencer.
+    expect(motivoVencidoPelaDuplicata('15', true)).toBeNull()
+    expect(motivoVencidoPelaDuplicata(null, true)).toBeNull()
+  })
+
+  // Achado [alto] do Apolo (2a rodada de 14/08/2026). PIX, transferencia e "sem
+  // pagamento" JA cediam a duplicata desde 06/08 — ali a duplicata sempre foi cobranca
+  // de verdade (revenda que embute o boleto na nota de remessa). Dizer "pode ja ter
+  // sido pago, dispense" numa dessas empurraria o dono a dispensar o boleto mais caro
+  // que entra no sistema: a SYAGRI de R$ 1.060.000 e tPag '90'. Nao existe fatura de
+  // cartao numa remessa.
+  it('tPag 17/18/20/90 com duplicata NAO pedem conferencia — a duplicata ja mandava neles antes', () => {
+    for (const tPag of ['17', '18', '20', '90']) {
+      expect(motivoVencidoPelaDuplicata(tPag, true)).toBeNull()
+    }
+    // ...mas o boleto continua nascendo normalmente nesses codigos.
+    const r = contasDaNota({
+      ...base, formaPagamento: '90',
+      duplicatas: [{ numero: '001', vencimento: '2026-09-15', valor: 1060000 }],
+    })
+    expect(r).toHaveLength(1)
+  })
+
+  it('so dinheiro e cartao (01/03/04/05) pedem conferencia — os que a mudanca de 14/08 destravou', () => {
+    for (const tPag of ['01', '03', '04', '05']) {
+      expect(motivoVencidoPelaDuplicata(tPag, true)).not.toBeNull()
+    }
   })
 
   // '16'/'19'/'21' não estão mapeados em MOTIVO_SEM_BOLETO (decisão registrada
@@ -131,20 +179,17 @@ describe('contasDaNota — nota de entrega futura (tPag 90)', () => {
     expect(r).toEqual([])
   })
 
-  it('dinheiro (01) nao cede a duplicata: mesmo com vencimento futuro real, nao gera conta', () => {
-    const r = contasDaNota({
-      ...base, formaPagamento: '01',
-      duplicatas: [{ numero: '001', vencimento: '2026-08-01', valor: 355 }],
-    })
-    expect(r).toEqual([])
-  })
-
-  it('cartao de debito (04) nao cede a duplicata: mesmo com vencimento futuro real, nao gera conta', () => {
-    const r = contasDaNota({
-      ...base, formaPagamento: '04',
-      duplicatas: [{ numero: '001', vencimento: '2026-08-01', valor: 355 }],
-    })
-    expect(r).toEqual([])
+  // 01 e 04 seguem a mesma regra de 03/05 desde 14/08/2026: a duplicata manda.
+  // Sem duplicata, os dois continuam sem gerar boleto (testado no bloco de cima).
+  it('dinheiro (01) e cartao de debito (04) com duplicata real GERAM conta — a duplicata vence o codigo', () => {
+    for (const tPag of ['01', '04']) {
+      const r = contasDaNota({
+        ...base, formaPagamento: tPag,
+        duplicatas: [{ numero: '001', vencimento: '2026-08-01', valor: 355 }],
+      })
+      expect(r).toHaveLength(1)
+      expect(r[0].vencimento).toBe('2026-08-01')
+    }
   })
 })
 
@@ -214,13 +259,24 @@ describe('parcelasDescartadasDaNota — tPag 90 concorda com contasDaNota', () =
     expect(r[0].motivo).toMatch(/Data em formato inválido/)
   })
 
-  it('tPag 05 com duplicata: lista vazia, igual contasDaNota (cartao nao cede a duplicata)', () => {
+  // As duas funcoes precisam concordar sobre a MESMA nota — se uma achasse que a
+  // nota gera boleto e a outra nao, uma parcela perdida sumiria sem aviso.
+  it('tPag 05 com duplicata boa: contasDaNota gera a conta e parcelasDescartadasDaNota nao acusa perda nenhuma', () => {
     const nfe = {
       ...base, formaPagamento: '05',
       duplicatas: [{ numero: '001', vencimento: '2026-08-01', valor: 355 }],
     }
-    expect(contasDaNota(nfe)).toEqual([])
+    expect(contasDaNota(nfe)).toHaveLength(1)
     expect(parcelasDescartadasDaNota(nfe)).toEqual([])
+  })
+
+  it('tPag 05 com duplicata de data malformada: as duas concordam que a parcela se perdeu', () => {
+    const nfe = {
+      ...base, formaPagamento: '05',
+      duplicatas: [{ numero: '001', vencimento: '2026-13-45', valor: 355 }],
+    }
+    expect(() => contasDaNota(nfe)).toThrow(/Nenhuma das 1 parcela\(s\)/)
+    expect(parcelasDescartadasDaNota(nfe)).toHaveLength(1)
   })
 })
 
@@ -304,8 +360,8 @@ describe('contasDaNota', () => {
     expect(r[0].valor).toBeNull()
   })
 
-  it('cartao de credito nao gera conta nenhuma', () => {
-    expect(contasDaNota({ ...base, formaPagamento: '05' })).toEqual([])
+  it('credito da loja SEM duplicata nao gera conta nenhuma — o codigo so decide quando nao ha cobranca no XML', () => {
+    expect(contasDaNota({ ...base, formaPagamento: '05', duplicatas: [] })).toEqual([])
   })
 
   it('soma das parcelas diferente do total da nota gera assim mesmo', () => {

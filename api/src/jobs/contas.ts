@@ -1,7 +1,9 @@
 import { supabase } from '../services/supabase'
 import { enviarMensagem, getAuthorizedPhones } from '../services/zapi'
 import { sincronizarOcorrencias } from '../services/contas/sincronizar'
-import { montarResumo, resumoVazio, textoResumo, type ContaResumo } from '../services/contas/resumo'
+import {
+  montarResumo, resumoVazio, textoResumo, COLUNAS_CONTA_RESUMO, type ContaResumo,
+} from '../services/contas/resumo'
 import { hojeSaoPauloISO } from '../services/contas/formato'
 
 export async function rodarContasDoDia(): Promise<void> {
@@ -17,7 +19,10 @@ export async function rodarContasDoDia(): Promise<void> {
 
       const { data: contas, error: erroContas } = await supabase
         .from('contas_a_pagar')
-        .select('descricao, fornecedor, vencimento, valor, status, created_at, contas_recorrentes(avisar_dias_antes)')
+        // A lista de colunas mora em contas/resumo.ts, junto de quem as consome —
+        // e é travada por teste lá. Escrita aqui à mão, esquecer uma coluna faria o
+        // campo chegar `undefined` e a informação sumir sem quebrar teste nenhum.
+        .select(COLUNAS_CONTA_RESUMO)
         .eq('fazenda_id', fazenda.id)
         .in('status', ['aguardando', 'aberta'])
 
@@ -32,6 +37,7 @@ export async function rodarContasDoDia(): Promise<void> {
         vencimento:        c.vencimento,
         valor:             c.valor,
         status:            c.status,
+        observacao:        c.observacao ?? null,
         avisar_dias_antes: c.contas_recorrentes?.avisar_dias_antes ?? 3,
         // created_at vem como timestamp completo; o escalonamento só quer o dia.
         criada_em:         String(c.created_at ?? '').slice(0, 10),

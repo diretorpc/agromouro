@@ -115,3 +115,50 @@ describe('linhaBoleto — parcela descartada (perdida no meio de uma nota que de
     expect(linhaBoleto([conta()], null, HOJE, false)).not.toContain('Falta')
   })
 })
+
+// A mitigacao da mudanca de 14/08/2026 (a duplicata vence qualquer tPag), no nivel da
+// funcao pura: o TEXTO do aviso e a pluralizacao. Quem prova que nfeProcessor.ts
+// realmente PASSA o motivo adiante sao os testes de nfeProcessor.test.ts — foi la que a
+// mutacao "apagar o 6o argumento" falhou quando o Apolo mediu. Os dois niveis se
+// completam; nenhum dos dois sozinho travaria o aviso.
+describe('linhaBoleto — aviso de boleto criado CONTRA o codigo de pagamento', () => {
+  it('com motivoVencido, pede conferencia e diz como dispensar', () => {
+    const t = linhaBoleto([conta()], null, HOJE, false, [], 'a nota diz cartão de crédito')
+    expect(t).toContain('👀')
+    expect(t).toContain('Confira este boleto')
+    expect(t).toContain('a nota diz cartão de crédito')
+    expect(t).toContain('dispense em')
+    // O boleto em si continua sendo anunciado — o aviso acrescenta, nao substitui.
+    expect(t).toContain('R$ 30.600,00')
+  })
+
+  it('sem motivoVencido (caso comum), a mensagem nao muda', () => {
+    const t = linhaBoleto([conta()], null, HOJE, false, [], null)
+    expect(t).not.toContain('Confira')
+    expect(t).not.toContain('👀')
+  })
+
+  it('tres boletos suspeitos falam no plural — singular faria dispensar so um dos tres', () => {
+    const t = linhaBoleto([
+      conta({ vencimento: '2026-09-10', numero_parcela: 1, total_parcelas: 3 }),
+      conta({ vencimento: '2026-10-10', numero_parcela: 2, total_parcelas: 3 }),
+      conta({ vencimento: '2026-11-10', numero_parcela: 3, total_parcelas: 3 }),
+    ], null, HOJE, false, [], 'a nota diz cartão de crédito')
+    expect(t).toContain('Confira estes 3 boletos')
+    expect(t).not.toContain('Confira este boleto')
+  })
+
+  it('boleto sem data de vencimento tambem recebe o aviso', () => {
+    const t = linhaBoleto([conta({ vencimento: null })], null, HOJE, false, [], 'a nota diz PIX')
+    expect(t).toContain('Boleto sem data de vencimento')
+    expect(t).toContain('Confira este boleto')
+  })
+
+  it('quando NAO ha boleto nenhum, nao manda conferir o que nao existe', () => {
+    expect(linhaBoleto([], null, HOJE, false, [], 'a nota diz cartão de crédito')).not.toContain('Confira')
+    // Recusa declarada tem a linha dela ("Sem boleto") e nao deve ganhar a de conferencia.
+    const recusa = linhaBoleto([], 'a nota diz cartão de crédito', HOJE, false, [], null)
+    expect(recusa).toContain('Sem boleto')
+    expect(recusa).not.toContain('Confira')
+  })
+})

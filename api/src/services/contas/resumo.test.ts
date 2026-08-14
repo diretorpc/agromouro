@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { montarResumo, resumoVazio, textoResumo, type ContaResumo } from './resumo'
+import { montarResumo, resumoVazio, textoResumo, COLUNAS_CONTA_RESUMO, type ContaResumo } from './resumo'
+import { PREFIXO_CONFERIR } from './deNotaFiscal'
 
 const HOJE = '2026-07-29'
 
@@ -171,5 +172,85 @@ describe('conta sem vencimento', () => {
   it('o texto da conta antiga diz ha quantos dias esta esperando', () => {
     const txt = textoResumo(montarResumo([conta({ vencimento: null, criada_em: '2026-07-20' })], HOJE), HOJE)
     expect(txt).toContain('9 dias')
+  })
+})
+
+// O resumo diario e o canal que o Matheus le todo dia — e era o unico dos tres pontos
+// de aviso sem teste nenhum (achado [medio-alto] do Apolo, 14/08/2026: zerar
+// marcaConferir ou tirar `observacao` do select deixava a suite inteira verde).
+describe('textoResumo — marca de "confira antes de pagar"', () => {
+  const OBS_CONFERIR = `${PREFIXO_CONFERIR} a nota diz crédito da loja, mas veio com cobrança marcada.`
+
+  it('conta atrasada com o aviso ganha a marca e o link da tela', () => {
+    const txt = textoResumo(
+      montarResumo([conta({ vencimento: '2026-07-25', observacao: OBS_CONFERIR })], HOJE),
+      HOJE,
+    )
+    expect(txt).toContain('confira antes de pagar')
+    expect(txt).toContain('/contas')
+  })
+
+  it('a marca vale nos outros grupos tambem, nao so nas atrasadas', () => {
+    const vencendo = textoResumo(
+      montarResumo([conta({ vencimento: '2026-07-31', observacao: OBS_CONFERIR })], HOJE),
+      HOJE,
+    )
+    expect(vencendo).toContain('confira antes de pagar')
+
+    const semData = textoResumo(
+      montarResumo([conta({ vencimento: null, observacao: OBS_CONFERIR })], HOJE),
+      HOJE,
+    )
+    expect(semData).toContain('confira antes de pagar')
+  })
+
+  it('sem observacao, o texto e IDENTICO ao de antes da marca existir', () => {
+    const r = montarResumo([conta({ vencimento: '2026-07-25' })], HOJE)
+    const txt = textoResumo(r, HOJE)
+    expect(txt).toContain('• Cemig — Energia — venceu 25/07, R$ 890,00')
+    expect(txt).not.toContain('confira')
+    expect(txt).not.toContain('👀')
+  })
+
+  // A coluna e campo livre: ja existe conta em producao com nota de auditoria escrita
+  // a mao ("Dispensada em 04/08: cobranca duplicada..."). So o prefixo vira alerta.
+  it('observacao escrita a mao NAO vira alerta', () => {
+    const txt = textoResumo(
+      montarResumo([conta({
+        vencimento: '2026-07-25',
+        observacao: 'Combinado com o fornecedor: pagar junto com a proxima compra.',
+      })], HOJE),
+      HOJE,
+    )
+    expect(txt).not.toContain('confira antes de pagar')
+    expect(txt).not.toContain('👀')
+  })
+
+  it('o link nao aparece quando nenhuma conta pede conferencia', () => {
+    const txt = textoResumo(montarResumo([conta({ vencimento: '2026-07-25' })], HOJE), HOJE)
+    expect(txt).not.toContain('/contas')
+  })
+
+  // Duas contas com aviso: um link so, no fim. Nao um por conta.
+  it('varias contas com aviso levam UM link so', () => {
+    const txt = textoResumo(
+      montarResumo([
+        conta({ vencimento: '2026-07-25', observacao: OBS_CONFERIR }),
+        conta({ vencimento: '2026-07-26', observacao: OBS_CONFERIR, descricao: 'Água' }),
+      ], HOJE),
+      HOJE,
+    )
+    expect(txt.match(/\/contas/g)).toHaveLength(1)
+  })
+})
+
+// Sem isto, apagar `observacao` do .select() do job (api/src/jobs/contas.ts) faria a
+// marca sumir da mensagem diaria sem quebrar teste nenhum — o campo chegaria undefined.
+describe('COLUNAS_CONTA_RESUMO — o job precisa trazer o que a regra usa', () => {
+  it('traz todas as colunas que montarResumo/textoResumo leem', () => {
+    for (const coluna of ['descricao', 'fornecedor', 'vencimento', 'valor', 'status', 'observacao', 'created_at']) {
+      expect(COLUNAS_CONTA_RESUMO).toContain(coluna)
+    }
+    expect(COLUNAS_CONTA_RESUMO).toContain('contas_recorrentes(avisar_dias_antes)')
   })
 })

@@ -755,6 +755,60 @@ describe('processarNFe — CFOP manda no estoque e no custo', () => {
     expect(mensagem).toContain('Sem boleto')
     expect(mensagem).toContain('a nota diz que não há pagamento')
   })
+
+  // MUDANCA DE 14/08/2026 — a duplicata real vence qualquer tPag (caso HIGA 76593).
+  // Mesmo motivo do teste acima: sem cobrir a MENSAGEM aqui, apagar o 6o argumento
+  // de linhaBoleto em nfeProcessor.ts deixaria a suite verde e o aviso sumiria.
+  it('tPag 05 (credito da loja) COM duplicata real: cria o boleto E pede conferencia na mensagem', async () => {
+    await processarNFe(
+      nota({
+        formaPagamento: '05',
+        duplicatas: [{ numero: '001', vencimento: '2026-09-02', valor: 642.22 }],
+      }),
+      'webhook', 'fazenda-fake-id',
+    )
+
+    const upsertContas = chamadas.filter(c => c.table === 'contas_a_pagar' && c.method === 'upsert')
+    expect(upsertContas).toHaveLength(1)
+
+    const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
+    expect(mensagem).not.toContain('Sem boleto')
+    expect(mensagem).toContain('Boleto:')
+    expect(mensagem).toContain('Confira este boleto')
+    expect(mensagem).toContain('a nota diz crédito da loja')
+  })
+
+  // O aviso do WhatsApp passa uma vez e pode nem ser entregue (o envio e' engolido
+  // com console.error). A observacao gravada na conta e' o que sobrevive — e e' dela
+  // que o resumo diario tira a marca "confira antes de pagar".
+  it('tPag 05 COM duplicata real: a observacao de conferencia e gravada NA CONTA', async () => {
+    await processarNFe(
+      nota({
+        formaPagamento: '05',
+        duplicatas: [{ numero: '001', vencimento: '2026-09-02', valor: 642.22 }],
+      }),
+      'webhook', 'fazenda-fake-id',
+    )
+
+    const upsert = chamadas.find(c => c.table === 'contas_a_pagar' && c.method === 'upsert')
+    const linhas = upsert?.payload as any[]
+    expect(linhas[0].observacao).toContain('Conferir antes de pagar')
+    expect(linhas[0].observacao).toContain('a nota diz crédito da loja')
+  })
+
+  it('nota normal (tPag 15, boleto): a conta NAO ganha observacao nenhuma', async () => {
+    await processarNFe(
+      nota({
+        formaPagamento: '15',
+        duplicatas: [{ numero: '001', vencimento: '2026-09-02', valor: 642.22 }],
+      }),
+      'webhook', 'fazenda-fake-id',
+    )
+
+    const upsert = chamadas.find(c => c.table === 'contas_a_pagar' && c.method === 'upsert')
+    const linhas = upsert?.payload as any[]
+    expect(linhas[0].observacao).toBeNull()
+  })
 })
 
 // ─── TASK 6.5 — a tela Financeiro precisa saber, POR ITEM, o que é gasto ────

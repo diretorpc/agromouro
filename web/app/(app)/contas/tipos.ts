@@ -31,6 +31,13 @@ export type ContaAPI = Conta & {
   notas_fiscais: { numero: string } | null
 }
 
+// Começo do texto que a API grava em `observacao` quando o boleto nasceu apesar de a
+// nota dizer cartão/dinheiro (PREFIXO_CONFERIR em api/src/services/contas/deNotaFiscal.ts).
+// Repetido aqui porque o front não importa do back — os dois lados PRECISAM mudar juntos
+// se este texto mudar. A coluna é campo livre e guarda outras anotações; só o que começa
+// com este prefixo vira alerta na tela.
+export const PREFIXO_CONFERIR = 'Conferir antes de pagar:'
+
 // Conta encerrada (paga ou dispensada) não entra em nenhum total pendente, não
 // pode ficar "atrasada" e sai da fila de ações. page.tsx usa isto em
 // calcularTotais e no filtro/ordenação da lista; lista-contas.tsx usa isto para

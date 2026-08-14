@@ -2,7 +2,7 @@
 
 import { Fragment, useState } from 'react'
 import {
-  CircleDollarSign, Ban, CheckCircle2, Undo2, ChevronDown, ChevronRight,
+  CircleDollarSign, Ban, CheckCircle2, Undo2, ChevronDown, ChevronRight, AlertTriangle,
 } from 'lucide-react'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/action-menu'
 import { SortableTableHead } from '@/components/ui/sortable-table-head'
-import { ENCERRADAS, type ContaAPI, type Conta } from './tipos'
+import { ENCERRADAS, PREFIXO_CONFERIR, type ContaAPI, type Conta } from './tipos'
 
 // Declarado aqui (não em page.tsx) para não duplicar a mesma verdade em dois
 // lugares — page.tsx importa este tipo de volta, mesmo padrão que `fmtBRL`
@@ -162,6 +162,20 @@ export function ListaContas({ contas, onPagar, onDispensar, onDesfazer, onEditar
                   <p>{conta.descricao}</p>
                   {conta.nota_fiscal_id && conta.notas_fiscais && (
                     <p className="text-xs text-muted-foreground">NF {conta.notas_fiscais.numero}</p>
+                  )}
+                  {/* Alerta de boleto que nasceu apesar de a nota dizer cartão/dinheiro
+                      (ver observacaoDoBoletoContraOCodigo na API). Precisa estar AQUI: a
+                      mensagem do WhatsApp passa uma vez, esta linha fica — sem ela o
+                      resumo diário cobraria o boleto como urgente sem nunca dizer que ele
+                      pode já ter sido pago.
+                      Só o texto com ESTE prefixo vira alerta, nunca "tem observação":
+                      a coluna é campo livre e já guarda nota de auditoria escrita à mão
+                      em produção. Marcar tudo faria a tela gritar à toa. */}
+                  {conta.observacao?.startsWith(PREFIXO_CONFERIR) && !ENCERRADAS.has(conta.status) && (
+                    <p className="text-xs text-amber-700 mt-1 flex items-start gap-1">
+                      <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" aria-hidden="true" />
+                      <span>{conta.observacao}</span>
+                    </p>
                   )}
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground whitespace-nowrap">

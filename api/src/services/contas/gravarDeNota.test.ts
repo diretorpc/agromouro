@@ -70,9 +70,21 @@ describe('gravarContasDaNota — parcelas descartadas', () => {
     expect(r.descartadas[0].motivo).toMatch(/Data em formato inválido/)
   })
 
-  it('cartao de credito: nem contas nem descartadas — a nota nem tenta gerar boleto', async () => {
-    const r = await gravarContasDaNota({ ...base, formaPagamento: '05' }, 'nfe-id', 'fazenda-id')
+  it('credito da loja SEM duplicata: nem contas nem descartadas — a nota nem tenta gerar boleto', async () => {
+    const r = await gravarContasDaNota({ ...base, formaPagamento: '05', duplicatas: [] }, 'nfe-id', 'fazenda-id')
     expect(r.contas).toEqual([])
+    expect(r.descartadas).toEqual([])
+  })
+
+  // Caso HIGA 76593 (14/08/2026) chegando ate a gravacao: a duplicata vence o tPag
+  // e o boleto vai pro banco, em vez de sumir calado no meio do caminho.
+  it('credito da loja COM duplicata: o boleto e gravado (a duplicata vence o codigo)', async () => {
+    const r = await gravarContasDaNota({
+      ...base, formaPagamento: '05',
+      duplicatas: [{ numero: '001', vencimento: '2026-09-02', valor: 642.22 }],
+    }, 'nfe-id', 'fazenda-id')
+    expect(r.contas).toHaveLength(1)
+    expect(r.contas[0].vencimento).toBe('2026-09-02')
     expect(r.descartadas).toEqual([])
   })
 

@@ -47,7 +47,8 @@ export type ParcelaDescartada = {
 // tPag descreve o MEIO de pagamento, não o MOMENTO: uma compra pode ser "uma parte
 // por PIX agora, o resto por boleto daqui a 3 meses" no mesmo XML. Por isso este mapa
 // sozinho NUNCA decide a nota — motivoSemBoletoDaNota() cruza com a duplicata antes de
-// decidir de verdade (ver CODIGOS_QUE_CEDEM_A_DUPLICATA logo abaixo).
+// decidir de verdade, e desde 14/08/2026 a duplicata real vence qualquer código daqui
+// (ver o bloco logo abaixo). Este mapa só decide notas SEM quadro de cobrança.
 // Confirmar contra o manual vigente da NF-e antes de acrescentar código novo.
 const MOTIVO_SEM_BOLETO: Record<string, string> = {
   '01': 'a nota diz pagamento em dinheiro',
@@ -86,24 +87,38 @@ export function motivoSemBoleto(formaPagamento: string | null): string | null {
   return MOTIVO_SEM_BOLETO[formaPagamento] ?? null
 }
 
-// Códigos que CEDEM à duplicata preenchida.
-// '90' ("sem pagamento") é a nota declarando que não há cobrança. Mas se ela vem
-// com quadro de duplicatas, o boleto é real e vence o código: existe revenda que
-// pula o passo do faturamento e embute a cobrança na própria nota de remessa —
-// perder esse boleto é o erro mais caro possível.
-// '17'/'18'/'20' (PIX e transferência) cedem pelo MESMO motivo: tPag descreve o meio
-// de pagamento, não o momento. "Entrada por PIX + saldo em boleto daqui a 3 meses" é
-// uma combinação real — se a nota tem duplicata de verdade (data e valor programados),
-// a duplicata é o dado mais confiável, mesmo que o código sozinho dissesse "sem boleto".
-// Regressão pega pelo Apolo (06/08/2026): nota com tPag '18' e duplicata futura de
-// R$ 88.939,27 devolvia [] antes desta correção — o boleto sumia calado.
-// Cartão e dinheiro NÃO cedem: ali a cobrança vem pela fatura do cartão ou o
-// dinheiro já saiu, e a duplicata do XML é só o espelho da venda. Prova medida em
-// 04/08/2026: METAL AGRÍCOLA nota 51843 tem tPag '05' E duplicata preenchida.
-// '16'/'19'/'21' não estão nem aqui nem em MOTIVO_SEM_BOLETO (ver comentário lá
-// em cima) — de propósito: como não são tratados como "sem boleto" em nenhuma
-// circunstância, não existe nada para "ceder" nesses códigos.
-const CODIGOS_QUE_CEDEM_A_DUPLICATA = new Set(['17', '18', '20', '90'])
+// A DUPLICATA REAL VENCE QUALQUER tPag. Não há mais lista de exceções.
+//
+// Até 14/08/2026 só '17'/'18'/'20'/'90' (PIX, transferência, "sem pagamento")
+// cediam à duplicata; cartão e dinheiro não cediam, com base numa amostra só —
+// METAL AGRÍCOLA nota 51843 (04/08/2026), que usou '05' ("crédito da loja") para
+// o que o texto livre chamava de cartão de crédito.
+//
+// Prova que derrubou essa regra (14/08/2026): HIGA COMÉRCIO nota 76593, tPag '05',
+// duplicata 001 com dVenc 2026-09-02 e vDup 642,22, e o próprio XML dizendo
+// "Cnd.Pag:A PRAZO" no campo livre. Boleto de verdade, com data e valor
+// programados, que o sistema jogou fora calado — o WhatsApp saiu dizendo
+// "Sem boleto — a nota diz crédito da loja", uma conclusão errada que parecia
+// certa. O dono só descobriu 11 dias depois, ao achar o PDF do boleto no e-mail.
+//
+// A raiz: tPag descreve o MEIO de pagamento, não o MOMENTO, e cada fornecedor
+// preenche do seu jeito ('05' = cartão para um, = carnê a prazo para outro). Uma
+// duplicata com data e valor, não. Ela é um compromisso programado — o dado mais
+// confiável do XML sobre "vai ter algo para pagar". Escolha do dono, 14/08/2026:
+// quando a nota traz esse compromisso, ele manda, e nenhum código o cancela.
+//
+// O risco assumido: fornecedor que espelha a venda no cartão como duplicata gera
+// boleto fantasma. É o risco mais barato — pagar a conta não cria lançamento novo
+// (`precisaCriarLancamento` em pagamento.ts), então dispensar ou pagar não mexe no
+// gasto já lançado pela nota. ATENÇÃO ao limite dessa garantia: ela cobre o
+// Financeiro, NÃO o dinheiro. Se o boleto fantasma for pago, o dinheiro sai do
+// banco duas vezes (aqui e na fatura do cartão) e o sistema não tem como perceber.
+// O risco caro continua sendo o outro: boleto de verdade que vence sem ninguém saber.
+//
+// Por isso o aviso não é enfeite. motivoVencidoPelaDuplicata() abaixo alimenta
+// TRÊS lugares, de propósito: a mensagem do WhatsApp (avisoBoleto.ts), a coluna
+// `observacao` da própria conta (gravarDeNota.ts) e a marca do resumo diário
+// (resumo.ts). A mensagem passa uma vez e pode nem ser entregue; a observação fica.
 
 // Decide se a nota gera boleto levando em conta a duplicata — é esta função,
 // não motivoSemBoleto() sozinha, que contasDaNota() e parcelasDescartadasDaNota()
@@ -112,10 +127,68 @@ export function motivoSemBoletoDaNota(
   formaPagamento: string | null,
   temDuplicata: boolean,
 ): string | null {
-  const motivo = motivoSemBoleto(formaPagamento)
-  if (!motivo) return null
-  if (temDuplicata && CODIGOS_QUE_CEDEM_A_DUPLICATA.has(formaPagamento ?? '')) return null
-  return motivo
+  if (temDuplicata) return null
+  return motivoSemBoleto(formaPagamento)
+}
+
+// O motivo que a duplicata DERRUBOU — não é recusa, é o contrário: o boleto foi
+// criado apesar de o código de pagamento dizer que não haveria cobrança.
+// Devolve null quando não há conflito nenhum (o caso comum).
+//
+// Existe porque a decisão de 14/08/2026 troca um erro caro (boleto perdido) por um
+// erro barato (boleto a mais) — e um erro barato só continua barato se o dono for
+// avisado na hora. Sem esta linha, o boleto fantasma de uma compra no cartão vira
+// uma cobrança silenciosa na lista de contas, e o dono pode pagar o que a fatura
+// do cartão já vai cobrar.
+// Códigos em que a duplicata JÁ mandava antes de 14/08/2026 — e que por isso NÃO
+// geram o aviso de conferência. Achado [alto] do Apolo na 2ª rodada do mesmo dia.
+//
+// PIX, transferência e "sem pagamento" cedem à duplicata desde 06/08. Ali a duplicata
+// sempre foi lida como cobrança de verdade — é o caso da revenda que embute o boleto na
+// nota de remessa. Avisar "pode já ter sido pago, dispense" nessas notas seria empurrar
+// o dono a dispensar justamente o boleto real e caro: a SYAGRI de R$ 1.060.000 é tPag
+// '90'. Não existe fatura de cartão para uma remessa.
+//
+// O aviso serve só para o que a mudança de 14/08 destravou de novo: dinheiro e cartão
+// ('01', '03', '04', '05') — onde a cobrança pode mesmo já ter saído por outro caminho.
+const CODIGOS_QUE_JA_CEDIAM_ANTES = new Set(['17', '18', '20', '90'])
+
+export function motivoVencidoPelaDuplicata(
+  formaPagamento: string | null,
+  temDuplicata: boolean,
+): string | null {
+  if (!temDuplicata) return null
+  if (CODIGOS_QUE_JA_CEDIAM_ANTES.has(formaPagamento ?? '')) return null
+  return motivoSemBoleto(formaPagamento)
+}
+
+// O mesmo aviso, gravado NA CONTA (coluna `observacao`) em vez de só na mensagem
+// do WhatsApp — achado [alto] do Apolo em 14/08/2026, no mesmo dia da mudança.
+//
+// A mensagem de NF-e processada é enviada uma vez, para um número só, e a falha de
+// envio é engolida (nfeProcessor.ts). O resumo diário, esse sim, cobra a conta como
+// "🔴 urgente" todo santo dia — e sem esta observação ele não teria como saber que
+// aquele boleto pode já ter sido pago no cartão. O dono levaria a cobrança a sério,
+// pagaria, e o pagamento em duplicidade não apareceria em lugar nenhum do sistema:
+// só no extrato do banco (precisaCriarLancamento não cria lançamento para conta de
+// nota, então o Financeiro continuaria batendo).
+//
+// Prova do caso real: METAL AGRÍCOLA nota 51843, tPag '05', duplicata com dVenc
+// 2026-08-01 — nota de cartão de verdade ("Cnd.Pag:A VISTA;PAGAMENTO CARTAO
+// CREDITO" no campo livre) que hoje gera boleto e nasce VENCIDA, indo direto para
+// o balde de urgentes do aviso diário.
+// O começo do texto é uma CONSTANTE, não enfeite: a coluna `observacao` é campo livre
+// (o PATCH de /contas aceita qualquer texto, e já existe conta com nota de auditoria
+// escrita à mão lá dentro). Quem exibe o alerta — a tela de Contas e o resumo diário —
+// reconhece este prefixo em vez de tratar QUALQUER observação como boleto suspeito.
+// Sem isso, o dia em que alguém anotar qualquer coisa numa conta aberta, ela ganharia
+// triângulo âmbar e "confira antes de pagar" sem motivo nenhum. Achado [médio] do Apolo.
+export const PREFIXO_CONFERIR = 'Conferir antes de pagar:'
+
+export function observacaoDoBoletoContraOCodigo(motivoVencido: string | null): string | null {
+  if (!motivoVencido) return null
+  return `${PREFIXO_CONFERIR} ${motivoVencido}, mas veio com cobrança marcada. ` +
+    `Pode já ter sido pago (ou vir na fatura do cartão) — nesse caso, dispense esta conta.`
 }
 
 // Mês de uma data 'YYYY-MM-DD' (ou ISO completo) como primeiro dia do mês.
