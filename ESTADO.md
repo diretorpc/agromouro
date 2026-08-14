@@ -343,11 +343,13 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
-## 🔴 A duplicata passa a vencer o tPag — feito em 14/08/2026, NÃO commitado, NÃO no ar
+## 🔴 A duplicata passa a vencer o tPag — commitado em 14/08/2026, FALTA O PUSH
 
-**Estado:** código escrito e testado na `main` local, **sem commit e sem push**. Estava
-com o Apolo para revisão quando a sessão acabou. Nada disso está rodando em produção —
-o defeito abaixo continua vivo no Railway até alguém commitar, enviar e o deploy sair.
+**Estado:** commit `cb7e531` na `main` local, revisado 2x pelo Apolo. **Falta `git push`**
+— o push foi barrado pelo classificador de permissões da sessão e precisa ser rodado pelo
+Matheus. Enquanto ele não sair, nada disso está no Railway e o defeito abaixo continua
+vivo em produção: a próxima nota de fornecedor com tPag de cartão vai perder o boleto
+igual à HIGA.
 
 **O defeito, medido com nota real.** A NF-e 76593 (HIGA COMERCIO E DISTRIBUICAO,
 R$ 642,22, emitida e processada em 03/08/2026) trazia quadro de cobrança de verdade no
