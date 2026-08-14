@@ -31,11 +31,15 @@ function observacaoDoPdf(b: BoletoLido, arquivo: string): string {
 // Cobre também o reprocessamento do mesmo e-mail (o job só marca como lido no
 // fim; se cair antes disso, o e-mail volta no ciclo seguinte).
 //
-// ⚠️ NÃO cobre o caminho inverso: se o PDF chegar hoje e o XML da mesma nota
-// chegar semana que vem, gravarContasDaNota() não consulta esta função e vai
-// criar a conta dela do mesmo jeito — ficam duas. É por isso que a conta do PDF
-// nasce com a tarja de conferência: as duas aparecem juntas na tela, com o
-// aviso, e o dono dispensa a repetida num clique.
+// ⚠️ NÃO cobre o caminho inverso: PDF hoje, XML da mesma nota semana que vem.
+// `gravarContasDaNota()` não consulta esta função e cria a conta dela do mesmo
+// jeito — ficam duas. E isso NÃO é só duas linhas feias na tela: a conta do PDF
+// nasceu solta (a nota ainda não existia), então se o dono dispensar a da nota e
+// pagar a do PDF, o gasto é contado DUAS VEZES — dispensar só troca o status
+// (não apaga o lançamento que a nota criou) e pagar a conta solta cria outro.
+// A tarja de conferência é aviso, não conserto. O conserto de verdade seria
+// gravarContasDaNota() procurar conta solta com mesmo valor+vencimento e
+// adotá-la em vez de criar outra; está no backlog do ESTADO.md, não aqui.
 type Existente = { id: string; fornecedor: string | null }
 
 async function contaExistente(
@@ -65,8 +69,12 @@ async function contaExistente(
 // nunca bate letra por letra com a razão social do emitente da nota ("HIGA
 // COMERCIO E DISTRIBUICAO LTDA" vs "Higa Comércio"), mas o começo bate.
 function pareceMesmoFornecedor(a: string | null, b: string): boolean {
+  // `\u0300-\u036f` escrito com escape, não com os caracteres combinantes
+  // literais: eles são invisíveis na revisão e qualquer ferramenta que reencode
+  // o arquivo poderia apagá-los sem quebrar teste nenhum — a comparação passaria
+  // a falhar só em nome com acento, calada.
   const normaliza = (s: string) => s
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toUpperCase().split(/\s+/).filter(Boolean).slice(0, 2).join(' ')
 
   if (!a) return false
@@ -92,7 +100,13 @@ export async function gravarBoletoDoPdf(
 ): Promise<ResultadoBoletoPdf> {
   const existentes = await contaExistente(boleto.valor, boleto.vencimento, fazendaId)
 
-  if (existentes === 'erro') return { status: 'duplicada' }
+  // Erro de banco devolve 'erro', NÃO 'duplicada'. A diferença decide se o
+  // e-mail é marcado como lido: tratado como duplicata, um Supabase fora do ar
+  // por 30 segundos fechava o e-mail e o boleto se perdia para sempre — o mesmo
+  // silêncio que esta feature existe para acabar. Achado [alto] do Apolo.
+  if (existentes === 'erro') {
+    return { status: 'erro', mensagem: 'falha ao consultar contas existentes' }
+  }
 
   // Só trata como repetida quando o fornecedor também bate. Valor e data iguais
   // por acaso acontecem (duas parcelas redondas de fornecedores diferentes

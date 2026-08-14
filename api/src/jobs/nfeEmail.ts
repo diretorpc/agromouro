@@ -1,7 +1,7 @@
 import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import Anthropic from '@anthropic-ai/sdk'
-import { parseXmlNFe, nfeJaProcessada, processarNFe, idDaNota } from '../services/nfeProcessor'
+import { parseXmlNFe, nfeJaProcessada, processarNFe, idDaNotaQueLancouGasto } from '../services/nfeProcessor'
 import { lerBoletoDoPdf, type BoletoLido } from '../services/contas/boletoPdf'
 import { gravarBoletoDoPdf } from '../services/contas/gravarBoletoPdf'
 import { hojeSaoPauloISO, reais, ddmm, APP_URL } from '../services/contas/formato'
@@ -14,6 +14,12 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 // verdade não chega em lote: um e-mail com dezenas de PDFs é catálogo, folder
 // ou assinatura de imagem. Sem o teto, cada um deles vira uma chamada paga.
 const MAX_PDFS_POR_EMAIL = 5
+
+// Teto do CICLO inteiro, não só de um e-mail. O `search({seen:false})` traz
+// TODOS os não lidos, e numa caixa pessoal com meses de backlog a primeira
+// execução leria a caixa inteira de uma vez. O que sobrar volta no ciclo
+// seguinte — o e-mail não é marcado como lido, então nada se perde.
+const MAX_PDFS_POR_CICLO = 20
 
 // SEM filtro de remetente, por decisão explícita do Matheus (14/08/2026),
 // perguntado e respondido: a caixa monitorada é PESSOAL (IMAP_USER é um
@@ -29,11 +35,46 @@ const MAX_PDFS_POR_EMAIL = 5
 // custa uma chamada de IA por PDF, e uma caixa cheia pode passar da meia hora.
 // Duas execuções simultâneas pagariam a leitura duas vezes e abririam a janela
 // de corrida na gravação do boleto. Achado do Apolo.
+// A trava vale para ESTE processo. O Railway roda uma instância só hoje; com
+// duas réplicas ela não vale, e o caminho do PDF também não é protegido pelo
+// índice único da migração 006 (ele exige `numero_parcela`, e o boleto de PDF
+// grava NULL — e NULL não colide com NULL no Postgres).
 let rodando = false
+
+// Ciclos seguidos em que TODA leitura de PDF falhou. Nome de modelo errado,
+// chave sem crédito ou 404 fazem isso — e sem contador o sintoma é só uma linha
+// de console a cada 30 min, para sempre, enquanto nenhum boleto entra. Achado
+// do Apolo: falha persistente precisa gritar, não só logar.
+let ciclosFalhandoSeguidos = 0
+const CICLOS_ATE_AVISAR = 3
 
 // ─── Verificar se o XML é uma NF-e válida ────────────────────────────────────
 function isNFeXml(content: string): boolean {
   return content.includes('<NFe') && content.includes('<infNFe')
+}
+
+// Anexos que ficaram de fora do teto POR E-MAIL. Precisa de aviso, não só log:
+// o e-mail é fechado depois disso, então um boleto que estivesse no 6º anexo se
+// perderia para sempre e o único rastro seria uma linha de console. Achado do Apolo.
+async function avisarPdfsCortados(
+  total: number,
+  lidos: number,
+  cortados: number,
+  fazendaCodigo: string,
+): Promise<void> {
+  const mensagem =
+    `📎 *E-mail com muitos anexos*\n\n` +
+    `Chegou um e-mail com ${total} PDFs e eu li só ${lidos}. ` +
+    `Se houver boleto entre os ${cortados} que sobraram, ele não foi registrado — ` +
+    `confira o e-mail e lance à mão em ${APP_URL}/contas`
+
+  for (const phone of getAuthorizedPhones(fazendaCodigo)) {
+    try {
+      await enviarMensagem(phone, mensagem, fazendaCodigo)
+    } catch (err) {
+      console.error('[BoletoPDF] Falha ao avisar corte de anexos:', err instanceof Error ? err.message : err)
+    }
+  }
 }
 
 // Avisa que um boleto foi lido de um PDF. Diz de onde veio (PDF, não XML) e
@@ -74,7 +115,18 @@ export async function buscarNFesNoEmail(): Promise<void> {
   rodando = true
 
   try {
-    await rodarCiclo()
+    const { lidos, falhas } = await rodarCiclo()
+
+    // Só conta como ciclo ruim quando houve PDF para ler E todos falharam —
+    // ciclo sem PDF nenhum não diz nada sobre a saúde da leitura.
+    if (lidos > 0 && falhas === lidos) {
+      ciclosFalhandoSeguidos++
+      if (ciclosFalhandoSeguidos === CICLOS_ATE_AVISAR) {
+        await avisarLeituraQuebrada(ciclosFalhandoSeguidos)
+      }
+    } else if (lidos > 0) {
+      ciclosFalhandoSeguidos = 0
+    }
   } finally {
     // No finally: uma exceção que escape sem isto deixaria a trava presa e o
     // job morto para sempre, sem erro visível depois do primeiro.
@@ -82,13 +134,41 @@ export async function buscarNFesNoEmail(): Promise<void> {
   }
 }
 
-async function rodarCiclo(): Promise<void> {
+// Avisa UMA vez, no 3º ciclo seguido em que nenhuma leitura funcionou (~1h30 de
+// falha contínua). Uma vez, não a cada ciclo: alerta repetido a cada 30 min
+// vira ruído e é justamente o que se aprende a ignorar.
+async function avisarLeituraQuebrada(ciclos: number): Promise<void> {
+  const codigo = process.env.FAZENDA_CODIGO ?? 'mg'
+  const mensagem =
+    `⚠️ *Leitura de boleto em PDF parada*\n\n` +
+    `Faz ${ciclos} ciclos que nenhuma leitura funciona (cerca de ${ciclos * 30} minutos). ` +
+    `Boleto que chegar só em PDF não está entrando no sistema. ` +
+    `Pode ser a chave da Anthropic ou o nome do modelo. Os e-mails não foram perdidos: ` +
+    `eles voltam sozinhos quando isso for arrumado.`
+
+  for (const phone of getAuthorizedPhones(codigo)) {
+    try {
+      await enviarMensagem(phone, mensagem, codigo)
+    } catch (err) {
+      console.error('[BoletoPDF] Falha ao avisar leitura quebrada:', err instanceof Error ? err.message : err)
+    }
+  }
+}
+
+// Devolve quantas leituras de PDF foram tentadas e quantas falharam — quem
+// chama usa isso para detectar leitura quebrada por vários ciclos seguidos.
+async function rodarCiclo(): Promise<{ lidos: number; falhas: number }> {
+  // Orçamento de leituras de IA deste ciclo, compartilhado por todos os
+  // e-mails (ver MAX_PDFS_POR_CICLO), e o placar que sai daqui.
+  let pdfsLidosNoCiclo = 0
+  let falhasNoCiclo = 0
+
   const user = process.env.IMAP_USER
   const pass = process.env.IMAP_PASS
 
   if (!user || !pass) {
     console.warn('[NFeEmail] IMAP_USER ou IMAP_PASS não configurados — pulando.')
-    return
+    return { lidos: 0, falhas: 0 }
   }
 
   const client = new ImapFlow({
@@ -109,7 +189,7 @@ async function rodarCiclo(): Promise<void> {
 
   if (!fazenda) {
     console.error(`[NFeEmail] Fazenda não encontrada: ${fazendaCodigo}`)
-    return
+    return { lidos: 0, falhas: 0 }
   }
 
   try {
@@ -125,10 +205,10 @@ async function rodarCiclo(): Promise<void> {
 
       if (uids.length === 0) {
         console.log('[NFeEmail] Nenhum e-mail novo.')
-        return
+        return { lidos: 0, falhas: 0 }
       }
 
-      console.log(`[NFeEmail] ${uids.length} e-mail(s) não lido(s). Verificando anexos XML...`)
+      console.log(`[NFeEmail] ${uids.length} e-mail(s) não lido(s). Verificando anexos...`)
 
       for (const uid of uids) {
         // Alguma leitura de PDF falhou neste e-mail? Se sim, ele não vira lido.
@@ -155,10 +235,9 @@ async function rodarCiclo(): Promise<void> {
           // E-mail sem anexo nenhum não entra em nenhum dos dois laços abaixo e
           // também NÃO é marcado como lido — ver o comentário do flag no fim.
 
-          // Ids das notas deste e-mail (as que acabaram de entrar e as que já
-          // estavam no banco). O boleto em PDF precisa saber se existe nota
-          // aqui: amarrado a ela, pagar não duplica o gasto. Ver
-          // contas/gravarBoletoPdf.ts.
+          // Notas deste e-mail QUE LANÇARAM GASTO — as que não lançaram (nota de
+          // remessa, caso ERCAL) ficam de fora de propósito: amarrar o boleto
+          // numa delas faria o gasto sumir ao pagar. Ver idDaNotaQueLancouGasto.
           const notasDoEmail: string[] = []
 
           for (const anexo of xmlAnexos) {
@@ -178,7 +257,7 @@ async function rodarCiclo(): Promise<void> {
               console.log(`[NFeEmail] NF-e ${nfe.numero} já processada — ignorando.`)
               // Registrada mesmo assim: para o boleto em PDF, o que importa é
               // que a nota EXISTE (e já lançou o gasto), não se entrou agora.
-              const id = await idDaNota(nfe.numero, nfe.emitenteCnpj, fazenda.id)
+              const id = await idDaNotaQueLancouGasto(nfe.numero, nfe.emitenteCnpj, fazenda.id)
               if (id) notasDoEmail.push(id)
               continue
             }
@@ -187,7 +266,7 @@ async function rodarCiclo(): Promise<void> {
             await processarNFe(nfe, 'email', fazenda.id)
             console.log(`[NFeEmail] NF-e ${nfe.numero} processada com sucesso.`)
 
-            const id = await idDaNota(nfe.numero, nfe.emitenteCnpj, fazenda.id)
+            const id = await idDaNotaQueLancouGasto(nfe.numero, nfe.emitenteCnpj, fazenda.id)
             if (id) notasDoEmail.push(id)
           }
 
@@ -197,25 +276,44 @@ async function rodarCiclo(): Promise<void> {
           // primeiro, o boleto dele já está no banco quando o PDF chega — e a
           // checagem de duplicata em gravarBoletoDoPdf() vê a conta e não repete.
           // Invertida a ordem, nasceriam duas contas para a mesma cobrança.
-          // Com MAIS DE UMA nota no e-mail não dá para saber a qual delas o
-          // boleto pertence, e chutar erraria o vínculo — mas todas já lançaram
-          // gasto, então qualquer uma serve para impedir o lançamento dobrado.
-          // Usa a primeira e diz isso no log, em vez de decidir calado.
+          // Com MAIS DE UMA nota que lançou gasto no mesmo e-mail não dá para
+          // saber a qual delas o boleto pertence. Todas lançaram, então
+          // qualquer uma impede o lançamento dobrado — mas o vínculo pode sair
+          // errado, e vínculo errado NÃO é só um rótulo feio: excluir a nota A
+          // apaga em cascata o boleto que era da nota B (migration 009), e a
+          // trava de "boleto já pago" passa a olhar a conta errada. Por isso
+          // fica no log, não calado.
           const notaParaBoleto = notasDoEmail[0] ?? null
           if (notasDoEmail.length > 1 && pdfAnexos.length > 0) {
             console.log(
-              `[BoletoPDF] E-mail ${uid} tem ${notasDoEmail.length} notas; boleto será ` +
-              `amarrado à primeira (evita gasto dobrado, mas o vínculo pode não ser o exato).`,
+              `[BoletoPDF] E-mail ${uid} tem ${notasDoEmail.length} notas com gasto lançado; ` +
+              `boleto amarrado à primeira — evita gasto dobrado, mas o vínculo pode não ser o exato.`,
             )
           }
 
-          // Teto por e-mail: sem ele, um e-mail com 30 PDFs de catálogo viram 30
-          // chamadas de IA. Boleto de verdade não vem em lote grande.
-          if (pdfAnexos.length > MAX_PDFS_POR_EMAIL) {
-            console.log(`[BoletoPDF] E-mail ${uid} tem ${pdfAnexos.length} PDFs — lendo só os ${MAX_PDFS_POR_EMAIL} primeiros.`)
+          // Dois tetos: por e-mail (catálogo com 30 PDFs) e por ciclo (backlog
+          // da caixa inteira). O que fica de fora do teto do CICLO volta no
+          // próximo — `houveFalha` impede o e-mail de ser fechado.
+          const sobraNoCiclo = Math.max(0, MAX_PDFS_POR_CICLO - pdfsLidosNoCiclo)
+          const limite = Math.min(MAX_PDFS_POR_EMAIL, sobraNoCiclo)
+
+          if (pdfAnexos.length > limite) {
+            const cortados = pdfAnexos.length - limite
+            console.log(`[BoletoPDF] E-mail ${uid}: ${pdfAnexos.length} PDFs, lendo ${limite}.`)
+
+            // Cortado pelo teto do e-mail é perda de verdade se o boleto era o
+            // 6º anexo: o e-mail SERIA fechado e ninguém saberia. Avisa. Já o
+            // corte pelo teto do ciclo não perde nada — marca falha e o resto
+            // volta em 30 min, sem gastar uma mensagem por isso.
+            if (sobraNoCiclo > 0) {
+              await avisarPdfsCortados(pdfAnexos.length, limite, cortados, fazenda.codigo)
+            } else {
+              houveFalha = true
+            }
           }
 
-          for (const anexo of pdfAnexos.slice(0, MAX_PDFS_POR_EMAIL)) {
+          for (const anexo of pdfAnexos.slice(0, limite)) {
+            pdfsLidosNoCiclo++
             const nome = anexo.filename ?? 'anexo.pdf'
             const lido = await lerBoletoDoPdf(anexo.content, nome, hojeSaoPauloISO(), anthropic)
 
@@ -224,6 +322,7 @@ async function rodarCiclo(): Promise<void> {
             if (lido.status === 'falha') {
               console.warn(`[BoletoPDF] E-mail ${uid} volta no próximo ciclo: ${lido.motivo}`)
               houveFalha = true
+              falhasNoCiclo++
               continue
             }
 
@@ -231,9 +330,17 @@ async function rodarCiclo(): Promise<void> {
 
             const gravado = await gravarBoletoDoPdf(lido.boleto, nome, fazenda.id, notaParaBoleto)
 
+            // Falha de banco na gravação é o mesmo caso da falha de leitura: o
+            // boleto não entrou, então o e-mail não pode ser fechado.
+            if (gravado.status === 'erro') {
+              console.warn(`[BoletoPDF] E-mail ${uid} volta no próximo ciclo: ${gravado.mensagem}`)
+              houveFalha = true
+              falhasNoCiclo++
+              continue
+            }
+
             // Avisa SÓ quando a conta nasceu de verdade. Duplicata é o caminho
-            // normal (XML e PDF no mesmo e-mail) e avisar dela seria barulho
-            // diário; erro de banco já foi logado por quem gravou.
+            // normal (XML e PDF no mesmo e-mail) e avisar dela seria barulho diário.
             if (gravado.status === 'criada') {
               await avisarBoletoLido(lido.boleto, fazenda.codigo)
             }
@@ -266,4 +373,6 @@ async function rodarCiclo(): Promise<void> {
   } finally {
     await client.logout().catch(() => {})
   }
+
+  return { lidos: pdfsLidosNoCiclo, falhas: falhasNoCiclo }
 }

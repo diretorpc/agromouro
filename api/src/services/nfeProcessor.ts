@@ -171,22 +171,33 @@ export async function nfeJaProcessada(
   return !!data
 }
 
-// O id da linha em `notas_fiscais`, pela mesma chave que nfeJaProcessada usa
-// (número + CNPJ + fazenda — o número sozinho não é único no mundo, é sequencial
-// POR fornecedor). Existe para o boleto lido de PDF poder se amarrar à nota que
-// chegou no mesmo e-mail: sem essa amarração, pagar esse boleto criaria um
-// segundo lançamento e o gasto apareceria dobrado nas duas telas de dinheiro
-// (achado [crítico] do Apolo, 14/08/2026 — ver contas/gravarBoletoPdf.ts).
+// O id da nota SOMENTE quando ela lançou gasto no Financeiro. Devolve null
+// quando a nota não existe OU quando existe mas não lançou nada.
 //
-// Devolve null quando a nota não está no banco. Erro de consulta é relançado,
-// nunca engolido: um null por falha de banco significaria "não há nota", e o
-// boleto nasceria solto — que é exatamente o defeito que isto evita.
-export async function idDaNota(
+// As duas condições são igualmente importantes, e a segunda custou duas rodadas
+// de revisão para aparecer (Apolo, 14/08/2026). O boleto lido de PDF usa isto
+// para decidir se amarra numa nota, e amarrar decide quem lança o gasto quando
+// ele for pago (`precisaCriarLancamento` em contas/pagamento.ts):
+//
+//   nota lançou gasto  → amarra   → pagar NÃO lança de novo  → certo
+//   nota não lançou    → não amarra → pagar lança             → certo
+//   nota não lançou    → amarrasse → pagar não lança          → GASTO SOME
+//
+// A terceira linha é o caso ERCAL, e é real: nota de remessa (CFOP 5116/5117)
+// gera boleto cheio e `valorCompra` zero, então `processarNFe` não cria
+// lançamento nenhum (ver a escada do valorCompra mais abaixo neste arquivo).
+// Amarrar ali faria R$ 8 mil sair do banco sem aparecer como despesa em lugar
+// nenhum — pior que a duplicidade que a amarração existe para evitar, porque
+// dinheiro dobrado o dono enxerga na tela e dinheiro sumido não.
+//
+// Erro de consulta é relançado, nunca engolido: um null por falha de banco
+// significaria "não há nota" e mandaria o boleto para o caminho errado.
+export async function idDaNotaQueLancouGasto(
   numero: string,
   emitenteCnpj: string,
   fazenda_id: string,
 ): Promise<string | null> {
-  const { data, error } = await supabase
+  const { data: nota, error } = await supabase
     .from('notas_fiscais')
     .select('id')
     .eq('numero', numero)
@@ -196,8 +207,18 @@ export async function idDaNota(
     .maybeSingle()
 
   if (error) throw error
+  if (!nota) return null
 
-  return data?.id ?? null
+  const { data: lancamento, error: erroLanc } = await supabase
+    .from('lancamentos_financeiros')
+    .select('id')
+    .eq('nota_fiscal_id', nota.id)
+    .limit(1)
+    .maybeSingle()
+
+  if (erroLanc) throw erroLanc
+
+  return lancamento ? nota.id : null
 }
 
 // Decide estoque/não-estoque pelo NCM (determinístico).
