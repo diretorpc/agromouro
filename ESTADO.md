@@ -24,6 +24,73 @@
 
 # 1. NO AR — o que o sistema já faz
 
+## Boleto lido de PDF quando a NF-e chega sem XML — PR #56 mergeado em 14/08/2026
+
+https://github.com/diretorpc/agromouro/pull/56 — commit `15cc642` na `main`, branch
+`feat/readboletos` apagada (local e remoto). Railway faz deploy automático da `main`.
+**Ainda não confirmado rodando em produção:** a prova é a próxima NF-e que chegar
+por e-mail só com PDF.
+
+**O defeito.** Fornecedor manda a nota e o boleto em PDF, sem XML. O job de e-mail
+só olhava anexos `.xml`, então o e-mail inteiro era ignorado: sem gasto, sem estoque,
+sem boleto, sem aviso. O boleto vencia no silêncio. Caso que provou: boleto da
+UBE TERRA de R$ 730,50 vencendo 17/08, que não estava no sistema — cadastrado à mão
+em 14/08 (ver seção própria abaixo).
+
+**O que faz.** `contas/boletoPdf.ts` manda o PDF para `claude-opus-5` (document block
+base64 + `output_config.format` json_schema, effort low) e valida o retorno;
+`contas/gravarBoletoPdf.ts` grava a conta com a tarja `PREFIXO_CONFERIR`; o job avisa
+no WhatsApp. **Só o boleto, nunca a nota inteira** — quatro números grandes e
+padronizados, com erro visível na tela antes de pagar; a nota tem dezenas de linhas e
+um dígito errado entraria no estoque calado. Nota continua exigindo XML.
+
+**Três rodadas de revisão do Apolo, cada uma achando defeito na correção da anterior:**
+
+1. 8 achados, 1 crítico — boleto em e-mail que também tinha XML nascia solto
+   (`nota_fiscal_id: null`) e **dobrava o gasto** ao ser pago.
+2. A correção do crítico **inverteu o defeito**: amarrar a qualquer nota fazia o gasto
+   **sumir** no caso ERCAL (nota de remessa não lança gasto). Corrigido com
+   `idDaNotaQueLancouGasto()` — só amarra quando a nota de fato lançou. Mais 8 achados,
+   incluindo erro de banco perdendo o boleto e **zero teste** protegendo as correções
+   (ele mediu 10 mutações passando limpas).
+3. Medida com PDF real: boleto cedido a FIDC traz o **fundo** no campo "Beneficiário";
+   o fornecedor está em "Beneficiário Final". Sem isso, conta repetida em toda compra
+   financiada, e um nome que o dono não reconhece na tela.
+
+**Rede de segurança** (cada item veio de um achado): falha de leitura ou de banco não
+marca o e-mail como lido (volta em 30 min); carnê avisa quantas parcelas ficaram de
+fora; teto de 5 PDFs por e-mail e 20 por ciclo; falha persistente avisa no WhatsApp no
+3º ciclo; trava contra o job rodar sobreposto (vale por processo — **2 réplicas no
+Railway quebram**, e o índice único da migração 006 não protege este caminho porque
+grava `numero_parcela` NULL).
+
+**Decisão do dono, registrada no código:** SEM filtro de remetente. A caixa é pessoal
+(`IMAP_USER` é hotmail), então TODO PDF de TODA mensagem não lida vai para a API da
+Anthropic — extrato de banco, escola, médico incluídos. Ele preferiu isso a arriscar
+perder um boleto de fornecedor fora de uma lista. Perguntado e respondido em 14/08.
+
+**Também subiu junto:** `@anthropic-ai/sdk` 0.27.3 → 0.117.1 (a 0.27 não tipa document
+block nem `stop_reason: 'refusal'`), e o conserto de um defeito antigo do job — o
+`continue` que pulava o `messageFlagsAdd` fazia todo e-mail sem XML ser reprocessado a
+cada 30 min para sempre.
+
+Para medir os testes e os tipos, rodar (não copiar número daqui):
+```bash
+cd api && npm test && npx tsc --noEmit
+```
+
+Para refazer a leitura de um PDF de boleto de verdade:
+```bash
+cd api && DOTENV_CONFIG_PATH=../.env npx tsx -r dotenv/config -e "import {lerBoletoDoPdf} from './src/services/contas/boletoPdf';import Anthropic from '@anthropic-ai/sdk';import {readFileSync} from 'fs';lerBoletoDoPdf(readFileSync(process.argv[1]),'b.pdf','$(date +%F)',new Anthropic({apiKey:process.env.ANTHROPIC_API_KEY})).then(r=>console.log(JSON.stringify(r,null,1)))" CAMINHO_DO_PDF
+```
+
+**Backlog que ficou aberto** (achados aceitos, não consertados): PDF hoje + XML da mesma
+nota semana que vem cria duas contas, e se o dono dispensar a da nota e pagar a solta o
+gasto DOBRA — o conserto seria `gravarContasDaNota()` adotar conta solta com mesmo
+valor+vencimento em vez de criar outra. Também: com várias notas no mesmo e-mail o
+boleto é amarrado à primeira, e vínculo errado faz a exclusão em cascata da migração 009
+apagar boleto de outra nota.
+
 ## Reorganização Financeiro + Contas a Pagar — PR #55 mergeado (squash) em 10/08/2026
 
 https://github.com/diretorpc/agromouro/pull/55 — branch `fix/telasfin` apagada (local e remoto)
