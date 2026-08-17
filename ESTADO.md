@@ -24,6 +24,90 @@
 
 # 1. NO AR — o que o sistema já faz
 
+## Financeiro: cor de destaque pra nota agrupada — corrigido em 17/08/2026, commitado (`19ed6eb`)
+
+Pedido do Matheus: quando uma nota tem vários itens (linha expansível "N itens desta
+nota", em `web/app/(app)/financeiro/page.tsx`), o cinza que marcava os itens do grupo
+(`bg-muted/20`) era quase invisível — difícil ver onde uma nota termina e a próxima
+começa.
+
+**Trocado por azul claro** (`bg-sky-100`, cabeçalho + itens). Achado do Apolo na 1ª
+rodada de revisão **[alto]**: o `TableRow` base do projeto (`web/components/ui/table.tsx:60`)
+já injeta `has-aria-expanded:bg-muted/50`, que sobrevivia à mesclagem do tailwind-merge
+contra a classe azul nova e ganhava por especificidade — a cor só aparecia com a nota
+**FECHADA**, sumia ao abrir (o estado que mais importava, já que foi o pedido original).
+Corrigido acrescentando os mesmos modificadores (`has-aria-expanded:`) na classe nova,
+pra vencer a regra embutida do componente sem mexer nele (evita quebrar outras telas que
+usam a mesma tabela).
+
+2ª rodada do Apolo confirmou a correção com o compilador Tailwind real do projeto +
+`tailwind-merge` real + hover simulado em Chrome headless de verdade (não só leitura) —
+sem achado bloqueante. Testado visualmente também no navegador (Browser pane) pelo
+Claude: nota fechada, aberta e com hover, os três estados ficam azuis.
+
+**Duas notas de baixa prioridade, sem código pendente:** a tela irmã
+`web/app/(app)/contas/lista-contas.tsx` tem o mesmo padrão de agrupamento e **não**
+recebeu a mesma cor — decisão explícita de não mexer, ficou fora do pedido. Se a mesma
+reclamação aparecer lá, o remédio é igual. Em tela de toque (tablet/celular) o efeito de
+hover não existe (`@media (hover: hover)` do Tailwind) — só o fundo persistente aparece.
+
+Depois disso o Matheus ainda achou o azul fraco nos ITENS da nota — escurecido de
+`bg-sky-100/40` pra `bg-sky-100` sólido (mais forte que o próprio cabeçalho), sem
+rodada extra do Apolo por ser ajuste de contraste, não de lógica.
+
+**Commitado na branch `feature/colunas-redimensionaveis`** (junto com a feature
+abaixo, que nasceu na mesma sessão) — depende de merge/PR pra chegar na `main`.
+
+## Financeiro: colunas redimensionáveis (Fase 1 — só a tabela do Financeiro) — 17/08/2026
+
+Pedido do Matheus: arrastar a borda de uma coluna da tabela pra mudar a largura, com
+a largura salva. Confirmado em conversa: é redimensionar (não reordenar), vale pras
+9 telas com tabela do sistema, mas construído e validado numa só antes de replicar.
+Desenho completo: `docs/superpowers/specs/2026-08-17-colunas-redimensionaveis-design.md`.
+Plano: `docs/superpowers/plans/2026-08-17-colunas-redimensionaveis.md`.
+
+**No ar (Fase 1, só Financeiro):** hook `web/lib/use-column-widths.ts` (largura por
+coluna, arrasto via ponteiro, salva em `localStorage` por tabela) + componente
+`web/components/ui/column-resize-handle.tsx` (faixa de 6px na borda) +
+`SortableTableHead` (`web/components/ui/sortable-table-head.tsx`) ganhou `style`/
+`resizeHandle` opcionais, sem quebrar os outros 11 usos (Contas a Pagar incluído).
+
+**Achado sério, corrigido:** `w-auto` na tabela não fazia ela encolher pro conteúdo —
+`width:auto` num `<table>` (bloco) preenche o contêiner igual `width:100%`, então a
+coluna arrastada salvava certinho mas não mudava de tamanho NA TELA. Testado ao vivo
+no navegador pelo Claude antes de prescrever a correção. Trocado por `w-max`
+(`width: max-content`) — confirmado ao vivo que resolve, e que a rolagem horizontal
+do card continua funcionando quando a tabela fica mais larga que o card.
+
+**Achado da revisão final de branch, corrigido:** `table-layout: fixed` sem
+`overflow-hidden` nas células deixava texto/valor que não cabe vazar por cima da
+coluna vizinha ao encolher (ex.: arrastar "Valor Total" pro mínimo). Corrigido
+acrescentando `overflow-hidden` nas células — commit `da29ff8`.
+
+**Fica pra depois, registrado e não esquecido (backlog da Fase 2, não bloqueou este
+merge):**
+- Replicar `ResizableTableHead`/mecanismo pras outras 8 telas com tabela (Contas,
+  Operações, Estoque×2, NF-e, Talhões, Cartões, Custos) — hoje só Financeiro tem.
+- O mecanismo ficou "soldado" no `SortableTableHead`, não virou um wrapper genérico
+  como o desenho original previa — decidir isso ANTES de começar a Fase 2, porque
+  Contas a Pagar tem coluna não-ordenável (sem caminho pra redimensionar hoje) e
+  Estoque usa um `SortableTableHead` próprio, com API diferente.
+- Risco de hydration mismatch (o hook lê `localStorage` no `useState` inicial) —
+  o Financeiro escapa por acidente porque a tabela só existe depois do loading
+  skeleton; telas que renderizam a tabela no primeiro paint vão sofrer isso.
+- Re-render da página inteira a cada `pointermove` durante o arrasto (barato hoje com
+  poucas linhas visíveis, pode pesar com "Carregar mais" em uso).
+- Escrita no `localStorage` dentro do updater de `setState` (funciona, mas é padrão
+  frágil — deveria ler de um `ref`, não do `prev` do updater).
+- Arrastar até o mínimo (60px) numa coluna de cabeçalho comprido (ex.: "Produto /
+  Serviço") às vezes não encolhe visualmente até lá — trava num piso maior definido
+  pelo texto do cabeçalho (`nowrap`). Estado interno salva 60 certinho, só o visual
+  fica maior que o esperado nesse extremo.
+- Faixa de arrastar não é operável por teclado (sem `tabIndex`/setas).
+
+**Na branch `feature/colunas-redimensionaveis`**, revisada por Apolo (por tarefa +
+revisão final de branch inteira) — depende de merge/PR pra chegar na `main`.
+
 ## Boleto lido de PDF quando a NF-e chega sem XML — PR #56 mergeado em 14/08/2026
 
 https://github.com/diretorpc/agromouro/pull/56 — commit `15cc642` na `main`, branch
