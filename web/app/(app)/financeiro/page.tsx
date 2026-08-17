@@ -288,6 +288,91 @@ export default function FinanceiroPage() {
     })
   }
 
+  // ─── Seleção em massa (trocar centro de custo de vários itens de uma vez) ──
+  // Só itens_nfe têm centro_custo editável nesta tela (mesma regra do lápis de
+  // edição individual, ver handleEdit) — lançamento de cartão/manual/conta não
+  // entra na seleção. Guarda o `id` de itens_nfe, não o objeto inteiro: mais
+  // barato de comparar e sobrevive a um `load()` que troca a referência do item.
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set())
+  const [centroEmMassa, setCentroEmMassa] = useState('')
+  const [aplicandoEmMassa, setAplicandoEmMassa] = useState(false)
+  const [erroEmMassa, setErroEmMassa] = useState<string | null>(null)
+
+  function itemSelecionavel(item: ItemFinanceiro): boolean {
+    return item.source_table === 'itens_nfe'
+  }
+
+  function toggleSelecionado(id: string) {
+    setSelecionados(prev => {
+      const novo = new Set(prev)
+      if (novo.has(id)) novo.delete(id)
+      else novo.add(id)
+      return novo
+    })
+  }
+
+  // Marca/desmarca TODOS os itens de uma nota agrupada de uma vez — resolve o
+  // caso de pedido: "tem uma nota aqui com vários itens, quero trocar o
+  // centro de custo de todos sem abrir um por um". Todo item de um grupo com
+  // mais de 1 linha é sempre itens_nfe (só quem tem nota_fiscal_id agrupa —
+  // ver `grupos` mais abaixo), então não precisa filtrar por selecionável aqui.
+  function toggleGrupoSelecionado(ids: string[]) {
+    setSelecionados(prev => {
+      const todosMarcados = ids.every(id => prev.has(id))
+      const novo = new Set(prev)
+      if (todosMarcados) ids.forEach(id => novo.delete(id))
+      else ids.forEach(id => novo.add(id))
+      return novo
+    })
+  }
+
+  function limparSelecao() {
+    setSelecionados(new Set())
+    setCentroEmMassa('')
+    setErroEmMassa(null)
+  }
+
+  async function aplicarCentroEmMassa() {
+    if (selecionados.size === 0 || !centroEmMassa) return
+    setAplicandoEmMassa(true)
+    setErroEmMassa(null)
+
+    const idsAlvo = Array.from(selecionados)
+    const { data: atualizados, error } = await supabase
+      .from('itens_nfe')
+      .update({ centro_custo: centroEmMassa })
+      .in('id', idsAlvo)
+      .select('id')
+
+    setAplicandoEmMassa(false)
+
+    if (error) {
+      console.error('[Financeiro] Erro ao trocar centro de custo em massa:', error)
+      setErroEmMassa(`Erro ao salvar: ${error.message}`)
+      return
+    }
+
+    // Mesmo padrão de handleEdit (edição de 1 item só, logo acima): um UPDATE
+    // sem erro NÃO garante que toda linha foi gravada — RLS filtra silenciosamente
+    // (ver memória do projeto "rls-escrita-silenciosa"). Sem esta checagem, trocar
+    // o centro de custo de 3 itens e só 2 passarem pela RLS pareceria sucesso total.
+    const idsAtualizados = new Set((atualizados ?? []).map(r => r.id))
+    const idsFalhos = idsAlvo.filter(id => !idsAtualizados.has(id))
+    if (idsFalhos.length > 0) {
+      console.error('[Financeiro] Trocar centro de custo em massa: update não afetou todas as linhas — possível política RLS.', idsFalhos)
+      setErroEmMassa(
+        idsFalhos.length === idsAlvo.length
+          ? 'Sem permissão para editar estes itens. Verifique as políticas do banco.'
+          : `${idsAtualizados.size} de ${idsAlvo.length} itens foram atualizados — os demais não tinham permissão. Verifique as políticas do banco.`
+      )
+      load()
+      return
+    }
+
+    limparSelecao()
+    load()
+  }
+
   function handleSort(coluna: SortColunaFinanceiro) {
     if (coluna === sortColuna) {
       setSortDirecao(d => d === 'asc' ? 'desc' : 'asc')
@@ -587,6 +672,11 @@ export default function FinanceiroPage() {
 
   const gruposExibidos = grupos.slice(0, visivelCount)
 
+  // Ids selecionáveis visíveis agora (respeita filtro + paginação) — usado só
+  // pelo checkbox "marcar tudo" do cabeçalho da tabela.
+  const idsSelecionaveisVisiveis = gruposExibidos.flatMap(g => g.itens.filter(itemSelecionavel).map(i => i.id))
+  const todosVisiveisSelecionados = idsSelecionaveisVisiveis.length > 0 && idsSelecionaveisVisiveis.every(id => selecionados.has(id))
+
   const totalGeral = itensQueContam.reduce((s, i) => s + i.valor_total, 0)
   const porCategoria = itensQueContam.reduce<Record<string, number>>((acc, i) => {
     acc[i.centro_custo] = (acc[i.centro_custo] ?? 0) + i.valor_total
@@ -769,6 +859,34 @@ export default function FinanceiroPage() {
               )}
             </CardTitle>
           </div>
+          {selecionados.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
+              <span className="text-sm font-medium">
+                {selecionados.size} {selecionados.size === 1 ? 'selecionado' : 'selecionados'}
+              </span>
+              <Select value={centroEmMassa} onValueChange={v => setCentroEmMassa(v ?? '')}>
+                <SelectTrigger className="w-52 h-9 text-sm bg-background">
+                  <SelectValue placeholder="Trocar centro de custo para…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {TIPOS.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Button
+                size="sm"
+                disabled={!centroEmMassa || aplicandoEmMassa}
+                onClick={aplicarCentroEmMassa}
+              >
+                {aplicandoEmMassa ? 'Aplicando…' : 'Aplicar'}
+              </Button>
+              <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={limparSelecao}>
+                Cancelar seleção
+              </Button>
+              {erroEmMassa && (
+                <span className="text-sm text-red-600">{erroEmMassa}</span>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <Select
               value={filtroOrigem}
@@ -828,20 +946,37 @@ export default function FinanceiroPage() {
           <Table className="border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
             <TableHeader>
               <TableRow>
+                <SortableTableHead className="w-[180px]" ativo={sortColuna === 'origem'} direcao={sortDirecao} onClick={() => handleSort('origem')}>Origem</SortableTableHead>
                 <SortableTableHead className="w-[220px]" ativo={sortColuna === 'descricao'} direcao={sortDirecao} onClick={() => handleSort('descricao')}>Produto / Serviço</SortableTableHead>
                 <SortableTableHead className="w-[70px] text-right" numeric ativo={sortColuna === 'quantidade'} direcao={sortDirecao} onClick={() => handleSort('quantidade')}>Qtd.</SortableTableHead>
                 <SortableTableHead className="w-[110px] text-right" numeric ativo={sortColuna === 'valor_unitario'} direcao={sortDirecao} onClick={() => handleSort('valor_unitario')}>Valor Unit.</SortableTableHead>
                 <SortableTableHead className="w-[120px] text-right" numeric ativo={sortColuna === 'valor_total'} direcao={sortDirecao} onClick={() => handleSort('valor_total')}>Valor Total</SortableTableHead>
                 <SortableTableHead className="w-[140px]" ativo={sortColuna === 'centro_custo'} direcao={sortDirecao} onClick={() => handleSort('centro_custo')}>Centro de Custo</SortableTableHead>
-                <SortableTableHead className="w-[180px]" ativo={sortColuna === 'origem'} direcao={sortDirecao} onClick={() => handleSort('origem')}>Origem</SortableTableHead>
                 <SortableTableHead className="w-[90px]" ativo={sortColuna === 'data_emissao'} direcao={sortDirecao} onClick={() => handleSort('data_emissao')}>Data</SortableTableHead>
                 <TableHead className="w-[72px]" />
+                <TableHead className="w-[36px]">
+                  <input
+                    type="checkbox"
+                    aria-label={todosVisiveisSelecionados ? 'Desmarcar todos os itens visíveis' : 'Marcar todos os itens visíveis'}
+                    className="h-4 w-4 rounded border-input accent-primary cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+                    checked={todosVisiveisSelecionados}
+                    disabled={idsSelecionaveisVisiveis.length === 0}
+                    onChange={() => setSelecionados(prev => {
+                      if (todosVisiveisSelecionados) {
+                        const novo = new Set(prev)
+                        idsSelecionaveisVisiveis.forEach(id => novo.delete(id))
+                        return novo
+                      }
+                      return new Set([...prev, ...idsSelecionaveisVisiveis])
+                    })}
+                  />
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {itensFiltrados.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground py-10">
+                  <TableCell colSpan={9} className="text-center text-muted-foreground py-10">
                     <p>Nenhum lançamento encontrado{filtroMes !== 'todos' ? ' neste mês' : ''}.</p>
                     {filtroMes !== 'todos' && (
                       <Button
@@ -862,6 +997,26 @@ export default function FinanceiroPage() {
                   const item = grupo.itens[0]
                   return (
                     <TableRow key={item.id}>
+                      <TableCell className="text-sm w-[160px]">
+                        {item.origem === 'cartao' ? (
+                          <Badge variant="secondary" className="text-xs">
+                            {item.cartao_apelido ?? 'Cartão'}
+                          </Badge>
+                        ) : item.origem === 'conta' ? (
+                          <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
+                            Conta paga
+                          </Badge>
+                        ) : item.origem === 'manual' ? (
+                          <span className="text-xs text-muted-foreground italic">Manual</span>
+                        ) : item.is_manual ? (
+                          <span className="text-xs text-muted-foreground italic">Manual</span>
+                        ) : (
+                          <div>
+                            <p className="font-medium text-sm whitespace-normal break-words">{item.emitente_nome}</p>
+                            <p className="text-xs text-muted-foreground">NF {item.nota_numero}</p>
+                          </div>
+                        )}
+                      </TableCell>
                       <TableCell className="font-medium text-sm whitespace-normal break-words">
                         {item.descricao}
                       </TableCell>
@@ -898,28 +1053,6 @@ export default function FinanceiroPage() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm w-[160px]">
-                        {item.origem === 'cartao' ? (
-                          <Badge variant="secondary" className="text-xs">
-                            {item.cartao_apelido ?? 'Cartão'}
-                          </Badge>
-                        ) : item.origem === 'conta' ? (
-                          <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
-                            Conta paga
-                          </Badge>
-                        ) : item.origem === 'manual' ? (
-                          <span className="text-xs text-muted-foreground italic">Manual</span>
-                        ) : item.is_manual ? (
-                          <span className="text-xs text-muted-foreground italic">Manual</span>
-                        ) : (
-                          <div>
-                            <p className="font-medium text-xs">NF {item.nota_numero}</p>
-                            <p className="text-xs text-muted-foreground whitespace-normal break-words">
-                              {item.emitente_nome}
-                            </p>
-                          </div>
-                        )}
-                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                         {item.data_emissao ? fmtDate(item.data_emissao) : '—'}
                       </TableCell>
@@ -947,6 +1080,17 @@ export default function FinanceiroPage() {
                           </Button>
                         </div>
                       </TableCell>
+                      <TableCell>
+                        {itemSelecionavel(item) && (
+                          <input
+                            type="checkbox"
+                            aria-label="Selecionar este lançamento"
+                            className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
+                            checked={selecionados.has(item.id)}
+                            onChange={() => toggleSelecionado(item.id)}
+                          />
+                        )}
+                      </TableCell>
                     </TableRow>
                   )
                 }
@@ -957,9 +1101,18 @@ export default function FinanceiroPage() {
                 const categoriasGrupo = Array.from(new Set(grupo.itens.map(i => i.centro_custo)))
                 const temItemQueNaoConta = grupo.itens.some(i => i.conta_como_compra === false)
 
+                const idsDoGrupo = grupo.itens.map(i => i.id)
+                const grupoTodoSelecionado = idsDoGrupo.every(id => selecionados.has(id))
+
                 return (
                   <Fragment key={grupo.chave}>
                     <TableRow className="hover:bg-muted/50">
+                      <TableCell className="text-sm w-[180px]">
+                        <div>
+                          <p className="font-medium text-sm whitespace-normal break-words">{primeiro.emitente_nome}</p>
+                          <p className="text-xs text-muted-foreground">NF {primeiro.nota_numero}</p>
+                        </div>
+                      </TableCell>
                       <TableCell className="font-medium text-sm">
                         <button
                           type="button"
@@ -1005,21 +1158,42 @@ export default function FinanceiroPage() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm w-[180px]">
-                        <div>
-                          <p className="font-medium text-xs">NF {primeiro.nota_numero}</p>
-                          <p className="text-xs text-muted-foreground whitespace-normal break-words">
-                            {primeiro.emitente_nome}
-                          </p>
-                        </div>
-                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                         {primeiro.data_emissao ? fmtDate(primeiro.data_emissao) : '—'}
                       </TableCell>
                       <TableCell />
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          aria-label={grupoTodoSelecionado ? 'Desmarcar todos os itens desta nota' : 'Marcar todos os itens desta nota'}
+                          className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
+                          checked={grupoTodoSelecionado}
+                          onChange={() => toggleGrupoSelecionado(idsDoGrupo)}
+                        />
+                      </TableCell>
                     </TableRow>
                     {expandido && grupo.itens.map(item => (
                       <TableRow key={item.id} className="bg-muted/20">
+                        <TableCell className="text-sm w-[160px]">
+                          {item.origem === 'cartao' ? (
+                            <Badge variant="secondary" className="text-xs">
+                              {item.cartao_apelido ?? 'Cartão'}
+                            </Badge>
+                          ) : item.origem === 'conta' ? (
+                            <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
+                              Conta paga
+                            </Badge>
+                          ) : item.origem === 'manual' ? (
+                            <span className="text-xs text-muted-foreground italic">Manual</span>
+                          ) : item.is_manual ? (
+                            <span className="text-xs text-muted-foreground italic">Manual</span>
+                          ) : (
+                            <div>
+                              <p className="font-medium text-sm whitespace-normal break-words">{item.emitente_nome}</p>
+                              <p className="text-xs text-muted-foreground">NF {item.nota_numero}</p>
+                            </div>
+                          )}
+                        </TableCell>
                         <TableCell className="font-medium text-sm whitespace-normal break-words">
                           {item.descricao}
                         </TableCell>
@@ -1056,28 +1230,6 @@ export default function FinanceiroPage() {
                             )}
                           </div>
                         </TableCell>
-                        <TableCell className="text-sm w-[160px]">
-                          {item.origem === 'cartao' ? (
-                            <Badge variant="secondary" className="text-xs">
-                              {item.cartao_apelido ?? 'Cartão'}
-                            </Badge>
-                          ) : item.origem === 'conta' ? (
-                            <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
-                              Conta paga
-                            </Badge>
-                          ) : item.origem === 'manual' ? (
-                            <span className="text-xs text-muted-foreground italic">Manual</span>
-                          ) : item.is_manual ? (
-                            <span className="text-xs text-muted-foreground italic">Manual</span>
-                          ) : (
-                            <div>
-                              <p className="font-medium text-xs">NF {item.nota_numero}</p>
-                              <p className="text-xs text-muted-foreground whitespace-normal break-words">
-                                {item.emitente_nome}
-                              </p>
-                            </div>
-                          )}
-                        </TableCell>
                         <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                           {item.data_emissao ? fmtDate(item.data_emissao) : '—'}
                         </TableCell>
@@ -1105,6 +1257,17 @@ export default function FinanceiroPage() {
                             </Button>
                           </div>
                         </TableCell>
+                        <TableCell>
+                          {itemSelecionavel(item) && (
+                            <input
+                              type="checkbox"
+                              aria-label="Selecionar este item"
+                              className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
+                              checked={selecionados.has(item.id)}
+                              onChange={() => toggleSelecionado(item.id)}
+                            />
+                          )}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </Fragment>
@@ -1118,7 +1281,7 @@ export default function FinanceiroPage() {
                       dinheiro é a soma só dos itens que contam como gasto —
                       contar a lista inteira aqui diria um número que o valor
                       ao lado não sustenta. */}
-                  <TableCell colSpan={3} className="text-right text-sm font-semibold text-muted-foreground py-3">
+                  <TableCell colSpan={4} className="text-right text-sm font-semibold text-muted-foreground py-3">
                     Total ({itensQueContam.length} {itensQueContam.length === 1 ? 'item' : 'itens'})
                   </TableCell>
                   <TableCell className="text-right text-sm font-bold py-3 tabular-nums">
