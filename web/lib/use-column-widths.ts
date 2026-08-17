@@ -16,8 +16,17 @@ function lerSalvo(tableId: string): Record<string, number> {
     const bruto = window.localStorage.getItem(chaveStorage(tableId))
     if (!bruto) return {}
     const json: unknown = JSON.parse(bruto)
-    if (json && typeof json === 'object') return json as Record<string, number>
-    return {}
+    if (!json || typeof json !== 'object') return {}
+
+    // Normalizar cada entrada: validar que é número finito e clampar a LARGURA_MINIMA
+    const resultado: Record<string, number> = {}
+    for (const [key, value] of Object.entries(json)) {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        resultado[key] = Math.max(LARGURA_MINIMA, value)
+      }
+      // Descartar entradas inválidas (string, null, NaN, Infinity, etc.)
+    }
+    return resultado
   } catch {
     return {}
   }
