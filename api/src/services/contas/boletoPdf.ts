@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { diasEntre } from './datas'
+import { dataExiste, diasEntre } from './datas'
 
 // Lê um boleto em PDF e devolve o que dá para pagar com ele: valor, vencimento
 // e quem está cobrando. Existe porque o XML da NF-e nem sempre chega.
@@ -127,18 +127,6 @@ const INSTRUCAO =
   'Diga se é um boleto de cobrança e, se for, extraia valor, vencimento e beneficiário exatamente como impressos. ' +
   'Não calcule, não estime e não complete o que estiver ilegível — devolva null no campo. ' +
   'Se houver mais de um valor, use o valor do documento (o que o pagador deve pagar), não juros, multa ou desconto.'
-
-// O formato bater NÃO prova que a data existe: '2026-02-31' passa no regex, e
-// `Date.UTC` não reclama — ele ROLA para 3 de março. Sem esta checagem, um dia
-// mal lido no boleto viraria silenciosamente um vencimento em outro mês, e a
-// conta apareceria com a data errada sem nada indicando o problema. Mesmo
-// padrão de `mesDe()` em deNotaFiscal.ts: monta a data e confere se os
-// componentes voltaram iguais aos que entraram.
-function dataExiste(iso: string): boolean {
-  const [ano, mes, dia] = iso.split('-').map(Number)
-  const d = new Date(Date.UTC(ano, mes - 1, dia))
-  return d.getUTCFullYear() === ano && d.getUTCMonth() === mes - 1 && d.getUTCDate() === dia
-}
 
 // Recusa em vez de adivinhar. Um campo faltando aqui vira `null` no fim: quem
 // chama trata como "não é boleto" e o anexo é ignorado, que é o resultado certo
