@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { contasDaNota, motivoSemBoleto, motivoVencidoPelaDuplicata, parcelasDescartadasDaNota, type DadosParaConta } from './deNotaFiscal'
+import {
+  contasDaNota, motivoSemBoleto, motivoVencidoPelaDuplicata, parcelasDescartadasDaNota,
+  observacaoDeServicoSemRecorrenciaConferida, PREFIXO_CONFERIR,
+  type DadosParaConta,
+} from './deNotaFiscal'
 
 const base: DadosParaConta = {
   numero:         '4516',
@@ -9,6 +13,7 @@ const base: DadosParaConta = {
   formaPagamento: '15',
   duplicatas:     [{ numero: '001', vencimento: '2026-07-21', valor: 30600 }],
   items:          [{ descricao: 'DIESEL S10' }],
+  modelo:         'nfe',
 }
 
 describe('motivoSemBoleto', () => {
@@ -50,6 +55,28 @@ describe('motivoSemBoleto', () => {
     expect(motivoSemBoleto('16')).toBeNull()
     expect(motivoSemBoleto('19')).toBeNull()
     expect(motivoSemBoleto('21')).toBeNull()
+  })
+})
+
+// Achado [alto] do Apolo, 2ª rodada (17/08/2026): probe em produção achou uma
+// conta RECORRENTE da SITRACK já cadastrada (recorrente_id preenchido,
+// nota_fiscal_id nulo) para o mesmo mês/valor. Reenviar a NFS-e da SITRACK sem
+// este aviso criaria uma segunda conta e, ao pagar as duas, duplicaria o gasto
+// de verdade (ver comentário completo em deNotaFiscal.ts).
+describe('observacaoDeServicoSemRecorrenciaConferida', () => {
+  it('NFS-e sem vencimento: alerta para conferir conta recorrente', () => {
+    const r = observacaoDeServicoSemRecorrenciaConferida('nfse', null)
+    expect(r).not.toBeNull()
+    expect(r).toContain(PREFIXO_CONFERIR)
+    expect(r).toMatch(/conta recorrente/)
+  })
+
+  it('NF-e (produto) sem vencimento: NAO alerta — o caso ERCAL nao pode ganhar tarja nova', () => {
+    expect(observacaoDeServicoSemRecorrenciaConferida('nfe', null)).toBeNull()
+  })
+
+  it('NFS-e COM vencimento (hipotético — hoje nunca acontece, ver parseXmlNFSe): NAO alerta', () => {
+    expect(observacaoDeServicoSemRecorrenciaConferida('nfse', '2026-09-01')).toBeNull()
   })
 })
 

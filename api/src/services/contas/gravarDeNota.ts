@@ -2,6 +2,7 @@ import { supabase } from '../supabase'
 import {
   contasDaNota, parcelasDescartadasDaNota, duplicataEhReal,
   motivoVencidoPelaDuplicata, observacaoDoBoletoContraOCodigo,
+  observacaoDeServicoSemRecorrenciaConferida,
   type ContaDeNota, type DadosParaConta, type ParcelaDescartada,
 } from './deNotaFiscal'
 
@@ -58,7 +59,7 @@ export async function gravarContasDaNota(
   // função pura é a única fonte da resposta, então esta gravação nunca pode
   // divergir do que o WhatsApp diz sobre a mesma nota. Null no caso comum — a
   // coluna `observacao` fica como sempre esteve.
-  const observacao = observacaoDoBoletoContraOCodigo(
+  const observacaoDuplicata = observacaoDoBoletoContraOCodigo(
     motivoVencidoPelaDuplicata(nfe.formaPagamento, nfe.duplicatas.some(duplicataEhReal)),
   )
 
@@ -77,7 +78,14 @@ export async function gravarContasDaNota(
     nota_fiscal_id: notaFiscalId,
     numero_parcela: c.numero_parcela,
     total_parcelas: c.total_parcelas,
-    observacao,
+    // Duas fontes possíveis para a MESMA coluna, calculadas por CONTA (não por
+    // nota inteira): a duplicata que venceu o código de pagamento (boleto de
+    // NF-e nascido apesar do tPag dizer "sem cobrança") e o serviço sem
+    // vencimento (NFS-e, achado Apolo 17/08/2026, ver deNotaFiscal.ts). As duas
+    // nunca coexistem na mesma conta — NFS-e nunca traz duplicata real — mas o
+    // `??` é defensivo: se um dia coexistirem, o aviso da duplicata (mais
+    // antigo e testado) vence.
+    observacao: observacaoDuplicata ?? observacaoDeServicoSemRecorrenciaConferida(nfe.modelo, c.vencimento),
     fazenda_id:     fazendaId,
   }))
 

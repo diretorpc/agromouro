@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('./nfeProcessor', () => ({
-  parseXmlNFe:     vi.fn(),
+  parseXmlNota:    vi.fn(),
   nfeJaProcessada: vi.fn(),
   processarNFe:    vi.fn(),
 }))
@@ -39,12 +39,12 @@ vi.mock('./supabase', () => {
   }
 })
 
-import { parseXmlNFe, nfeJaProcessada, processarNFe } from './nfeProcessor'
+import { parseXmlNota, nfeJaProcessada, processarNFe } from './nfeProcessor'
 import { importarXmlManual, excluirNotaManual } from './nfeManual'
 
 describe('importarXmlManual', () => {
   beforeEach(() => {
-    vi.mocked(parseXmlNFe).mockReset()
+    vi.mocked(parseXmlNota).mockReset()
     vi.mocked(nfeJaProcessada).mockReset()
     vi.mocked(processarNFe).mockReset()
     estadoBanco.notaSelect = { data: null, error: null }
@@ -55,11 +55,11 @@ describe('importarXmlManual', () => {
   const nfeFake = {
     numero: '9001', dataEmissao: '2026-08-05', emitenteNome: 'CHEGOU STORE',
     emitenteCnpj: '34839053000112', valorTotal: 1199,
-    items: [], duplicatas: [], formaPagamento: null,
+    items: [], duplicatas: [], formaPagamento: null, modelo: 'nfe',
   } as any
 
   it('XML inválido: devolve status invalida e não chama processarNFe', async () => {
-    vi.mocked(parseXmlNFe).mockReturnValue(null)
+    vi.mocked(parseXmlNota).mockReturnValue(null)
 
     const resultado = await importarXmlManual('<xml-qualquer/>', 'fazenda-1')
 
@@ -68,7 +68,7 @@ describe('importarXmlManual', () => {
   })
 
   it('nota já existe: devolve status duplicada com os dados da nota encontrada', async () => {
-    vi.mocked(parseXmlNFe).mockReturnValue(nfeFake)
+    vi.mocked(parseXmlNota).mockReturnValue(nfeFake)
     vi.mocked(nfeJaProcessada).mockResolvedValue(true)
     estadoBanco.notaSelect = {
       data: { id: 'nota-existente', numero: '9001', data_emissao: '2026-06-02', emitente_nome: 'CHEGOU STORE' },
@@ -85,7 +85,7 @@ describe('importarXmlManual', () => {
   })
 
   it('nota nova: chama processarNFe com origem manual e devolve status criada', async () => {
-    vi.mocked(parseXmlNFe).mockReturnValue(nfeFake)
+    vi.mocked(parseXmlNota).mockReturnValue(nfeFake)
     vi.mocked(nfeJaProcessada).mockResolvedValue(false)
     vi.mocked(processarNFe).mockResolvedValue(undefined)
 
@@ -97,7 +97,7 @@ describe('importarXmlManual', () => {
   })
 
   it('processarNFe lança erro SEM ter deixado casca no banco: devolve erro e não chama limpeza', async () => {
-    vi.mocked(parseXmlNFe).mockReturnValue(nfeFake)
+    vi.mocked(parseXmlNota).mockReturnValue(nfeFake)
     vi.mocked(nfeJaProcessada).mockResolvedValue(false)
     vi.mocked(processarNFe).mockRejectedValue(new Error('banco fora do ar'))
     estadoBanco.notaSelect = { data: null, error: null }
@@ -112,7 +112,7 @@ describe('importarXmlManual', () => {
   })
 
   it('ACHADO 2: processarNFe lança erro COM casca já gravada — limpa a nota antes de devolver o erro', async () => {
-    vi.mocked(parseXmlNFe).mockReturnValue(nfeFake)
+    vi.mocked(parseXmlNota).mockReturnValue(nfeFake)
     vi.mocked(nfeJaProcessada).mockResolvedValue(false)
     vi.mocked(processarNFe).mockRejectedValue(new Error('IA de classificação fora do ar'))
     // processarNFe grava a nota como PRIMEIRO passo — se falhar depois, a

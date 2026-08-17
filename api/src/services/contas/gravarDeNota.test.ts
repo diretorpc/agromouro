@@ -4,23 +4,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // gravarDeNota.ts só toca `.from('contas_a_pagar').upsert(...).select(...)`.
 // `estado.erroUpsert` liga/desliga a falha de banco por teste.
 const { estado } = vi.hoisted(() => ({
-  estado: { erroUpsert: null as null | { message: string; code: string } },
+  // ultimoUpsert fica no MESMO objeto hoisted (não numa variável local dentro
+  // do factory de `from`): o teste precisa inspecionar o payload gravado
+  // (coluna `observacao`, entre outras) depois de chamar gravarContasDaNota,
+  // e uma variável local ao closure de `from()` não é visível fora dele.
+  estado: { erroUpsert: null as null | { message: string; code: string }, ultimoUpsert: null as any },
 }))
 
 vi.mock('../supabase', () => ({
   supabase: {
     from: vi.fn(() => {
-      let ultimoUpsert: any = null
       const obj: any = {
         upsert: vi.fn((payload: any) => {
-          ultimoUpsert = payload
+          estado.ultimoUpsert = payload
           return obj
         }),
         select: vi.fn(() => obj),
         then: (resolve: any) => resolve(
           estado.erroUpsert
             ? { data: null, error: estado.erroUpsert }
-            : { data: ultimoUpsert, error: null },
+            : { data: estado.ultimoUpsert, error: null },
         ),
       }
       return obj
@@ -39,9 +42,13 @@ const base: DadosParaConta = {
   formaPagamento: '15',
   duplicatas:     [{ numero: '001', vencimento: '2026-07-21', valor: 30600 }],
   items:          [{ descricao: 'DIESEL S10' }],
+  modelo:         'nfe',
 }
 
-beforeEach(() => { estado.erroUpsert = null })
+beforeEach(() => {
+  estado.erroUpsert = null
+  estado.ultimoUpsert = null
+})
 
 // Esta é a lacuna que a Task 3 deixou aberta: parcelasDescartadasDaNota()
 // existia mas ninguém a chamava, então uma parcela ruim no meio de uma nota
@@ -113,5 +120,35 @@ describe('gravarContasDaNota — parcelas descartadas', () => {
         { numero: '002', vencimento: '2026-13-40', valor: 100 }, // malformada
       ],
     }, 'nfe-id', 'fazenda-id')).rejects.toThrow(/falha ao gravar boleto no banco/)
+  })
+})
+
+// CONSERTO 1 — Achado [alto] do Apolo, 2ª rodada (17/08/2026): probe em produção
+// achou uma conta RECORRENTE da SITRACK já cadastrada (recorrente_id preenchido,
+// nota_fiscal_id nulo) pro mesmo mês/valor. Reenviar a NFS-e da SITRACK sem este
+// aviso criaria uma segunda conta — e como a recorrente tem nota_fiscal_id nulo,
+// pagar as duas duplica o gasto de verdade (precisaCriarLancamento em
+// contas/pagamento.ts). Ver a função em deNotaFiscal.ts para o raciocínio completo.
+describe('gravarContasDaNota — observacao de alerta em NFS-e sem vencimento', () => {
+  it('NFS-e sem duplicata (sempre o caso hoje): a conta gravada leva a observacao de conferir conta recorrente', async () => {
+    const r = await gravarContasDaNota(
+      { ...base, modelo: 'nfse', formaPagamento: null, duplicatas: [] },
+      'nfe-id', 'fazenda-id',
+    )
+    expect(r.contas).toHaveLength(1)
+    expect(estado.ultimoUpsert[0].observacao).toMatch(/Conferir antes de pagar/)
+    expect(estado.ultimoUpsert[0].observacao).toMatch(/conta recorrente/)
+  })
+
+  // O MESMO cenário (sem duplicata, conta sem vencimento) para NF-e é o caso
+  // ERCAL — já provado em deNotaFiscal.test.ts e em produção (R$ 8.258,40 real).
+  // Ele não pode ganhar uma tarja nova: comportamento antigo intacto.
+  it('NF-e (produto) no mesmo cenario sem duplicata: NAO ganha a observacao (caso ERCAL, comportamento antigo intacto)', async () => {
+    const r = await gravarContasDaNota(
+      { ...base, modelo: 'nfe', duplicatas: [] },
+      'nfe-id', 'fazenda-id',
+    )
+    expect(r.contas).toHaveLength(1)
+    expect(estado.ultimoUpsert[0].observacao).toBeNull()
   })
 })

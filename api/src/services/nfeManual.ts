@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { parseXmlNFe, nfeJaProcessada, processarNFe } from './nfeProcessor'
+import { parseXmlNota, nfeJaProcessada, processarNFe } from './nfeProcessor'
 
 export type ResultadoImportacao =
   | { status: 'criada'; numero: string; emitenteNome: string; valorTotal: number }
@@ -8,10 +8,10 @@ export type ResultadoImportacao =
   | { status: 'erro'; mensagem: string }
 
 export async function importarXmlManual(xml: string, fazenda_id: string): Promise<ResultadoImportacao> {
-  const nfe = parseXmlNFe(xml)
+  const nfe = parseXmlNota(xml)
   if (!nfe) return { status: 'invalida' }
 
-  const jaExiste = await nfeJaProcessada(nfe.numero, nfe.emitenteCnpj, fazenda_id)
+  const jaExiste = await nfeJaProcessada(nfe.numero, nfe.emitenteCnpj, fazenda_id, nfe.modelo)
   if (jaExiste) {
     const { data: notaExistente } = await supabase
       .from('notas_fiscais')
@@ -19,6 +19,7 @@ export async function importarXmlManual(xml: string, fazenda_id: string): Promis
       .eq('numero', nfe.numero)
       .eq('emitente_cnpj', nfe.emitenteCnpj)
       .eq('fazenda_id', fazenda_id)
+      .eq('modelo', nfe.modelo)
       .maybeSingle()
 
     return {
@@ -53,6 +54,7 @@ export async function importarXmlManual(xml: string, fazenda_id: string): Promis
       .eq('numero', nfe.numero)
       .eq('emitente_cnpj', nfe.emitenteCnpj)
       .eq('fazenda_id', fazenda_id)
+      .eq('modelo', nfe.modelo)
       .maybeSingle()
 
     if (notaFalha) {

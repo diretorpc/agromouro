@@ -98,7 +98,7 @@ vi.mock('@anthropic-ai/sdk', () => ({
   })),
 }))
 
-import { parseXmlNFe, processarNFe, type NFeData, type NFeItem } from './nfeProcessor'
+import { parseXmlNFe, parseXmlNFSe, parseXmlNota, processarNFe, type NFeData, type NFeItem } from './nfeProcessor'
 import { enviarMensagem } from './zapi'
 
 // Monta uma NF-e mínima. `extra` entra dentro de <infNFe>, depois dos itens.
@@ -256,6 +256,166 @@ describe('parseXmlNFe — CFOP por item', () => {
   })
 })
 
+// Nota real da SITRACK (mensalidade de rastreador de frota), medida em
+// 17/08/2026 — primeira NFS-e que o upload manual recusou porque o sistema só
+// sabia ler NF-e de produto. Estrutura mínima do padrão nacional (raiz
+// <NFSe>), sem <cobr><dup> nem CFOP — nota de serviço não tem nenhum dos dois.
+function nfseXml(): string {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<NFSe versao="1.01"><infNFSe Id="NFS310620020406380500013500000000005002608">
+  <nNFSe>500</nNFSe>
+  <emit><CNPJ>04063805000135</CNPJ><xNome>SITRACK SERVICOS TECNOLOGICOS LTDA</xNome></emit>
+  <valores><vBC>124.00</vBC><vISSQN>3.10</vISSQN><vLiq>124.00</vLiq></valores>
+  <DPS versao="1.01"><infDPS Id="DPS310620020406380500013500900000000000000518">
+    <dhEmi>2026-08-05T09:57:15-03:00</dhEmi>
+    <prest><CNPJ>04063805000135</CNPJ></prest>
+    <toma><CPF>98190350820</CPF><xNome>JACOB DOMINGOS MOURO</xNome></toma>
+    <serv><cServ><xDescServ>1.03 - SERVICO DE GESTAO DA INFORMACAO PARA GERENCIAMENTO DE FROTA</xDescServ></cServ></serv>
+    <valores><vServPrest><vServ>124.00</vServ></vServPrest></valores>
+  </infDPS></DPS>
+</infNFSe></NFSe>`
+}
+
+describe('parseXmlNFSe — nota de serviço (padrão nacional), caso SITRACK', () => {
+  it('lê número, emitente, data e valor do bloco correto', () => {
+    const r = parseXmlNFSe(nfseXml())!
+    expect(r).not.toBeNull()
+    expect(r.numero).toBe('500')
+    expect(r.emitenteNome).toBe('SITRACK SERVICOS TECNOLOGICOS LTDA')
+    expect(r.emitenteCnpj).toBe('04063805000135')
+    expect(r.dataEmissao).toBe('2026-08-05T09:57:15-03:00')
+    expect(r.valorTotal).toBe(124)
+  })
+
+  it('monta um item único representando o serviço inteiro, sem CFOP nem NCM', () => {
+    const r = parseXmlNFSe(nfseXml())!
+    expect(r.items).toHaveLength(1)
+    expect(r.items[0].description).toContain('GESTAO DA INFORMACAO')
+    expect(r.items[0].quantity).toBe(1)
+    expect(r.items[0].unitValue).toBe(124)
+    expect(r.items[0].totalValue).toBe(124)
+    expect(r.items[0].cfop).toBe('')
+    expect(r.items[0].ncm).toBe('')
+  })
+
+  it('nota de serviço não tem boleto nem forma de pagamento no XML — os dois ficam vazios', () => {
+    const r = parseXmlNFSe(nfseXml())!
+    expect(r.duplicatas).toEqual([])
+    expect(r.formaPagamento).toBeNull()
+  })
+
+  // Achado 2 do Apolo (17/08/2026): número de NF-e e de NFS-e são sequências
+  // INDEPENDENTES do mesmo emitente — sem este campo na chave de duplicidade
+  // (migração 011), a NF-e nº 500 e a NFS-e nº 500 do mesmo fornecedor
+  // colidiriam e a segunda seria descartada como "já processada".
+  it('marca modelo=nfse — nunca colide com uma NF-e de mesmo número', () => {
+    expect(parseXmlNFSe(nfseXml())!.modelo).toBe('nfse')
+  })
+})
+
+describe('parseXmlNFe — marca modelo=nfe (Achado 2 do Apolo)', () => {
+  it('sempre devolve modelo=nfe, nunca nfse', () => {
+    expect(parseXmlNFe(nfeXml())!.modelo).toBe('nfe')
+  })
+
+  it('XML de NF-e (produto) não é lido como NFS-e — raiz errada devolve null', () => {
+    expect(parseXmlNFSe(nfeXml())).toBeNull()
+  })
+
+  it('XML sem raiz NFSe nem NFe devolve null, não estoura', () => {
+    expect(parseXmlNFSe('<qualquer-coisa/>')).toBeNull()
+  })
+})
+
+describe('parseXmlNota — tenta NF-e primeiro, cai para NFS-e se não achar', () => {
+  it('nota de produto (raiz NFe) é lida por parseXmlNFe', () => {
+    const r = parseXmlNota(nfeXml())!
+    expect(r.numero).toBe('4516')
+    expect(r.items[0].cfop).toBe('5102')
+  })
+
+  it('nota de serviço (raiz NFSe) cai no leitor de NFS-e', () => {
+    const r = parseXmlNota(nfseXml())!
+    expect(r.numero).toBe('500')
+    expect(r.emitenteNome).toBe('SITRACK SERVICOS TECNOLOGICOS LTDA')
+  })
+
+  it('XML que não é nenhum dos dois formatos devolve null', () => {
+    expect(parseXmlNota('<lixo/>')).toBeNull()
+  })
+})
+
+// Achado 1 do Apolo (17/08/2026), PROVADO rodando processarNFe de verdade:
+// item de NFS-e (cfop='' e ncm='') caía na MESMA cascata de um item de NF-e
+// com CFOP/NCM ausente — que assume "compra normal, estocável até prova em
+// contrário" — e a única "prova em contrário" era a resposta da IA
+// (categorizarItem). O mock global deste arquivo (topo, linha ~97) sempre
+// devolve 'fertilizante_n' — categoria ESTOCÁVEL — de propósito: é o pior
+// caso de verdade, não um mock favorável. Sem o campo `servico` no item,
+// este teste RECRIA o insumo fantasma que o Apolo mediu: rpc
+// incrementar_estoque chamado, movimentação de entrada gravada, saldo do
+// galpão somado por uma nota de serviço.
+describe('processarNFe — NFS-e nunca entra no estoque, mesmo se o Haiku errar a categoria (Achado 1 do Apolo, 17/08/2026)', () => {
+  const nfseComoNFeData: NFeData = {
+    numero:         '500',
+    dataEmissao:    '2026-08-05T09:57:15-03:00',
+    emitenteNome:   'SITRACK SERVICOS TECNOLOGICOS LTDA',
+    emitenteCnpj:   '04063805000135',
+    valorTotal:     124,
+    items: [{
+      description:  '1.03 - SERVICO DE GESTAO DA INFORMACAO PARA GERENCIAMENTO DE FROTA',
+      quantity:     1,
+      unit:         'un',
+      unitValue:    124,
+      totalValue:   124,
+      quantityTrib: 1,
+      unitTrib:     'un',
+      ncm:          '',
+      cfop:         '',
+      servico:      true,
+    }],
+    duplicatas:     [],
+    formaPagamento: null,
+    modelo:         'nfse',
+  }
+
+  beforeEach(() => {
+    chamadas.length = 0
+    estadoBanco.falharUpsertContas = false
+    vi.mocked(enviarMensagem).mockClear()
+  })
+
+  it('item.servico=true nunca soma estoque, mesmo com o Haiku (mock deste arquivo) respondendo categoria estocável', async () => {
+    await processarNFe(nfseComoNFeData, 'manual', 'fazenda-fake-id')
+
+    const tocouEstoque =
+      chamadas.some(c => c.table === '__rpc__' && c.method === 'incrementar_estoque') ||
+      chamadas.some(c => c.table === 'movimentacoes_estoque')
+    expect(tocouEstoque).toBe(false)
+
+    const itemGravado = chamadas.find(c => c.table === 'itens_nfe' && c.method === 'insert')
+    expect(itemGravado?.payload.insumo_id).toBeNull()
+  })
+
+  it('mesmo sem tocar estoque, o serviço vira gasto normal no Financeiro', async () => {
+    await processarNFe(nfseComoNFeData, 'manual', 'fazenda-fake-id')
+
+    const lancamento = chamadas.find(c => c.table === 'lancamentos_financeiros' && c.method === 'insert')
+    expect(lancamento?.payload.valor).toBe(124)
+  })
+
+  // Achado [médio] do Apolo, 3ª rodada, 17/08/2026: a 1ª versão do aviso de
+  // "confira conta recorrente" só alcançava a tela (coluna `observacao`),
+  // nunca o WhatsApp — que é o canal que o dono realmente lê primeiro.
+  it('a mensagem do WhatsApp avisa pra dispensar A RECORRENTE, não esta conta', async () => {
+    await processarNFe(nfseComoNFeData, 'manual', 'fazenda-fake-id')
+
+    const mensagem = vi.mocked(enviarMensagem).mock.calls[0]?.[1] as string
+    expect(mensagem).toContain('dispense A RECORRENTE')
+    expect(mensagem).toContain('conta duas vezes')
+  })
+})
+
 // ─── STEP 5 do brief da Task 5 — prova de isolamento, agora PERMANENTE ──────
 //
 // Esta é a propriedade em que a Fase 2 inteira se apoia: se a criação de
@@ -284,6 +444,7 @@ describe('processarNFe — isolamento do bloco de boletos (Fase 2)', () => {
     }],
     duplicatas:     [{ numero: '001', vencimento: '2026-08-30', valor: 5000 }],
     formaPagamento: '15',
+    modelo:         'nfe',
   }
 
   beforeEach(() => {
@@ -404,6 +565,7 @@ describe('processarNFe — "em N dias" usa hoje de verdade, não a data da nota 
     }],
     duplicatas:     [{ numero: '001', vencimento: '2026-08-01', valor: 1000 }],
     formaPagamento: '15',
+    modelo:         'nfe',
   }
 
   beforeEach(() => {
@@ -499,6 +661,7 @@ describe('processarNFe — CFOP manda no estoque e no custo', () => {
       items:          [item()],
       duplicatas:     [],
       formaPagamento: '90',
+      modelo:         'nfe',
       ...overrides,
     }
   }
@@ -852,6 +1015,7 @@ describe('processarNFe — conta_como_compra grava a MESMA resposta da escada do
       items:          [item()],
       duplicatas:     [],
       formaPagamento: '90',
+      modelo:         'nfe',
       ...overrides,
     }
   }
@@ -949,6 +1113,7 @@ describe('processarNFe — avisa quando o boleto vale mais que o gasto lançado 
       items:          [item()],
       duplicatas:     [],
       formaPagamento: '15',
+      modelo:         'nfe',
       ...overrides,
     }
   }
@@ -1024,6 +1189,7 @@ describe('processarNFe — algumECompra=true COM duplicata: parte da cobrança s
       ],
       duplicatas:     [{ numero: '001', vencimento: '2026-09-01', valor: 11000 }],
       formaPagamento: '15',
+      modelo:         'nfe',
     }
 
     await processarNFe(nfe, 'webhook', 'fazenda-fake-id')
@@ -1078,6 +1244,7 @@ describe('processarNFe — nota 100% compra com valorTotal zero não quebra a fr
       }],
       duplicatas:     [],
       formaPagamento: '01',   // dinheiro — bloqueia boleto, mantém o teste focado só na frase de gasto
+      modelo:         'nfe',
     }
 
     await processarNFe(nfe, 'webhook', 'fazenda-fake-id')
@@ -1114,6 +1281,7 @@ describe('processarNFe — origem manual', () => {
     }],
     duplicatas:     [],
     formaPagamento: null,
+    modelo:         'nfe',
   }
 
   beforeEach(() => {

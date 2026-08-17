@@ -39,7 +39,10 @@ nfeWebhook.post('/', async (req, res) => {
     // Mesmo comportamento do caminho de e-mail (parseXmlNFe usa CNPJ ?? CPF ?? '').
     const emitenteCnpj = String(issuerCnpjRaw ?? '')
 
-    if (await nfeJaProcessada(numero, emitenteCnpj, fazenda.id)) {
+    // NFE.io é só nota de produto — nunca lê NFS-e, então 'nfe' é fixo aqui.
+    const modelo: 'nfe' = 'nfe'
+
+    if (await nfeJaProcessada(numero, emitenteCnpj, fazenda.id, modelo)) {
       console.log(`[NFeWebhook] NF-e ${numero} já processada — ignorando.`)
       return
     }
@@ -67,6 +70,7 @@ nfeWebhook.post('/', async (req, res) => {
       // (é JSON próprio do serviço, não o XML da SEFAZ que parseXmlNFe lê).
       duplicatas:     [],
       formaPagamento: null,
+      modelo,
     }
 
     await processarNFe(nfe, 'webhook', fazenda.id)

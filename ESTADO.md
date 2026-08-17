@@ -410,6 +410,179 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
+## Leitor de NFS-e (nota de serviço) — codado em 17/08/2026, 5 rodadas de revisão do Apolo feitas
+
+**Estado:** Migração 011 JÁ APLICADA em produção e confirmada pela API (17/08, 12h20).
+5 rodadas de revisão do Apolo — 1ª achou 8 pontos (2 altos), 2ª achou mais 1 alto + 3
+menores (sobre os consertos dos 2 altos), 3ª confirmou o CÓDIGO limpo, 4ª e 5ª reabriram
+só a PARTE DE TEXTO/DECISÃO do achado 9 (nenhuma achou defeito de código novo). Checagem
+do e-mail da SITRACK já feita (achado 9: manda ZIP, fora do escopo abrir automaticamente —
+fica manual mesmo, decisão do Matheus). Falta só `git push`. `cd api && npx vitest run`
+e `npx tsc --noEmit` para medir o estado atual — não copiar número de teste para cá.
+
+**⚠️ TRAVA DE ORDEM DE DEPLOY — LER ANTES DE DAR PUSH.** O código novo grava e filtra por
+uma coluna `modelo` em `notas_fiscais` que **AINDA NÃO EXISTE em produção** — só existe
+como migração escrita (`supabase/migrations/011_notas_fiscais_modelo.sql`), não aplicada.
+Se este código subir pro Railway ANTES da migração rodar no Supabase, **toda gravação de
+NF-e para de funcionar** (não só NFS-e) — `column modelo does not exist` em todo insert.
+**Ordem obrigatória:** 1) rodar a migração 011 no SQL Editor do Supabase, 2) só depois
+`git push`.
+
+**E se a ordem for invertida, o erro é MUDO.** `nfeEmailWebhook.ts` responde `200 OK` pro
+Make **antes** de processar o XML (linha 8, `res.status(200).json(...)`) — é assim de
+propósito, pra não deixar o Make esperando. Mas isso quer dizer que, se o código subir
+antes da migração, o `column modelo does not exist` acontece DEPOIS do 200 já ter sido
+enviado: o Make marca como entregue e não reenvia, o erro vai só pro `console.error` do
+Railway (ninguém olha isso em tempo real), e a nota inteira desaparece sem aviso nenhum —
+nem pro Matheus, nem pro sistema. Mais um motivo pra respeitar a ordem acima à risca.
+
+**O gatilho.** Matheus tentou subir pelo upload manual a NFS-e da SITRACK (mensalidade
+do rastreador de frota, R$ 124) e o sistema recusou como "inválido" — o leitor só
+conhecia NF-e de produto (raiz `<NFe>`). NFS-e é outro formato inteiro (raiz `<NFSe>`,
+sem `<det>`/CFOP/NCM, sem `<cobr><dup>` de vencimento).
+
+**O que foi feito (base).** `nfeProcessor.ts` ganhou `parseXmlNFSe()` (devolve o mesmo
+formato `NFeData`, com item sintético único representando o serviço) e `parseXmlNota()`
+(tenta NF-e primeiro, cai pra NFS-e). Os 3 lugares que liam nota fiscal — upload manual
+(`nfeManual.ts`), webhook do Make (`nfeEmailWebhook.ts`) e o job que lê IMAP direto a
+cada 30 min (`jobs/nfeEmail.ts`) — trocaram para `parseXmlNota`; o job também ganhou
+`isNFSeXml()` companheiro do `isNFeXml()` que já existia.
+
+**Achados da 1ª revisão do Apolo, e o que foi feito com cada um:**
+
+1. **[ALTO, consertado]** Item de NFS-e (cfop/ncm vazios) caía na mesma cascata de uma
+   NF-e sem CFOP/NCM — "compra normal, estocável até prova em contrário" — e a única
+   prova em contrário era a IA (Haiku) classificando a descrição. Provado rodando
+   `processarNFe` de verdade: virou insumo fantasma e somou estoque. Corrigido com um
+   campo `servico: true` no item, que vence a cascata inteira sem perguntar pra IA — o
+   PARSER já sabe que é serviço (soube ler `<NFSe>`, não `<NFe>`), não precisa adivinhar.
+2. **[ALTO, consertado — código + migração + dado]** Número de NF-e e de NFS-e são
+   sequências INDEPENDENTES do mesmo fornecedor — a trava de duplicidade (só
+   numero+cnpj+fazenda) faria a NF-e nº 500 e a NFS-e nº 500 do mesmo emitente colidirem,
+   e a segunda seria descartada em silêncio. **Decisão do Matheus, 17/08: consertar com
+   migração agora, não só registrar o risco.** `NFeData` ganhou `modelo: 'nfe'|'nfse'`
+   (obrigatório), migração `011_notas_fiscais_modelo.sql` (coluna + índice único novo:
+   numero+cnpj+fazenda+modelo), e os 6 pontos que comparam nota por essa chave
+   (`nfeJaProcessada`, `idDaNotaQueLancouGasto`, 2 buscas em `nfeManual.ts`) ganharam o
+   filtro por `modelo`. **Migração escrita, NÃO aplicada em produção ainda** (ver trava
+   de ordem de deploy acima).
+5. **[médio, consertado]** `valorTotal` podia virar `NaN` sem ser pego (`??` não pega tag
+   vazia, `NaN <= 0` é `false`) — cobrança ficaria sem valor E sem vencimento. Corrigido
+   com `paraNumeroOuNull()` (`Number.isFinite`).
+8. **[baixo, consertado]** Descrição só com espaço virava `''` depois do trim e caía
+   DEPOIS do `??`, então não pegava o fallback "Serviço" — item sem nome que caísse no
+   caminho estocável casaria com QUALQUER insumo (`.ilike('%%')`). Corrigido: `|| 'Serviço'`
+   movido para depois do `.trim()`.
+3+4. **[alto, consertado — código + dado, mesmo movimento]** `parseXmlNFe` (parser
+   ANTIGO, já em produção — bug não relacionado ao pedido de hoje, achado sem querer
+   procurar) tinha a MESMA falha do zero à esquerda em CNPJ/CPF. **Decisão do Matheus,
+   17/08: consertar agora também.** Código: mesmo `numberParseOptions:{leadingZeros:false}`
+   aplicado ao parser antigo. Dado: medido em produção via script (não SQL Editor — sem
+   `DATABASE_URL` no `.env`, só o client do Supabase) — **129 notas no total, 39 com CNPJ
+   corrompido** (36 perderam 1 zero, 3 perderam 2). Reparado com `.padStart(14,'0')` em
+   cada linha — reversão exata, porque o bug só remove zero da frente, nunca dígito do
+   meio ou do fim. **Já aplicado e conferido: as 129 notas têm 14 dígitos agora.** Script
+   descartado depois (não fica no repo — era de uso único).
+   **Limite do reparo:** `.padStart(14,'0')` só é uma reversão exata para **CNPJ** (14
+   dígitos sempre). Não foi usado em CPF (11 dígitos) — não apareceu nenhum caso na
+   amostra de 17/08, mas se aparecer, o mesmo `.padStart(14,'0')` aplicado a um CPF
+   mutilado alongaria o número errado para 14 dígitos em vez de 11, piorando o dado em
+   vez de corrigi-lo. Registrar o limite aqui porque o script já foi descartado.
+   **Retrato de 17/08/2026 — quem foi corrigido, pelo nome como veio na nota** (8
+   fornecedores, não 6 — a 1ª versão deste registro errou a contagem, achado do Apolo
+   na 2ª revisão): USINA UBERABA, SYAGRI (2 filiais — CNPJ terminado em `000191` e em
+   `000272`), PROTEC, TERRA AGRÍCOLA, CULTURA, FERNANDES E TAKAO, IPESA DO BRASIL. Esta
+   lista é histórica e **não é mais recalculável ao vivo** (o script de reparo era de uso
+   único e já rodou — os CNPJs já estão certos em produção, não sobrou "estado errado"
+   para reconsultar). Para reconferir que o reparo continua valendo hoje (sem mais nada
+   corrompido), a pergunta certa ao banco é: `SELECT emitente_nome, emitente_cnpj FROM
+   notas_fiscais WHERE length(emitente_cnpj) NOT IN (11, 14)` — hoje deve devolver zero
+   linhas.
+6. **[baixo, documentado, sem código]** O leitor de NFS-e só entende o layout NACIONAL
+   (raiz `NFSe/infNFSe`). Município que ainda emite em ABRASF (`CompNfse`/`Nfse`/`InfNfse`)
+   continua sendo recusado — não é bug, é fronteira ainda não coberta. Amostra até
+   17/08: 1 nota (SITRACK).
+7. **[baixo, documentado, sem código]** `valorTotal` usa `vLiq` (líquido). Se um dia
+   aparecer prestador com retenção de ISS de verdade, `vLiq` é o que se PAGA, não o custo
+   total — gasto sairia subdimensionado. Não é o caso da SITRACK (ISS embutido, tomador
+   CPF). Comentário deixado no código para quando aparecer o primeiro caso.
+
+**Achados da 2ª rodada (sobre os consertos dos achados 1 e 2 acima) — 3ª confirmou o código; 4ª e 5ª reabriram só a parte de texto/decisão:**
+
+9. **[ALTO, consertado — DADO, não código]** A NFS-e da SITRACK (a nota que motivou este
+   trabalho inteiro) cai no caminho "conta sem vencimento" — e o probe achou que já existe
+   em produção uma conta **RECORRENTE** da SITRACK (R$124/mês, dia 20, cadastrada em
+   10/08), com 3 ocorrências JÁ CRIADAS em `contas_a_pagar`: agosto (R$124, **aberta**,
+   vence 20/08), setembro e outubro (sem valor ainda, `aguardando`, vencem 20/09 e 20/10).
+   Se a nota entrasse sem mais nada, nasceria uma SEGUNDA cobrança pro mesmo
+   fornecedor/mês/valor — e como a recorrente não tem `nota_fiscal_id`, ela CRIA
+   lançamento financeiro ao ser paga: pagar as duas dobra o GASTO de verdade (Financeiro
+   E Dashboard), não só o boleto. Uma tarja de aviso na tela (código, 1ª tentativa) **não
+   bastava** — dispensar a conta errada (a nova, em vez da recorrente) deixava as duas
+   telas de dinheiro mostrando o dobro do gasto do mesmo jeito. **Decisão do Matheus,
+   17/08: desligar só a regra recorrente (`contas_recorrentes.ativa = false`, id
+   `8c0278e4-…`), sem apagar as 3 contas que ela já tinha criado** — feito direto em
+   produção via script (mesma abordagem do reparo de CNPJ).
+
+   **⚠️ Correção da 5ª revisão — desligar a regra NÃO apaga o lembrete até novembro.**
+   `sincronizarOcorrencias` já tinha criado as 3 ocorrências ANTES de a regra ser
+   desligada — elas continuam em `contas_a_pagar` e o aviso diário das 07:00 continua
+   listando agosto/setembro/outubro normalmente (`reais(null)` vira "valor a definir").
+   O lembrete só some de fato a partir de novembro/2026, quando a regra desligada deixa
+   de gerar ocorrência nova.
+
+   **Checagem de "a NFS-e chega sozinha por e-mail" — RESPONDIDA (17/08, confirmado pelo
+   Matheus): NÃO chega sozinha, e o motivo é pior do que "só manda PDF".** O e-mail da
+   SITRACK manda um **ZIP** (XML + boleto + nota juntos no mesmo arquivo compactado).
+   `isNFeXml()`/`isNFSeXml()` (`jobs/nfeEmail.ts`) só reconhecem anexo `.xml` ou `.pdf`
+   soltos — **nenhum lugar do código abre `.zip`**, então mesmo com a coluna `modelo` e
+   o parser de NFS-e prontos, este fornecedor específico NUNCA vai entrar sozinho
+   enquanto isso não for construído (extrair o zip é tarefa nova, fora do escopo de
+   hoje — não é bug do trabalho desta sessão, é um formato que o pipeline de e-mail
+   nunca tratou, nem pra NF-e). **Decisão do Matheus: continuar extraindo o XML do zip
+   e subindo pelo upload manual todo mês** — é exatamente o que o botão "Adicionar NF →
+   Upload XML" resolve. A regra recorrente (`8c0278e4-…`) fica desligada porque ele sabe
+   que vai lançar à mão; se algum mês esquecer, não sobra lembrete automático — ele
+   está ciente da troca.
+
+   **Decisão do Matheus sobre a conta de agosto (17/08):** fica como está — ele vai
+   **pagar ela normalmente e NÃO subir o XML de agosto da SITRACK** (evita o dobro: pagar
+   a conta velha + lançar a nota nova pro mesmo mês). A NFS-e só começa a ser enviada a
+   partir de **setembro**.
+   **⚠️ Se subir o XML de agosto por engano DEPOIS de já ter pago a recorrente:**
+   "dispensar" a conta nova NÃO desfaz o pagamento antigo — o lançamento de R$124 já
+   pago fica lá do mesmo jeito, e o Financeiro/Dashboard mostram R$248. Antes de
+   dispensar qualquer coisa, ir em `/contas`, achar o pagamento da recorrente de agosto e
+   clicar **"Desfazer pagamento"** primeiro — só depois disso dispensar sobra sem gasto
+   dobrado. Achado [alto] da 5ª revisão do Apolo.
+
+   **As contas de setembro e outubro (ainda sem valor) — AÇÃO COM DATA, não "depois":**
+   até **19/09/2026**, antes de pagar a recorrente de setembro, decidir: se a NFS-e de
+   setembro já tiver chegado no sistema, **dispensar a conta da recorrente de setembro**
+   (mesma lógica de agosto). Se não tiver chegado, pagar a recorrente normalmente e não
+   subir a NFS-e de setembro depois. Mesma decisão pra outubro, até **18/10/2026**. Achado
+   [alto] da 5ª revisão — a versão anterior deste registro dizia só "decide depois, na
+   tela", sem dono nem data, e era justamente aqui que o gasto dobrava de verdade.
+10. **[médio, consertado]** O aviso de "confira conta recorrente" só alcançava a coluna
+    `observacao` da tela — nunca o WhatsApp, que é o canal que o dono lê primeiro. Nova
+    função `linhaServicoSemRecorrencia()` em `avisoBoleto.ts`, mesmo padrão de
+    `linhaBoletoContraOCodigo()` já existente. Texto ajustado nas duas pontas (tela e
+    WhatsApp) pra nomear a AÇÃO CERTA — "dispense A RECORRENTE (não esta)" — porque a
+    tarja irmã termina com "dispense esta conta", e copiar esse padrão aprendido
+    dispensaria o lado errado.
+11. **[baixo, aceito, sem código]** A tarja de "confira conta recorrente" dispara em
+    TODA NFS-e sem vencimento, tenha ou não conta recorrente de verdade — hoje o volume é
+    1 fornecedor conhecido (SITRACK), então o barulho é zero na prática. Se aparecer uma
+    2ª NFS-e de outro fornecedor, revisitar: mover a decisão pra `gravarDeNota.ts`
+    (que já é async) e consultar `contas_a_pagar` por recorrente do mesmo fornecedor/mês
+    antes de carimbar — detectar e avisar, não casar automaticamente (casar errado é pior
+    que avisar demais).
+
+**Decisão registrada:** NFS-e sem vencimento no XML (a maioria — confirmado que o campo
+só existe pra nota de aluguel de imóvel) cai no mesmo comportamento que nota de produto
+sem duplicata: vira conta a pagar SEM DATA em Contas a Pagar, o dono confirma a data à
+mão. Decisão do Matheus, 17/08 — não programar leitura de vencimento pra esse caso raro.
+
 ## ✅ A duplicata passa a vencer o tPag — ENVIADO em 14/08/2026
 
 **Estado:** commit `cb7e531` (+ `4215b0b` de registro) na `main`, enviado ao GitHub pelo

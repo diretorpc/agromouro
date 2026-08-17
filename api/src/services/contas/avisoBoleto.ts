@@ -52,6 +52,23 @@ function linhaBoletoContraOCodigo(motivoVencido: string | null, quantos: number)
     `${pago}, dispense em ${APP_URL}/contas`
 }
 
+// Serviço (NFS-e) nunca traz vencimento no XML — indistinguível, pro sistema, de
+// uma conta RECORRENTE já cadastrada pro mesmo fornecedor no mesmo mês (achado
+// [alto] do Apolo, 2ª rodada, 17/08/2026 — probe em produção achou a recorrente
+// da SITRACK colidindo com a nota que motivou este trabalho). Esta função é a
+// MESMA verdade de observacaoDeServicoSemRecorrenciaConferida() (deNotaFiscal.ts,
+// que grava o aviso na coluna da conta) — só que pro WhatsApp, que é o canal que
+// o dono lê primeiro. Achado [médio] do Apolo, 3ª rodada: a 1ª versão deste
+// conserto só alcançava a tela, nunca o WhatsApp. Nomeia a AÇÃO CERTA (dispensar
+// a RECORRENTE) pelo mesmo motivo do comentário lá: a tarja irmã logo acima
+// termina com "dispense esta conta", e copiar esse padrão aprendido dispensaria
+// o lado errado.
+function linhaServicoSemRecorrencia(modelo: 'nfe' | 'nfse', semVencimento: boolean): string {
+  if (modelo !== 'nfse' || !semVencimento) return ''
+  return `\n\n👀 *Serviço:* o gasto já foi lançado por esta nota. Se você tem conta recorrente ` +
+    `deste fornecedor neste mês, dispense A RECORRENTE (não esta), senão o gasto conta duas vezes.`
+}
+
 // A linha de boleto da mensagem de "NF-e processada".
 // O sistema SEMPRE diz o que concluiu: criou, não criou e por quê, ou falhou.
 // Recusa silenciosa faria um boleto sumir sem ninguém perceber — inclusive o
@@ -68,6 +85,7 @@ export function linhaBoleto(
   houveErro: boolean,
   descartadas: ParcelaDescartada[] = [],
   motivoVencido: string | null = null,
+  modelo: 'nfe' | 'nfse' = 'nfe',
 ): string {
   const avisoDescartadas = linhaParcelasPerdidas(descartadas)
 
@@ -85,7 +103,8 @@ export function linhaBoleto(
 
   const semData = contas.filter(c => !c.vencimento)
   if (semData.length === contas.length) {
-    return `\n\n💳 *Boleto sem data de vencimento* — informe em ${APP_URL}/contas?filtro=sem-vencimento` + rodape
+    return `\n\n💳 *Boleto sem data de vencimento* — informe em ${APP_URL}/contas?filtro=sem-vencimento`
+      + rodape + linhaServicoSemRecorrencia(modelo, true)
   }
 
   if (contas.length === 1) {

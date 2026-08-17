@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { supabase } from '../services/supabase'
-import { parseXmlNFe, nfeJaProcessada, processarNFe } from '../services/nfeProcessor'
+import { parseXmlNota, nfeJaProcessada, processarNFe } from '../services/nfeProcessor'
 
 export const nfeEmailWebhook = Router()
 
@@ -33,13 +33,13 @@ nfeEmailWebhook.post('/', async (req, res) => {
       return
     }
 
-    const nfe = parseXmlNFe(xmlStr)
+    const nfe = parseXmlNota(xmlStr)
     if (!nfe) {
-      console.warn('[NFeEmail] XML não é uma NF-e válida.')
+      console.warn('[NFeEmail] XML não é uma NF-e/NFS-e válida.')
       return
     }
 
-    if (await nfeJaProcessada(nfe.numero, nfe.emitenteCnpj, fazenda.id)) {
+    if (await nfeJaProcessada(nfe.numero, nfe.emitenteCnpj, fazenda.id, nfe.modelo)) {
       console.log(`[NFeEmail] NF-e ${nfe.numero} já processada para ${fazenda_codigo} — ignorando.`)
       return
     }
