@@ -962,7 +962,7 @@ export default function FinanceiroPage() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <Table className="border-collapse w-max [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border" style={{ tableLayout: 'fixed' }}>
+          <Table className="border-collapse w-max [&_th]:border [&_th]:border-border [&_th]:overflow-hidden [&_td]:border [&_td]:border-border [&_td]:overflow-hidden" style={{ tableLayout: 'fixed' }}>
             <TableHeader>
               <TableRow>
                 <SortableTableHead
