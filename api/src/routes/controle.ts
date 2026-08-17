@@ -88,6 +88,39 @@ controleRoutes.post('/', async (req, res, next) => {
   }
 })
 
+// GET /controle/documentos/filtros — valores disponíveis pra popular os menus de
+// filtro por coluna da tela (Epic 2.4). `fornecedores` vem de TODOS os documentos
+// da fazenda, não só da página carregada — um filtro que só oferece os fornecedores
+// da primeira página seria enganoso. `status` é fixo (mesmo enum do CHECK da
+// migration 017), não precisa consultar o banco.
+controleRoutes.get('/filtros', async (req, res, next) => {
+  const fazendaId = fazendaDe(req)
+  if (!fazendaId) {
+    res.status(400).json({ error: 'Fazenda não identificada.' })
+    return
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('documentos_controle')
+      .select('fornecedor')
+      .eq('fazenda_id', fazendaId)
+
+    if (error) throw error
+
+    const fornecedores = [...new Set(
+      (data ?? []).map(d => d.fornecedor).filter((f): f is string => !!f),
+    )].sort((a, b) => a.localeCompare(b, 'pt-BR'))
+
+    res.json({
+      fornecedores,
+      status: ['importado', 'processando', 'processado', 'erro'],
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
 // GET /controle/documentos — lista os documentos da fazenda ativa, mais
 // recentes primeiro, já COM os itens vinculados (decisão do Matheus,
 // 17/08/2026: mais peso na resposta, mas a tela nasce com tudo numa chamada

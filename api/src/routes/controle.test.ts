@@ -240,6 +240,57 @@ describe('POST /controle/documentos', () => {
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
+describe('GET /controle/documentos/filtros', () => {
+  const handler = pegarHandler('get', '/filtros')
+
+  it('devolve fornecedores distintos (sem repetir) e a lista fixa de status', async () => {
+    estadoBanco.documentos = [
+      { id: 'doc-1', fazenda_id: FAZENDA_A, fornecedor: 'SOLOS SOLUÇÕES', status: 'processado' },
+      { id: 'doc-2', fazenda_id: FAZENDA_A, fornecedor: 'SYAGRI', status: 'processado' },
+      { id: 'doc-3', fazenda_id: FAZENDA_A, fornecedor: 'SOLOS SOLUÇÕES', status: 'erro' },
+    ]
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A })
+
+    await handler(req, res, next)
+
+    expect(next).not.toHaveBeenCalled()
+    expect(res.statusCode).toBe(200)
+    expect(res.body.fornecedores).toEqual(['SOLOS SOLUÇÕES', 'SYAGRI'])
+    expect(res.body.status).toEqual(['importado', 'processando', 'processado', 'erro'])
+  })
+
+  it('isola por fazenda — não mistura fornecedor de outra fazenda', async () => {
+    estadoBanco.documentos = [
+      { id: 'doc-1', fazenda_id: FAZENDA_A, fornecedor: 'SOLOS SOLUÇÕES', status: 'processado' },
+      { id: 'doc-2', fazenda_id: FAZENDA_B, fornecedor: 'MOSAIC', status: 'processado' },
+    ]
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A })
+
+    await handler(req, res, next)
+
+    expect(res.body.fornecedores).toEqual(['SOLOS SOLUÇÕES'])
+  })
+
+  it('sem documento nenhum: fornecedores vazio, status continua fixo', async () => {
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A })
+
+    await handler(req, res, next)
+
+    expect(res.body.fornecedores).toEqual([])
+    expect(res.body.status).toEqual(['importado', 'processando', 'processado', 'erro'])
+  })
+
+  it('sem fazenda identificada no token: 400, não consulta o banco', async () => {
+    const { req, res, next } = criarReqRes()
+
+    await handler(req, res, next)
+
+    expect(res.statusCode).toBe(400)
+    expect(next).not.toHaveBeenCalled()
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
 describe('GET /controle/documentos', () => {
   const handler = pegarHandler('get', '/')
 
