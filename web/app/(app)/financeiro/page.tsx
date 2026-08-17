@@ -31,6 +31,8 @@ import { SortableTableHead } from '@/components/ui/sortable-table-head'
 import { supabase } from '@/lib/supabase'
 import { useFazenda } from '@/context/fazenda-context'
 import { CATEGORIAS_FINANCEIRAS, normalizarCategoria, categoriaLabel } from '@/lib/centro-custo'
+import { useColumnWidths } from '@/lib/use-column-widths'
+import { ColumnResizeHandle } from '@/components/ui/column-resize-handle'
 
 type ItemFinanceiro = {
   id: string
@@ -261,6 +263,20 @@ function FormFields({ form, setForm }: { form: FormData; setForm: React.Dispatch
 // pro histórico inteiro, e "Todos os meses" não sobrevivia a um F5.
 const MES_PADRAO = new Date().toISOString().slice(0, 7)
 
+// Larguras de partida das colunas redimensionáveis — os mesmos valores que já
+// existiam fixos em `w-[Npx]` antes desta mudança (Task 4 do plano de
+// 2026-08-17). Coluna de ações e de checkbox não entram aqui: não são
+// redimensionáveis (ver design).
+const COLUNAS_FINANCEIRO = [
+  { id: 'origem', padrao: 180 },
+  { id: 'descricao', padrao: 220 },
+  { id: 'quantidade', padrao: 70 },
+  { id: 'valor_unitario', padrao: 110 },
+  { id: 'valor_total', padrao: 120 },
+  { id: 'centro_custo', padrao: 140 },
+  { id: 'data_emissao', padrao: 90 },
+]
+
 export default function FinanceiroPage() {
   const [itens, setItens] = useState<ItemFinanceiro[]>([])
   const [loading, setLoading] = useState(true)
@@ -280,6 +296,7 @@ export default function FinanceiroPage() {
   const [visivelCount, setVisivelCount] = useState(20)
   const [notasExpandidas, setNotasExpandidas] = useState<Set<string>>(new Set())
   const { fazendaAtiva } = useFazenda()
+  const { largura, iniciarArrasto } = useColumnWidths('financeiro', COLUNAS_FINANCEIRO)
 
   function toggleNota(chave: string) {
     setNotasExpandidas(prev => {
@@ -945,16 +962,44 @@ export default function FinanceiroPage() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <Table className="border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
+          <Table className="border-collapse w-max [&_th]:border [&_th]:border-border [&_th]:overflow-hidden [&_td]:border [&_td]:border-border [&_td]:overflow-hidden" style={{ tableLayout: 'fixed' }}>
             <TableHeader>
               <TableRow>
-                <SortableTableHead className="w-[180px]" ativo={sortColuna === 'origem'} direcao={sortDirecao} onClick={() => handleSort('origem')}>Origem</SortableTableHead>
-                <SortableTableHead className="w-[220px]" ativo={sortColuna === 'descricao'} direcao={sortDirecao} onClick={() => handleSort('descricao')}>Produto / Serviço</SortableTableHead>
-                <SortableTableHead className="w-[70px] text-right" numeric ativo={sortColuna === 'quantidade'} direcao={sortDirecao} onClick={() => handleSort('quantidade')}>Qtd.</SortableTableHead>
-                <SortableTableHead className="w-[110px] text-right" numeric ativo={sortColuna === 'valor_unitario'} direcao={sortDirecao} onClick={() => handleSort('valor_unitario')}>Valor Unit.</SortableTableHead>
-                <SortableTableHead className="w-[120px] text-right" numeric ativo={sortColuna === 'valor_total'} direcao={sortDirecao} onClick={() => handleSort('valor_total')}>Valor Total</SortableTableHead>
-                <SortableTableHead className="w-[140px]" ativo={sortColuna === 'centro_custo'} direcao={sortDirecao} onClick={() => handleSort('centro_custo')}>Centro de Custo</SortableTableHead>
-                <SortableTableHead className="w-[90px]" ativo={sortColuna === 'data_emissao'} direcao={sortDirecao} onClick={() => handleSort('data_emissao')}>Data</SortableTableHead>
+                <SortableTableHead
+                  style={{ width: largura('origem') }}
+                  ativo={sortColuna === 'origem'} direcao={sortDirecao} onClick={() => handleSort('origem')}
+                  resizeHandle={<ColumnResizeHandle onPointerDown={iniciarArrasto('origem', largura('origem'))} />}
+                >Origem</SortableTableHead>
+                <SortableTableHead
+                  style={{ width: largura('descricao') }}
+                  ativo={sortColuna === 'descricao'} direcao={sortDirecao} onClick={() => handleSort('descricao')}
+                  resizeHandle={<ColumnResizeHandle onPointerDown={iniciarArrasto('descricao', largura('descricao'))} />}
+                >Produto / Serviço</SortableTableHead>
+                <SortableTableHead
+                  className="text-right" style={{ width: largura('quantidade') }} numeric
+                  ativo={sortColuna === 'quantidade'} direcao={sortDirecao} onClick={() => handleSort('quantidade')}
+                  resizeHandle={<ColumnResizeHandle onPointerDown={iniciarArrasto('quantidade', largura('quantidade'))} />}
+                >Qtd.</SortableTableHead>
+                <SortableTableHead
+                  className="text-right" style={{ width: largura('valor_unitario') }} numeric
+                  ativo={sortColuna === 'valor_unitario'} direcao={sortDirecao} onClick={() => handleSort('valor_unitario')}
+                  resizeHandle={<ColumnResizeHandle onPointerDown={iniciarArrasto('valor_unitario', largura('valor_unitario'))} />}
+                >Valor Unit.</SortableTableHead>
+                <SortableTableHead
+                  className="text-right" style={{ width: largura('valor_total') }} numeric
+                  ativo={sortColuna === 'valor_total'} direcao={sortDirecao} onClick={() => handleSort('valor_total')}
+                  resizeHandle={<ColumnResizeHandle onPointerDown={iniciarArrasto('valor_total', largura('valor_total'))} />}
+                >Valor Total</SortableTableHead>
+                <SortableTableHead
+                  style={{ width: largura('centro_custo') }}
+                  ativo={sortColuna === 'centro_custo'} direcao={sortDirecao} onClick={() => handleSort('centro_custo')}
+                  resizeHandle={<ColumnResizeHandle onPointerDown={iniciarArrasto('centro_custo', largura('centro_custo'))} />}
+                >Centro de Custo</SortableTableHead>
+                <SortableTableHead
+                  style={{ width: largura('data_emissao') }}
+                  ativo={sortColuna === 'data_emissao'} direcao={sortDirecao} onClick={() => handleSort('data_emissao')}
+                  resizeHandle={<ColumnResizeHandle onPointerDown={iniciarArrasto('data_emissao', largura('data_emissao'))} />}
+                >Data</SortableTableHead>
                 <TableHead className="w-[72px]" />
                 <TableHead className="w-[36px]">
                   <input
@@ -1108,7 +1153,7 @@ export default function FinanceiroPage() {
 
                 return (
                   <Fragment key={grupo.chave}>
-                    <TableRow className="hover:bg-muted/50">
+                    <TableRow className="bg-sky-100/70 has-aria-expanded:bg-sky-100/70 hover:bg-sky-200/70 has-aria-expanded:hover:bg-sky-200/70">
                       <TableCell className="text-sm w-[180px]">
                         <div>
                           <p className="font-medium text-sm whitespace-normal break-words">{primeiro.emitente_nome}</p>
@@ -1175,7 +1220,7 @@ export default function FinanceiroPage() {
                       </TableCell>
                     </TableRow>
                     {expandido && grupo.itens.map(item => (
-                      <TableRow key={item.id} className="bg-muted/20">
+                      <TableRow key={item.id} className="bg-sky-100 hover:bg-sky-200/70">
                         <TableCell className="text-sm w-[160px]">
                           {item.origem === 'cartao' ? (
                             <Badge variant="secondary" className="text-xs">
