@@ -1108,7 +1108,7 @@ export default function FinanceiroPage() {
 
                 return (
                   <Fragment key={grupo.chave}>
-                    <TableRow className="hover:bg-muted/50">
+                    <TableRow className="bg-sky-100/70 has-aria-expanded:bg-sky-100/70 hover:bg-sky-200/70 has-aria-expanded:hover:bg-sky-200/70">
                       <TableCell className="text-sm w-[180px]">
                         <div>
                           <p className="font-medium text-sm whitespace-normal break-words">{primeiro.emitente_nome}</p>
@@ -1175,7 +1175,7 @@ export default function FinanceiroPage() {
                       </TableCell>
                     </TableRow>
                     {expandido && grupo.itens.map(item => (
-                      <TableRow key={item.id} className="bg-muted/20">
+                      <TableRow key={item.id} className="bg-sky-100 hover:bg-sky-200/70">
                         <TableCell className="text-sm w-[160px]">
                           {item.origem === 'cartao' ? (
                             <Badge variant="secondary" className="text-xs">
