@@ -120,6 +120,13 @@ drop index if exists idx_documentos_controle_faz;
 -- DROP por nome antes de recriar: um índice com esse nome já existe neste
 -- banco (rodada anterior), indexando `fornecedor` CRU — "if not exists"
 -- teria pulado a correção em silêncio e deixado a trava errada no lugar.
+--
+-- ⚠️ AVISO (migration 018, ACHADO D): este índice foi tornado PARCIAL
+-- (`where status <> 'erro'`) pela migration 018 — sem isso, um documento
+-- marcado 'erro' de propósito (pra permitir reenvio) ficava preso pra
+-- sempre. Se recolar ESTE arquivo (017) sozinho depois da 018 já ter
+-- rodado, o índice volta a ser criado SEM o WHERE e o bug reaparece em
+-- silêncio. Recolar 017, recolar 018 na sequência.
 drop index if exists idx_doc_controle_dedupe;
 create unique index idx_doc_controle_dedupe
   on documentos_controle (fazenda_id, fornecedor_normalizado, numero_documento);
