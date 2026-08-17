@@ -410,6 +410,60 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
+## 🟡 Feature "Controle" (defensivos/adubos/sementes) — Epic 2.2 commitado (local) em 17/08/2026
+
+Branch `feature/controle-gastos`, commit `40b8487` (**só local, não subiu pro GitHub
+ainda**). Cruza a NF-e automática com PDF importado manualmente (extrato de fornecedor
+tipo Solos/Syagri, ou contrato tipo Mosaic) — a aba ainda não existe na tela, isto é só
+o motor de dados.
+
+**3 de 10 tarefas do plano prontas:** migration 017 (tabela `documentos_controle` +
+colunas em `itens_nfe`), bucket Storage `controle-documentos`, leitor de PDF
+(`documentoPdf.ts`) — todas de sessão anterior, commit `ba68b0e`. Agora: `gravarDocumentoPdf.ts`
+(grava o resultado da leitura no banco) + migration `018_itens_nfe_dedupe_item_pdf.sql`.
+
+**⚠️ Migration 018 NÃO foi aplicada em nenhum banco ainda** — nem dev, nem produção. Sem
+ela, a trava de duplicidade por item não existe. Rodar no SQL Editor do Supabase antes
+de qualquer chamador real usar `gravarDocumentoDoPdf()` — hoje **nada no repositório
+chama esta função** (a rota, Epic 2.3, ainda não foi escrita), então não há risco
+enquanto isso não mudar.
+
+**4 rodadas de revisão do Apolo, cada uma achando problema na correção da anterior:**
+1. 2 críticos — **os dois eram dinheiro dobrando**: (a) reenviar o mesmo extrato num mês
+   seguinte duplicava cada duplicata ainda em aberto (só havia trava por DOCUMENTO
+   inteiro, e a chave do documento muda a cada geração do relatório); (b)
+   `conta_como_compra: true` sempre fazia o Financeiro somar de novo um gasto que a NF-e
+   automática já tinha lançado. Decisão do Matheus: `conta_como_compra` vira **sempre
+   false** pra item de PDF — a aba Controle é conferência, não fonte de gasto.
+2. 3 altos — depois de resolver o dinheiro, sobrou a TELA de conferência ficando errada:
+   documento que dava erro no meio da gravação ficava preso pra sempre (a FK
+   `ON DELETE RESTRICT` impedia desfazer, e o PDF era apagado do Storage mesmo assim —
+   corrigido: marca `status='erro'` e preserva o PDF); duas linhas legítimas e distintas
+   dentro do MESMO documento (mesmo produto, mesmo valor, mesma duplicata) colidiam
+   entre si e uma sumia (corrigido: coluna `ocorrencia_no_documento`); item de contrato
+   sem número de duplicata próprio (Mosaic) não tinha proteção nenhuma contra
+   reimportação (corrigido: fallback pro `codigoCliente`, estável, em vez do número do
+   documento inteiro, que muda a cada leitura).
+3. 1 alto residual — a correção do item anterior (marcar `status='erro'`) esbarrava
+   noutra trava do banco (`idx_doc_controle_dedupe`, sem `WHERE`) e o documento continuava
+   preso. Corrigido na própria migration 018 (índice virou parcial, mesmo padrão do
+   índice irmão).
+
+**Limitação aceita, registrada no código (não é dinheiro, é conferência rara):** item de
+extrato SEM número de duplicata legível usa como identidade o código do cliente
+(estável) + descrição + valor. Se o MESMO produto pelo MESMO valor aparecer em dois
+MESES diferentes sem número de duplicata em nenhum dos dois, o segundo é tratado como
+"já existe" e a compra nova some da conferência — silencioso. Estreito (só afeta item
+sem número, que é o caso raro) e não mexe em dinheiro (`conta_como_compra` já é `false`).
+
+348→358 testes (17 arquivos), `tsc --noEmit` limpo nos dois lados. Para reconferir:
+```bash
+cd api && npm test && npx tsc --noEmit
+```
+
+**Próximo passo:** Epic 2.3 — a rota que chama `gravarDocumentoDoPdf()` de verdade
+(upload pela tela). Antes disso, o Matheus precisa rodar a migration 018 no Supabase.
+
 ## ✅ A duplicata passa a vencer o tPag — ENVIADO em 14/08/2026
 
 **Estado:** commit `cb7e531` (+ `4215b0b` de registro) na `main`, enviado ao GitHub pelo
