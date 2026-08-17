@@ -33,7 +33,11 @@ vi.mock('../services/supabase', () => {
   function builder(tabela: 'documentos_controle' | 'itens_nfe') {
     const filtros: Record<string, any> = {}
     const filtrosIn: Record<string, any[]> = {}
+    const filtrosGte: Record<string, any> = {}
+    const filtrosLte: Record<string, any> = {}
     let colunas: string[] | null = null
+    let contarTotal = false
+    let rangeSlice: [number, number] | null = null
 
     function linhasBase() {
       return tabela === 'documentos_controle' ? estadoBanco.documentos : estadoBanco.itens
@@ -41,7 +45,9 @@ vi.mock('../services/supabase', () => {
     function filtrar() {
       return linhasBase().filter(l =>
         Object.entries(filtros).every(([campo, valor]) => l[campo] === valor) &&
-        Object.entries(filtrosIn).every(([campo, valores]) => valores.includes(l[campo])),
+        Object.entries(filtrosIn).every(([campo, valores]) => valores.includes(l[campo])) &&
+        Object.entries(filtrosGte).every(([campo, valor]) => l[campo] >= valor) &&
+        Object.entries(filtrosLte).every(([campo, valor]) => l[campo] <= valor),
       )
     }
     function projetar(linha: any) {
@@ -52,13 +58,17 @@ vi.mock('../services/supabase', () => {
     }
 
     const obj: any = {
-      select: vi.fn((cols?: string) => {
+      select: vi.fn((cols?: string, opts?: { count?: 'exact' }) => {
         colunas = cols ? cols.split(',').map(c => c.trim()) : null
+        contarTotal = opts?.count === 'exact'
         return obj
       }),
       order: vi.fn(() => obj),
       eq: vi.fn((campo: string, valor: any) => { filtros[campo] = valor; return obj }),
       in: vi.fn((campo: string, valores: any[]) => { filtrosIn[campo] = valores; return obj }),
+      gte: vi.fn((campo: string, valor: any) => { filtrosGte[campo] = valor; return obj }),
+      lte: vi.fn((campo: string, valor: any) => { filtrosLte[campo] = valor; return obj }),
+      range: vi.fn((de: number, ate: number) => { rangeSlice = [de, ate]; return obj }),
       single: vi.fn(() => {
         const linhas = filtrar()
         if (linhas.length === 0) {
@@ -67,7 +77,13 @@ vi.mock('../services/supabase', () => {
         return Promise.resolve({ data: projetar(linhas[0]), error: null })
       }),
       then(resolve: any) {
-        return Promise.resolve(resolve({ data: filtrar().map(projetar), error: null }))
+        const todasFiltradas = filtrar()
+        const pagina = rangeSlice ? todasFiltradas.slice(rangeSlice[0], rangeSlice[1] + 1) : todasFiltradas
+        return Promise.resolve(resolve({
+          data: pagina.map(projetar),
+          error: null,
+          count: contarTotal ? todasFiltradas.length : null,
+        }))
       },
     }
     return obj
@@ -103,10 +119,11 @@ function pegarHandler(method: 'get' | 'post', path: string) {
   return layer.route.stack[0].handle as (req: any, res: any, next: any) => Promise<void>
 }
 
-function criarReqRes(overrides: { fazendaId?: string; body?: any; params?: Record<string, string> } = {}) {
+function criarReqRes(overrides: { fazendaId?: string; body?: any; params?: Record<string, string>; query?: Record<string, any> } = {}) {
   const req: any = {
     body: overrides.body ?? {},
     params: overrides.params ?? {},
+    query: overrides.query ?? {},
     user: overrides.fazendaId
       ? { app_metadata: { fazenda_ativa_id: overrides.fazendaId } }
       : undefined,
@@ -320,16 +337,17 @@ describe('GET /controle/documentos', () => {
     await handler(req, res, next)
 
     expect(next).not.toHaveBeenCalled()
-    expect(res.body).toHaveLength(2) // só os 2 documentos da fazenda A
-    expect(res.body.every((d: any) => d.fazenda_id === FAZENDA_A)).toBe(true)
+    expect(res.body.totalDocumentos).toBe(2) // só os 2 documentos da fazenda A
+    expect(res.body.documentos).toHaveLength(2)
+    expect(res.body.documentos.every((d: any) => d.fazenda_id === FAZENDA_A)).toBe(true)
 
-    const doc1 = res.body.find((d: any) => d.id === 'doc-1')
+    const doc1 = res.body.documentos.find((d: any) => d.id === 'doc-1')
     expect(doc1.itens).toHaveLength(2)
     expect(doc1.itens.map((i: any) => i.id).sort()).toEqual(['item-1', 'item-2'])
     // item de outra fazenda nunca aparece agrupado, mesmo apontando pro doc-1.
     expect(doc1.itens.some((i: any) => i.id === 'item-x')).toBe(false)
 
-    const doc2 = res.body.find((d: any) => d.id === 'doc-2')
+    const doc2 = res.body.documentos.find((d: any) => d.id === 'doc-2')
     expect(doc2.itens).toEqual([])
   })
 
@@ -338,7 +356,7 @@ describe('GET /controle/documentos', () => {
     const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A })
     await handler(req, res, next)
 
-    expect(res.body).toEqual([])
+    expect(res.body).toEqual({ documentos: [], paginaAtual: 1, totalPaginas: 1, totalDocumentos: 0 })
   })
 
   it('nunca devolve arquivo_path no payload (caminho interno do Storage privado)', async () => {
@@ -348,7 +366,71 @@ describe('GET /controle/documentos', () => {
     const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A })
     await handler(req, res, next)
 
-    expect(res.body[0]).not.toHaveProperty('arquivo_path')
+    expect(res.body.documentos[0]).not.toHaveProperty('arquivo_path')
+  })
+
+  it('pagina e conta o total — porPagina 2, pagina 1 devolve 2 e informa 2 páginas/3 documentos', async () => {
+    estadoBanco.documentos = [
+      { id: 'doc-1', fornecedor: 'A', numero_documento: '1', data_documento: '2026-01-01', valor_total: 10, status: 'processado', erro_mensagem: null, nome_arquivo: 'a.pdf', fazenda_id: FAZENDA_A, created_at: '2026-08-10' },
+      { id: 'doc-2', fornecedor: 'B', numero_documento: '2', data_documento: '2026-01-02', valor_total: 20, status: 'processado', erro_mensagem: null, nome_arquivo: 'b.pdf', fazenda_id: FAZENDA_A, created_at: '2026-08-11' },
+      { id: 'doc-3', fornecedor: 'C', numero_documento: '3', data_documento: '2026-01-03', valor_total: 30, status: 'processado', erro_mensagem: null, nome_arquivo: 'c.pdf', fazenda_id: FAZENDA_A, created_at: '2026-08-12' },
+    ]
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A, query: { pagina: '1', porPagina: '2' } })
+
+    await handler(req, res, next)
+
+    expect(res.body.documentos).toHaveLength(2)
+    expect(res.body.paginaAtual).toBe(1)
+    expect(res.body.totalPaginas).toBe(2)
+    expect(res.body.totalDocumentos).toBe(3)
+  })
+
+  it('filtra por fornecedor — só devolve documento do fornecedor pedido', async () => {
+    estadoBanco.documentos = [
+      { id: 'doc-1', fornecedor: 'SOLOS', numero_documento: '1', data_documento: '2026-01-01', valor_total: 10, status: 'processado', erro_mensagem: null, nome_arquivo: 'a.pdf', fazenda_id: FAZENDA_A, created_at: '2026-08-10' },
+      { id: 'doc-2', fornecedor: 'MOSAIC', numero_documento: '2', data_documento: '2026-01-02', valor_total: 20, status: 'processado', erro_mensagem: null, nome_arquivo: 'b.pdf', fazenda_id: FAZENDA_A, created_at: '2026-08-11' },
+    ]
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A, query: { fornecedor: 'SOLOS' } })
+
+    await handler(req, res, next)
+
+    expect(res.body.documentos).toHaveLength(1)
+    expect(res.body.documentos[0].id).toBe('doc-1')
+  })
+
+  it('filtra por status combinado com fornecedor — os dois valem ao mesmo tempo', async () => {
+    estadoBanco.documentos = [
+      { id: 'doc-1', fornecedor: 'SOLOS', numero_documento: '1', data_documento: '2026-01-01', valor_total: 10, status: 'processado', erro_mensagem: null, nome_arquivo: 'a.pdf', fazenda_id: FAZENDA_A, created_at: '2026-08-10' },
+      { id: 'doc-2', fornecedor: 'SOLOS', numero_documento: '2', data_documento: '2026-01-02', valor_total: 20, status: 'erro', erro_mensagem: 'x', nome_arquivo: 'b.pdf', fazenda_id: FAZENDA_A, created_at: '2026-08-11' },
+    ]
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A, query: { fornecedor: 'SOLOS', status: 'erro' } })
+
+    await handler(req, res, next)
+
+    expect(res.body.documentos).toHaveLength(1)
+    expect(res.body.documentos[0].id).toBe('doc-2')
+  })
+
+  it('filtra por período (dataInicio/dataFim)', async () => {
+    estadoBanco.documentos = [
+      { id: 'doc-1', fornecedor: 'A', numero_documento: '1', data_documento: '2026-01-01', valor_total: 10, status: 'processado', erro_mensagem: null, nome_arquivo: 'a.pdf', fazenda_id: FAZENDA_A, created_at: '2026-08-10' },
+      { id: 'doc-2', fornecedor: 'A', numero_documento: '2', data_documento: '2026-06-15', valor_total: 20, status: 'processado', erro_mensagem: null, nome_arquivo: 'b.pdf', fazenda_id: FAZENDA_A, created_at: '2026-08-11' },
+    ]
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A, query: { dataInicio: '2026-03-01', dataFim: '2026-12-31' } })
+
+    await handler(req, res, next)
+
+    expect(res.body.documentos).toHaveLength(1)
+    expect(res.body.documentos[0].id).toBe('doc-2')
+  })
+
+  it('parâmetro de paginação inválido: 400', async () => {
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A, query: { pagina: 'abc' } })
+
+    await handler(req, res, next)
+
+    expect(res.statusCode).toBe(400)
+    expect(next).not.toHaveBeenCalled()
   })
 })
 

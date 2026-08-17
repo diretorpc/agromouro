@@ -27,6 +27,17 @@ const uploadSchema = z.object({
   nomeArquivo: z.string().min(1),
 })
 
+const listarSchema = z.object({
+  pagina:     z.coerce.number().int().min(1).default(1),
+  porPagina:  z.coerce.number().int().min(1).max(100).default(20),
+  fornecedor: z.union([z.string(), z.array(z.string())]).optional()
+    .transform(v => v === undefined ? [] : Array.isArray(v) ? v : [v]),
+  status:     z.union([z.string(), z.array(z.string())]).optional()
+    .transform(v => v === undefined ? [] : Array.isArray(v) ? v : [v]),
+  dataInicio: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  dataFim:    z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+})
+
 // POST /controle/documentos — upload do PDF (extrato de fornecedor ou
 // contrato de compra). Lê com IA, grava documento + itens, devolve o status
 // da gravação. 'duplicada-hash' e 'duplicada-conteudo' voltam como 200
@@ -121,16 +132,20 @@ controleRoutes.get('/filtros', async (req, res, next) => {
   }
 })
 
-// GET /controle/documentos — lista os documentos da fazenda ativa, mais
-// recentes primeiro, já COM os itens vinculados (decisão do Matheus,
-// 17/08/2026: mais peso na resposta, mas a tela nasce com tudo numa chamada
-// só). Busca os itens de TODOS os documentos da página com um único IN() e
-// agrupa em memória — evita 1 query por documento (N+1).
+// GET /controle/documentos — lista os documentos da fazenda ativa, mais recentes
+// primeiro, já COM os itens vinculados (decisão do Matheus, 17/08/2026: mais peso
+// na resposta, mas a tela nasce com tudo numa chamada só). Busca os itens de TODOS
+// os documentos da PÁGINA com um único IN() e agrupa em memória — evita 1 query
+// por documento (N+1).
+//
+// Filtro e paginação (Epic 2.4) acontecem no BANCO, não em memória: a lista pode
+// crescer bastante ao longo dos anos, e um filtro que só operasse sobre a página já
+// carregada seria incapaz de achar documento fora dela.
 //
 // arquivo_path nunca sai daqui: é o caminho interno do bucket privado, sem
-// utilidade pro front (que usa a rota /:id/arquivo pra abrir o PDF via
-// signed URL de vida curta) — devolver o path cru só exporia a convenção
-// interna de Storage sem dar acesso real a nada (o bucket é privado).
+// utilidade pro front (que usa a rota /:id/arquivo pra abrir o PDF via signed URL
+// de vida curta) — devolver o path cru só exporia a convenção interna de Storage
+// sem dar acesso real a nada (o bucket é privado).
 controleRoutes.get('/', async (req, res, next) => {
   const fazendaId = fazendaDe(req)
   if (!fazendaId) {
@@ -138,26 +153,47 @@ controleRoutes.get('/', async (req, res, next) => {
     return
   }
 
+  const parsed = listarSchema.safeParse(req.query)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Parâmetros de busca inválidos.', detalhe: parsed.error.flatten() })
+    return
+  }
+  const { pagina, porPagina, fornecedor, status, dataInicio, dataFim } = parsed.data
+
   try {
-    const { data: documentos, error: errDocumentos } = await supabase
+    let query = supabase
       .from('documentos_controle')
-      .select('id, fornecedor, numero_documento, data_documento, valor_total, status, erro_mensagem, nome_arquivo, fazenda_id, created_at')
+      .select(
+        'id, fornecedor, numero_documento, data_documento, valor_total, status, erro_mensagem, nome_arquivo, fazenda_id, created_at',
+        { count: 'exact' },
+      )
       .eq('fazenda_id', fazendaId)
+
+    if (fornecedor.length > 0) query = query.in('fornecedor', fornecedor)
+    if (status.length > 0) query = query.in('status', status)
+    if (dataInicio) query = query.gte('data_documento', dataInicio)
+    if (dataFim) query = query.lte('data_documento', dataFim)
+
+    const offset = (pagina - 1) * porPagina
+    const { data: documentos, error: errDocumentos, count } = await query
       .order('created_at', { ascending: false })
+      .range(offset, offset + porPagina - 1)
 
     if (errDocumentos) throw errDocumentos
 
+    const totalDocumentos = count ?? 0
+    const totalPaginas = Math.max(1, Math.ceil(totalDocumentos / porPagina))
+
     if (!documentos || documentos.length === 0) {
-      res.json([])
+      res.json({ documentos: [], paginaAtual: pagina, totalPaginas, totalDocumentos })
       return
     }
 
     const documentoIds = documentos.map(d => d.id)
 
-    // Filtro por fazenda_id junto com o IN() de documento_controle_id fecha,
-    // na mesma query, tanto a mistura entre fazendas quanto o caso (que não
-    // deveria acontecer, mas por defesa) de um item apontar pra documento de
-    // outra fazenda — mesmo espírito do comentário em estoque.ts.
+    // Filtro por fazenda_id junto com o IN() de documento_controle_id fecha, na
+    // mesma query, tanto a mistura entre fazendas quanto o caso (que não deveria
+    // acontecer, mas por defesa) de um item apontar pra documento de outra fazenda.
     const { data: itens, error: errItens } = await supabase
       .from('itens_nfe')
       .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, fornecedor, numero_documento, ocorrencia_no_documento, documento_controle_id, conta_como_compra, data_manual, insumo_id')
@@ -178,7 +214,7 @@ controleRoutes.get('/', async (req, res, next) => {
       itens: itensPorDocumento.get(doc.id) ?? [],
     }))
 
-    res.json(resposta)
+    res.json({ documentos: resposta, paginaAtual: pagina, totalPaginas, totalDocumentos })
   } catch (err) {
     next(err)
   }
