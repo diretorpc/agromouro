@@ -102,8 +102,24 @@ export function useControleData() {
   }
 
   async function abrirPdf(documentoId: string) {
-    const { url } = await api.get<{ url: string }>(`/controle/documentos/${documentoId}/arquivo`)
-    window.open(url, '_blank', 'noopener,noreferrer')
+    // window.open PRECISA acontecer de forma síncrona, dentro do gesto de clique —
+    // se esperar a signed URL (await) pra só então abrir a aba, o Safari (e outros)
+    // trata como pop-up fora de interação do usuário e bloqueia em silêncio, sem
+    // erro nenhum. Por isso abre uma aba em branco JÁ e só depois navega ela pra
+    // URL real. NÃO passar 'noopener'/'noreferrer' aqui: qualquer um dos dois faz
+    // window.open devolver null (é o próprio navegador cortando a referência de
+    // volta), e sem a referência não tem como navegar a aba depois — ela ficaria em
+    // branco pra sempre. O preço é a aba nova manter `window.opener` apontando pra
+    // cá; aceitável porque o destino é sempre um signed URL do nosso próprio bucket
+    // Supabase (conteúdo confiável), não link de terceiro.
+    const aba = window.open('', '_blank')
+    try {
+      const { url } = await api.get<{ url: string }>(`/controle/documentos/${documentoId}/arquivo`)
+      if (aba) aba.location.href = url
+    } catch (err) {
+      aba?.close()
+      throw err
+    }
   }
 
   return {
