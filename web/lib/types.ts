@@ -130,3 +130,55 @@ export interface Cartao {
 export type ResultadoImportacaoXml =
   | { status: 'criada'; numero: string; emitenteNome: string; valorTotal: number }
   | { status: 'duplicada'; nota: { id: string; numero: string; data_emissao: string; emitente_nome: string } }
+
+export interface ItemDocumentoControle {
+  id: string
+  descricao: string
+  quantidade: number | null
+  unidade: string
+  valor_unitario: number | null
+  valor_total: number
+  fornecedor: string | null
+  numero_documento: string | null
+  ocorrencia_no_documento: number
+  documento_controle_id: string
+  conta_como_compra: boolean
+  data_manual: string | null
+  insumo_id: string | null
+}
+
+export interface DocumentoControle {
+  id: string
+  fornecedor: string | null
+  numero_documento: string | null
+  data_documento: string | null
+  valor_total: number | null
+  status: 'importado' | 'processando' | 'processado' | 'erro'
+  erro_mensagem: string | null
+  nome_arquivo: string
+  fazenda_id: string
+  created_at: string
+  itens: ItemDocumentoControle[]
+}
+
+export interface ListaDocumentosControle {
+  documentos: DocumentoControle[]
+  paginaAtual: number
+  totalPaginas: number
+  totalDocumentos: number
+}
+
+export interface FiltrosControle {
+  fornecedores: string[]
+  status: string[]
+}
+
+// Espelha ResultadoGravarDocumento de api/src/services/controle/gravarDocumentoPdf.ts
+// — só as 2 variantes que chegam como JSON 200/201 (gravado/duplicada-*). Os outros 5
+// status (nao-documento, sem-itens-aproveitaveis, sem-identidade, falha, erro) chegam
+// como erro HTTP lançado (422/503/500), tratado no catch — api.ts já lança Error com
+// `.message` pronto pra mostrar.
+export type ResultadoGravarDocumento =
+  | { status: 'gravado'; documentoId: string; itensGravados: number; itensDescartados: number; itensDuplicados: number }
+  | { status: 'duplicada-hash' }
+  | { status: 'duplicada-conteudo' }
