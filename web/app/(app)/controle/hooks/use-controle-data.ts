@@ -106,13 +106,15 @@ export function useControleData() {
     // se esperar a signed URL (await) pra só então abrir a aba, o Safari (e outros)
     // trata como pop-up fora de interação do usuário e bloqueia em silêncio, sem
     // erro nenhum. Por isso abre uma aba em branco JÁ e só depois navega ela pra
-    // URL real. NÃO passar 'noopener'/'noreferrer' aqui: qualquer um dos dois faz
-    // window.open devolver null (é o próprio navegador cortando a referência de
-    // volta), e sem a referência não tem como navegar a aba depois — ela ficaria em
-    // branco pra sempre. O preço é a aba nova manter `window.opener` apontando pra
-    // cá; aceitável porque o destino é sempre um signed URL do nosso próprio bucket
-    // Supabase (conteúdo confiável), não link de terceiro.
+    // URL real. NÃO passar 'noopener'/'noreferrer' pro window.open: qualquer um dos
+    // dois faz o método devolver null (é o próprio navegador cortando a referência
+    // de volta), e sem a referência não tem como navegar a aba depois. Em vez disso,
+    // zera `aba.opener` na própria referência logo em seguida — property gravável,
+    // funciona fora do parâmetro noopener — e consegue as duas coisas ao mesmo
+    // tempo: aba com referência utilizável E sem o vínculo de volta pra esta janela
+    // (evita a aba nova conseguir redirecionar esta página via window.opener).
     const aba = window.open('', '_blank')
+    if (aba) aba.opener = null
     try {
       const { url } = await api.get<{ url: string }>(`/controle/documentos/${documentoId}/arquivo`)
       if (aba) aba.location.href = url
