@@ -86,6 +86,7 @@ const CENTRO_CUSTO_STYLE: Record<string, string> = {
   fertilizante_p:     'bg-green-100 text-green-700 border-green-200',
   fertilizante_k:     'bg-green-100 text-green-700 border-green-200',
   fertilizante_outro: 'bg-green-100 text-green-700 border-green-200',
+  foliar:             'bg-lime-100 text-lime-700 border-lime-200',
   calcario:           'bg-stone-100 text-stone-700 border-stone-200',
   semente:            'bg-yellow-100 text-yellow-700 border-yellow-200',
   combustivel:        'bg-blue-100 text-blue-700 border-blue-200',
@@ -110,6 +111,7 @@ const CENTRO_CUSTO_COLOR: Record<string, string> = {
   fertilizante_p:     '#4D7C0F',  // lima escuro (lime-700)
   fertilizante_k:     '#B45309',  // âmbar (amber-700)
   fertilizante_outro: '#713F12',  // marrom (amber-900)
+  foliar:             '#65A30D',  // lima (lime-600)
   calcario:           '#57534E',  // pedra (stone-600)
   semente:            '#CA8A04',  // mostarda (yellow-600)
   // ── Operacional ───────────────────────────────────────────
