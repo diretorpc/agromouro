@@ -410,6 +410,97 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
+## Aba "Controle" (gastos defensivos/adubos/sementes) — brainstorm fechado, migration 017 em rodada de revisão — iniciado 17/08/2026
+
+Branch `feature/controle-gastos` criada fora da `main`. Plano em
+`C:\Users\Dib\.claude\plans\peaceful-crafting-origami.md`. Feature fatiada em
+5 epics / 10 stories (tarefas #1–#10 do TaskList da sessão) — pedido dele:
+"por stories e epics pra não ficar tudo em uma vez".
+
+**Contexto do pedido.** Aba pessoal do Matheus pra conferir e visualizar
+gasto com defensivos, adubos/fertilizantes e sementes (só da loja Brejeiro)
+antes de dar OK pro primo pagar a conta. Brainstorm com 4 PDFs reais
+anexados (extratos de conta corrente Solos/Syagri/Protec + contrato Mosaic
+Fertilizantes) mudou o desenho original: não são "relatórios simples de
+produto", são extratos de VÁRIAS notas por fornecedor, às vezes com o
+produto numa tabela separada da nota (caso Syagri) — a leitura por IA
+precisa cruzar as duas. UI final validada com mockup interativo (widget)
+antes de fechar o plano: tabela estilo Excel, célula editável in-place
+(sem diálogo), "+ nova linha" no rodapé, agrupar por
+categoria/produto/fornecedor, filtro por empresa.
+
+**Epic 1.1 (migration 017) — 5 rodadas de revisão do Apolo, versão final
+ainda não confirmada aplicada.** `api/src/database/migrations/017_controle.sql`:
+tabela `documentos_controle` (metadado de PDF importado — dedupe por hash do
+arquivo E por fornecedor+número normalizados, dois índices únicos
+independentes) + 3 colunas novas em `itens_nfe` (`fornecedor`,
+`numero_documento`, `documento_controle_id`, com FK COMPOSTA
+`(documento_controle_id, fazenda_id)` pra impedir item de uma fazenda
+apontar pra documento de outra).
+
+Achado mais sério (rodada 3, achado crítico): sem constraint, linha
+importada de PDF nasceria sem dizer se conta como gasto no Financeiro —
+mesmo mecanismo do gasto fantasma de R$ 1,06 mi já documentado nesta seção
+(caso HIGA/SYAGRI) e no PR #56 (boleto). Corrigido com a constraint
+`item_de_documento_completo` (obriga `conta_como_compra` e `data_manual`
+preenchidos em toda linha vinda de PDF). Rodada 5 testou a migration inteira
+num **Postgres descartável** (não mais escrevendo na base de dev — a rodada
+3 tinha acidentalmente inserido e apagado 1 linha de teste em
+`documentos_controle`; revertido na hora, sem afetar `itens_nfe`, registrado
+ao Matheus na conversa): reaplicar o arquivo 2-3x seguidas sem erro,
+índices/constraints corretos, FK composta barra fazenda cruzada.
+
+**✅ Epic 1.1 FECHADA — migration 017 aplicada e confirmada em produção de dev
+em 17/08.** As 5 VERIFICAÇÕES do arquivo rodaram certo, inclusive o índice
+de dedupe (`fornecedor_normalizado`, não o cru) e o de hash
+(`WHERE status <> 'erro'`), conferidos linha a linha pelo Matheus.
+
+**✅ Epic 1.2 FECHADA — bucket `controle-documentos` criado (privado).**
+⚠️ Falta ainda `file_size_limit`→10MB e `allowed_mime_types`→`application/pdf`
+nas Configurações do bucket (hoje "Any"/50MB) — o código do leitor (Epic 2.1)
+já assume 10MB no comentário, então o bucket está mais permissivo que o
+código pressupõe. Não bloqueia nada, mas ajustar antes de liberar upload de
+verdade pro Matheus.
+
+**✅ Epic 2.1 FECHADA — leitor de PDF, 4 rodadas de revisão do Apolo.**
+`api/src/services/controle/documentoPdf.ts` (+ teste, 42 casos, suíte
+inteira 334/334 verde). Lê os 2 formatos reais (extrato "Contas a Receber"
+com várias duplicatas, cruzando tabela de produto separada quando existe —
+caso Syagri; contrato tipo Mosaic, ignorando boilerplate jurídico/Docusign).
+Não grava nada no banco ainda — só lê e valida.
+
+Achado mais sério das 4 rodadas: a chave de dedupe do documento (fornecedor +
+número) NÃO pode ser texto que a IA formata livre (duas leituras do mesmo
+extrato podiam gerar grafias diferentes e driblar o índice único da 017) —
+corrigido pedindo só o dado cru (`codigoCliente`) e montando a chave
+**em código**, determinística.
+
+**⚠️ Dois achados do Apolo ficaram "aceitos, não são bug DESTE arquivo" —
+são PRÉ-REQUISITO da Epic 2.2 (gravação), registrados aqui pra não se
+perder:**
+1. Dedupe por DOCUMENTO não basta — extrato reenviado no mês seguinte repete
+   duplicatas de meses anteriores ainda em aberto; sem dedupe também por
+   ITEM (fazenda+fornecedor+número da duplicata), o gasto dobra. Mesma
+   família do gasto fantasma de R$ 1,2 mi da entrega futura (seção acima).
+2. A leitura pode devolver `numeroDocumento: null` (quando falta código do
+   cliente ou data do documento) — a migration exige fornecedor+número
+   preenchidos a menos que `status='erro'`. Sem tratar isso na gravação, o
+   INSERT estoura com erro de banco cru (23514) na cara do Matheus.
+
+**Backlog das 7 stories seguintes (não iniciadas):** gravação com dedupe
+(`gravarDocumentoPdf.ts` — carrega os 2 pré-requisitos acima), rotas
+(`controle.ts`), tela (leitura + agrupamento + filtro, depois edição célula
+a célula, depois gráficos/KPIs, depois diálogo de import), item no sidebar
+por último.
+
+**Nada commitado ainda** — `api/src/services/controle/` e a migration 017
+continuam untracked no git, tudo na branch `feature/controle-gastos`.
+
+**Memória salva na sessão:** ele quer o SQL de toda migration colado direto
+no chat daqui pra frente (não só link do arquivo) — não consegue abrir o
+link no ambiente dele. Registrado em
+`~/.claude/projects/.../memory/feedback-sql-cole-no-chat.md`.
+
 ## Leitor de NFS-e (nota de serviço) — codado em 17/08/2026, 5 rodadas de revisão do Apolo feitas
 
 **Estado:** Migração 011 JÁ APLICADA em produção e confirmada pela API (17/08, 12h20).
