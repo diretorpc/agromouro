@@ -340,6 +340,32 @@ describe('validarDocumentoLido — numeroDocumento montado em código a partir d
   })
 })
 
+// Achado C da revisão do Apolo, rodada 3: `codigoCliente` (a metade CRUA de
+// `numeroDocumento`, sem a data de geração do relatório/contrato embutida)
+// precisa ser devolvido junto no objeto — `gravarDocumentoPdf.ts` usa ele
+// (não `numeroDocumento`) como fallback ESTÁVEL para item sem número de
+// duplicata próprio, porque `numeroDocumento` muda a cada reimportação.
+describe('validarDocumentoLido — codigoCliente é devolvido separado de numeroDocumento (Achado C)', () => {
+  it('codigoCliente sozinho (sem a data) fica exposto no documento', () => {
+    const d = documento(bruto({ codigoCliente: '288658', dataDocumento: '2026-07-01' }))
+    expect(d.codigoCliente).toBe('288658')
+    expect(d.numeroDocumento).toBe('288658-2026-07-01')
+  })
+
+  it('mesmo codigoCliente, dataDocumento diferente entre duas leituras: numeroDocumento muda, codigoCliente não', () => {
+    const a = documento(bruto({ codigoCliente: '288658', dataDocumento: '2026-07-01' }))
+    const b = documento(bruto({ codigoCliente: '288658', dataDocumento: '2026-08-01' }))
+    expect(a.numeroDocumento).not.toBe(b.numeroDocumento)
+    expect(a.codigoCliente).toBe(b.codigoCliente)
+  })
+
+  it('codigoCliente ausente/ilegível: fica null, igual numeroDocumento', () => {
+    const d = documento(bruto({ codigoCliente: null }))
+    expect(d.codigoCliente).toBeNull()
+    expect(d.numeroDocumento).toBeNull()
+  })
+})
+
 describe('validarDocumentoLido — arredondamento do total calculado', () => {
   it('3 × 33.333 (fração de ponto flutuante) fecha em 100.00, não só o caso redondo', () => {
     const d = documento(bruto({ itens: [item({ quantidade: 3, valor_unitario: 33.333, valor_total: null })] }))

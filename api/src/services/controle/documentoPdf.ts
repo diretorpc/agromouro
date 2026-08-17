@@ -105,6 +105,18 @@ export type DocumentoLido = {
   // duas partes: aplicar a constraint `dedupe_exige_identidade` da migration
   // 017 é responsabilidade de quem grava, não desta leitura.
   numeroDocumento:     string | null
+  // Metade CRUA de `numeroDocumento` (sem a data embutida) — devolvida à
+  // parte porque `gravarDocumentoPdf.ts` precisa dela como fallback ESTÁVEL
+  // de `numeroDocumento` do item, para item sem numeração própria (contrato
+  // sem numeração por linha, ex.: Mosaic). `numeroDocumento` do documento
+  // muda a cada reimportação (embute `dataDocumento`, a data de GERAÇÃO do
+  // relatório/contrato relido) — usar aquele fallback faria a trava de
+  // dedupe por item (migration 018) nunca disparar para este caso (achado C
+  // da revisão do Apolo, rodada 3). `codigoCliente` sozinho não muda entre
+  // reimportações do mesmo documento. Mesma regra de null de `numeroDocumento`:
+  // quando `numeroDocumento` é não-nulo, `codigoCliente` também é (os dois
+  // nascem juntos em `montarNumeroDocumento`).
+  codigoCliente:       string | null
   valorTotalDocumento: number | null
   // somaDosItens - valorTotalDocumento, só quando valorTotalDocumento não é
   // null. Não recusa nada — é a defesa determinística contra item duplicado
@@ -467,6 +479,7 @@ export function validarDocumentoLido(bruto: any, hojeISO: string): ResultadoVali
       fornecedor,
       dataDocumento,
       numeroDocumento,
+      codigoCliente,
       valorTotalDocumento,
       // Defesa determinística contra item duplicado/perdido na leitura, ou
       // separador decimal lido errado — só existe quando o documento trouxe
