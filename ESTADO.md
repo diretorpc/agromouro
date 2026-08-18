@@ -494,96 +494,83 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
-## Aba "Controle" (gastos defensivos/adubos/sementes) — brainstorm fechado, migration 017 em rodada de revisão — iniciado 17/08/2026
+## Financeiro: origem "Conta paga" sem nome de fornecedor — pronto, falta só abrir o PR — 18/08/2026
 
-Branch `feature/controle-gastos` criada fora da `main`. Plano em
-`C:\Users\Dib\.claude\plans\peaceful-crafting-origami.md`. Feature fatiada em
-5 epics / 10 stories (tarefas #1–#10 do TaskList da sessão) — pedido dele:
-"por stories e epics pra não ficar tudo em uma vez".
+Pedido do Matheus: lançamento vindo de conta a pagar quitada (`lancamentos_financeiros`
+com `origem = 'conta'`) mostrava só o crachá genérico "Conta paga" na coluna Origem da
+tela Financeiro — diferente dos lançamentos de NF-e, que mostram o nome do fornecedor.
 
-**Contexto do pedido.** Aba pessoal do Matheus pra conferir e visualizar
-gasto com defensivos, adubos/fertilizantes e sementes (só da loja Brejeiro)
-antes de dar OK pro primo pagar a conta. Brainstorm com 4 PDFs reais
-anexados (extratos de conta corrente Solos/Syagri/Protec + contrato Mosaic
-Fertilizantes) mudou o desenho original: não são "relatórios simples de
-produto", são extratos de VÁRIAS notas por fornecedor, às vezes com o
-produto numa tabela separada da nota (caso Syagri) — a leitura por IA
-precisa cruzar as duas. UI final validada com mockup interativo (widget)
-antes de fechar o plano: tabela estilo Excel, célula editável in-place
-(sem diálogo), "+ nova linha" no rodapé, agrupar por
-categoria/produto/fornecedor, filtro por empresa.
+**Descoberta:** o backend (`api/src/services/contas/pagamento.ts`, função
+`montarLancamento`) já grava o fornecedor dentro do campo `descricao`, no formato
+`"FORNECEDOR — resto da descrição"` (separador é espaço + em-dash U+2014 + espaço) —
+intencional, só nunca foi separado de volta na tela.
 
-**Epic 1.1 (migration 017) — 5 rodadas de revisão do Apolo, versão final
-ainda não confirmada aplicada.** `api/src/database/migrations/017_controle.sql`:
-tabela `documentos_controle` (metadado de PDF importado — dedupe por hash do
-arquivo E por fornecedor+número normalizados, dois índices únicos
-independentes) + 3 colunas novas em `itens_nfe` (`fornecedor`,
-`numero_documento`, `documento_controle_id`, com FK COMPOSTA
-`(documento_controle_id, fazenda_id)` pra impedir item de uma fazenda
-apontar pra documento de outra).
+**Corrigido só no frontend, sem migration:** `web/app/(app)/financeiro/page.tsx` ganhou
+`separarFornecedorDaConta()` + `textoDescricaoExibido()` (fonte única do texto exibido,
+usada tanto na célula quanto na ordenação da coluna). Fornecedor vai pra coluna Origem
+(nome em negrito + crachá esmeralda pequeno "Conta paga" embaixo, pra continuar
+diferenciando de nota fiscal); o resto fica em Produto/Serviço, sem repetir o
+fornecedor. Sem separador válido (ou fornecedor/resto vazio após trim), cai no
+comportamento antigo — crachá genérico, texto completo.
 
-Achado mais sério (rodada 3, achado crítico): sem constraint, linha
-importada de PDF nasceria sem dizer se conta como gasto no Financeiro —
-mesmo mecanismo do gasto fantasma de R$ 1,06 mi já documentado nesta seção
-(caso HIGA/SYAGRI) e no PR #56 (boleto). Corrigido com a constraint
-`item_de_documento_completo` (obriga `conta_como_compra` e `data_manual`
-preenchidos em toda linha vinda de PDF). Rodada 5 testou a migration inteira
-num **Postgres descartável** (não mais escrevendo na base de dev — a rodada
-3 tinha acidentalmente inserido e apagado 1 linha de teste em
-`documentos_controle`; revertido na hora, sem afetar `itens_nfe`, registrado
-ao Matheus na conversa): reaplicar o arquivo 2-3x seguidas sem erro,
-índices/constraints corretos, FK composta barra fazenda cruzada.
+**2 rodadas de revisão do Apolo, ambas com achados corrigidos:**
+1. Ordenação da coluna quebrada (comparava texto com fornecedor, exibia só o resto) —
+   corrigido com `textoDescricaoExibido()` como fonte única. Célula podia ficar muda
+   (descrição terminando logo após o separador) — corrigido com `.trim()` + fallback.
+2. Fornecedor não era trimado (podia renderizar nome/linha em branco com espaço) —
+   corrigido, trim nos dois lados agora. Variável morta (`descricaoConta` calculada e
+   nunca usada, função rodando 2x por linha) — removida.
 
-**✅ Epic 1.1 FECHADA — migration 017 aplicada e confirmada em produção de dev
-em 17/08.** As 5 VERIFICAÇÕES do arquivo rodaram certo, inclusive o índice
-de dedupe (`fornecedor_normalizado`, não o cru) e o de hash
-(`WHERE status <> 'erro'`), conferidos linha a linha pelo Matheus.
+**Risco aceito por decisão do Matheus (não é bug, é escolha registrada):** o parser
+detecta o SEPARADOR, não o fornecedor de verdade — uma conta SEM fornecedor cuja
+descrição digitada à mão contenha " — " pode gerar um "fornecedor" inventado na coluna
+Origem. Chance baixa (exige o dono digitar esse traço exato numa conta sem fornecedor),
+não mexe em nenhum valor de dinheiro — só apresentação. Conserto definitivo exigiria
+coluna própria de fornecedor em `lancamentos_financeiros` (migration) — decidido não
+fazer agora, documentado em comentário no código (`page.tsx`, perto de
+`separarFornecedorDaConta`).
 
-**✅ Epic 1.2 FECHADA — bucket `controle-documentos` criado (privado).**
-⚠️ Falta ainda `file_size_limit`→10MB e `allowed_mime_types`→`application/pdf`
-nas Configurações do bucket (hoje "Any"/50MB) — o código do leitor (Epic 2.1)
-já assume 10MB no comentário, então o bucket está mais permissivo que o
-código pressupõe. Não bloqueia nada, mas ajustar antes de liberar upload de
-verdade pro Matheus.
+**Verificado:** função testada isolada em Node (várias vezes, incluindo espaços em
+branco e casos limite) — bateu certo nas duas rodadas. `npx tsc --noEmit` limpo.
+Matheus conferiu ao vivo no navegador (`http://localhost:3005/financeiro`) a 1ª versão
+— ainda não reconferiu a versão com os achados da 2ª rodada corrigidos.
 
-**✅ Epic 2.1 FECHADA — leitor de PDF, 4 rodadas de revisão do Apolo.**
-`api/src/services/controle/documentoPdf.ts` (+ teste, 42 casos, suíte
-inteira 334/334 verde). Lê os 2 formatos reais (extrato "Contas a Receber"
-com várias duplicatas, cruzando tabela de produto separada quando existe —
-caso Syagri; contrato tipo Mosaic, ignorando boilerplate jurídico/Docusign).
-Não grava nada no banco ainda — só lê e valida.
+**Commitado** (`9edcca7` + fixes da 2ª rodada, branch `fix/financeiro-origem-conta-paga`).
+**Próximo passo:** abrir o PR.
 
-Achado mais sério das 4 rodadas: a chave de dedupe do documento (fornecedor +
-número) NÃO pode ser texto que a IA formata livre (duas leituras do mesmo
-extrato podiam gerar grafias diferentes e driblar o índice único da 017) —
-corrigido pedindo só o dado cru (`codigoCliente`) e montando a chave
-**em código**, determinística.
+## Aba "Controle" (gastos defensivos/adubos/sementes) — Epic 2.4 (tela) em execução via SDD — atualizado 17/08/2026
 
-**⚠️ Dois achados do Apolo ficaram "aceitos, não são bug DESTE arquivo" —
-são PRÉ-REQUISITO da Epic 2.2 (gravação), registrados aqui pra não se
-perder:**
-1. Dedupe por DOCUMENTO não basta — extrato reenviado no mês seguinte repete
-   duplicatas de meses anteriores ainda em aberto; sem dedupe também por
-   ITEM (fazenda+fornecedor+número da duplicata), o gasto dobra. Mesma
-   família do gasto fantasma de R$ 1,2 mi da entrega futura (seção acima).
-2. A leitura pode devolver `numeroDocumento: null` (quando falta código do
-   cliente ou data do documento) — a migration exige fornecedor+número
-   preenchidos a menos que `status='erro'`. Sem tratar isso na gravação, o
-   INSERT estoura com erro de banco cru (23514) na cara do Matheus.
+⚠️ **Este bloco estava desatualizado — reescrito do zero em 17/08 depois de o
+Matheus perguntar "qual a próxima epic?" e a resposta revelar que ninguém tinha
+mantido este arquivo em dia.** O texto anterior dizia "nada commitado ainda"; na
+verdade o trabalho avançou bastante numa worktree separada. **Detalhe completo,
+histórico de revisão do Apolo e comandos pra reconferir vivem no `ESTADO.md` DENTRO
+da worktree** (regra do próprio arquivo: detalhe mora perto do código, aqui só a
+frase-resumo) — não copiado pra cá de propósito, pra não discordar depois:
+`C:\Users\Dib\Projetos\pessoal\agromouro-base\.claude\worktrees\ou-e5b8ce\ESTADO.md`
 
-**Backlog das 7 stories seguintes (não iniciadas):** gravação com dedupe
-(`gravarDocumentoPdf.ts` — carrega os 2 pré-requisitos acima), rotas
-(`controle.ts`), tela (leitura + agrupamento + filtro, depois edição célula
-a célula, depois gráficos/KPIs, depois diálogo de import), item no sidebar
-por último.
+Trabalho inteiro na branch `feature/controle-gastos`, dentro dessa worktree — **a
+checkout principal (aqui) continua limpa, na `main`, sem nada disso**. Ainda não
+subiu pro GitHub.
 
-**Nada commitado ainda** — `api/src/services/controle/` e a migration 017
-continuam untracked no git, tudo na branch `feature/controle-gastos`.
+**Prontas e commitadas (Epics 1.1 a 2.3 — migration 017+018, bucket, leitor de PDF,
+gravação com dedupe, rotas da API):** todas revisadas várias vezes pelo Apolo,
+incluindo 2 achados críticos de dinheiro dobrando (já corrigidos) e teste de
+isolamento por fazenda com mutação de código real. Migration 017 **e** 018 já
+aplicadas em produção, confirmadas pelo Matheus rodando as consultas de verificação.
 
-**Memória salva na sessão:** ele quer o SQL de toda migration colado direto
-no chat daqui pra frente (não só link do arquivo) — não consegue abrir o
-link no ambiente dele. Registrado em
-`~/.claude/projects/.../memory/feedback-sql-cole-no-chat.md`.
+**Em execução agora: Epic 2.4 (a tela `/controle`)**, via
+`superpowers:subagent-driven-development` — 8 tarefas planejadas
+(`docs/superpowers/plans/2026-08-17-controle-tela.md`, dentro da worktree), ledger de
+progresso em `.superpowers/sdd/2026-08-17-controle-tela/progress.md`. Tasks 1-3
+prontas e aprovadas (rota de filtros, paginação/filtro no `GET /controle/documentos`,
+tipos do frontend); Task 4 (hook `use-controle-data.ts`) com 1 achado "importante" em
+correção (possível bloqueio de pop-up ao abrir o PDF — `window.open` depois de um
+`await` perde o gesto de clique em alguns navegadores).
+
+**Próximo passo:** terminar as tasks 4-8 (fix da Task 4, depois componentes de UI —
+filtro por coluna estilo Excel, tabela com células mescladas, diálogo de upload,
+página + item no menu), revisão final do branch, e então push.
 
 ## Leitor de NFS-e (nota de serviço) — codado em 17/08/2026, 5 rodadas de revisão do Apolo feitas
 
