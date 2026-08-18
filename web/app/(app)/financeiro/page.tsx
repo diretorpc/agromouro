@@ -172,11 +172,13 @@ function separarFornecedorDaConta(descricao: string): { fornecedor: string | nul
   const indice = descricao.indexOf(separador)
   if (indice === -1) return { fornecedor: null, resto: descricao }
   const resto = descricao.slice(indice + separador.length).trim()
-  // Conta com descrição "FORNECEDOR — " (nada depois do separador) não pode
-  // deixar a célula de Produto/Serviço muda — cai pro texto completo, igual
-  // ao caso "não achou separador" (achado do Apolo, 18/08/2026).
-  if (!resto) return { fornecedor: null, resto: descricao }
-  return { fornecedor: descricao.slice(0, indice), resto }
+  const fornecedor = descricao.slice(0, indice).trim()
+  // Conta com descrição "FORNECEDOR — " (nada depois do separador) ou
+  // " — resto" (nada antes) não pode virar célula muda nem fornecedor em
+  // branco na coluna Origem — cai pro texto completo, igual ao caso "não
+  // achou separador" (achado do Apolo, 18/08/2026, 2ª rodada).
+  if (!resto || !fornecedor) return { fornecedor: null, resto: descricao }
+  return { fornecedor, resto }
 }
 
 // Fonte única do texto exibido em Produto/Serviço — usada tanto na ordenação
@@ -1078,8 +1080,7 @@ export default function FinanceiroPage() {
 
                 if (!multiplo) {
                   const item = grupo.itens[0]
-                  const { fornecedor: fornecedorConta, resto: descricaoConta } =
-                    item.origem === 'conta' ? separarFornecedorDaConta(item.descricao) : { fornecedor: null, resto: item.descricao }
+                  const fornecedorConta = item.origem === 'conta' ? separarFornecedorDaConta(item.descricao).fornecedor : null
                   return (
                     <TableRow key={item.id}>
                       <TableCell className="text-sm w-[160px]">

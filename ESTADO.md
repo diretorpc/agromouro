@@ -494,7 +494,7 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
-## Financeiro: origem "Conta paga" sem nome de fornecedor — corrigido, aguardando revisão e conferência visual — 18/08/2026
+## Financeiro: origem "Conta paga" sem nome de fornecedor — pronto, falta só abrir o PR — 18/08/2026
 
 Pedido do Matheus: lançamento vindo de conta a pagar quitada (`lancamentos_financeiros`
 com `origem = 'conta'`) mostrava só o crachá genérico "Conta paga" na coluna Origem da
@@ -506,18 +506,37 @@ tela Financeiro — diferente dos lançamentos de NF-e, que mostram o nome do fo
 intencional, só nunca foi separado de volta na tela.
 
 **Corrigido só no frontend, sem migration:** `web/app/(app)/financeiro/page.tsx` ganhou
-`separarFornecedorDaConta()`, que separa o texto pelo `indexOf(' — ')`. Fornecedor vai
-pra coluna Origem (mesmo estilo visual da NF-e: nome em negrito + "Conta paga" pequeno
-embaixo); o resto fica em Produto/Serviço, sem repetir o fornecedor. Se o separador não
-existir na descrição (registro sem fornecedor gravado), cai no comportamento antigo —
-não quebra nada.
+`separarFornecedorDaConta()` + `textoDescricaoExibido()` (fonte única do texto exibido,
+usada tanto na célula quanto na ordenação da coluna). Fornecedor vai pra coluna Origem
+(nome em negrito + crachá esmeralda pequeno "Conta paga" embaixo, pra continuar
+diferenciando de nota fiscal); o resto fica em Produto/Serviço, sem repetir o
+fornecedor. Sem separador válido (ou fornecedor/resto vazio após trim), cai no
+comportamento antigo — crachá genérico, texto completo.
 
-**Verificado:** função testada isolada em Node com 3 casos reais (Ube Terra, Pneuzão,
-sem fornecedor) — bateu certo. `npx tsc --noEmit` limpo. Matheus conferiu ao vivo no
-navegador (`http://localhost:3005/financeiro`) em 18/08 — confirmou que ficou certo.
+**2 rodadas de revisão do Apolo, ambas com achados corrigidos:**
+1. Ordenação da coluna quebrada (comparava texto com fornecedor, exibia só o resto) —
+   corrigido com `textoDescricaoExibido()` como fonte única. Célula podia ficar muda
+   (descrição terminando logo após o separador) — corrigido com `.trim()` + fallback.
+2. Fornecedor não era trimado (podia renderizar nome/linha em branco com espaço) —
+   corrigido, trim nos dois lados agora. Variável morta (`descricaoConta` calculada e
+   nunca usada, função rodando 2x por linha) — removida.
 
-**Próximo passo:** aguardar revisão do Apolo (convocada, ainda rodando). Depois disso:
-commit + PR na branch `fix/financeiro-origem-conta-paga`.
+**Risco aceito por decisão do Matheus (não é bug, é escolha registrada):** o parser
+detecta o SEPARADOR, não o fornecedor de verdade — uma conta SEM fornecedor cuja
+descrição digitada à mão contenha " — " pode gerar um "fornecedor" inventado na coluna
+Origem. Chance baixa (exige o dono digitar esse traço exato numa conta sem fornecedor),
+não mexe em nenhum valor de dinheiro — só apresentação. Conserto definitivo exigiria
+coluna própria de fornecedor em `lancamentos_financeiros` (migration) — decidido não
+fazer agora, documentado em comentário no código (`page.tsx`, perto de
+`separarFornecedorDaConta`).
+
+**Verificado:** função testada isolada em Node (várias vezes, incluindo espaços em
+branco e casos limite) — bateu certo nas duas rodadas. `npx tsc --noEmit` limpo.
+Matheus conferiu ao vivo no navegador (`http://localhost:3005/financeiro`) a 1ª versão
+— ainda não reconferiu a versão com os achados da 2ª rodada corrigidos.
+
+**Commitado** (`9edcca7` + fixes da 2ª rodada, branch `fix/financeiro-origem-conta-paga`).
+**Próximo passo:** abrir o PR.
 
 ## Aba "Controle" (gastos defensivos/adubos/sementes) — Epic 2.4 (tela) em execução via SDD — atualizado 17/08/2026
 
