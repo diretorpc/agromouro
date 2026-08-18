@@ -38,11 +38,19 @@ export function DialogoImportar({ onImportar }: DialogoImportarProps) {
       }
       // duplicada-hash / duplicada-conteudo
       setEstado({ fase: 'aviso', mensagem: 'Este documento já foi importado antes.' })
+      // Limpa o input SEM resetar `estado` (a mensagem continua visível) — senão
+      // o <input type="file"> não dispara onChange numa segunda seleção do MESMO
+      // arquivo enquanto o value não for limpo, e o usuário que tenta reenviar o
+      // mesmo PDF não vê nada acontecer.
+      if (inputRef.current) inputRef.current.value = ''
     } catch (err) {
       // 422 (não reconhecido / sem item aproveitável / sem identidade), 503 (IA
       // indisponível) e 500 chegam aqui como Error — a API já manda a mensagem
       // certa em português no campo `error` (web/lib/api.ts repassa em .message).
       setEstado({ fase: 'erro', mensagem: err instanceof Error ? err.message : 'Erro ao importar o documento.' })
+      // Mesmo motivo do branch de aviso acima: limpa o value pra permitir
+      // reenviar o mesmo arquivo sem precisar fechar e reabrir o diálogo.
+      if (inputRef.current) inputRef.current.value = ''
     }
   }
 
