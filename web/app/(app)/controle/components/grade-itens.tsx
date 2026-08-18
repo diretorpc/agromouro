@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { FiltroColuna } from './filtro-coluna'
-import { colunaNumeroBR, colunaDataBR } from './colunas-br'
+import { colunaNumeroBR, colunaDataBR, colunaTextoSemNulo } from './colunas-br'
 import estilos from './grade-itens.module.css'
 import type { ItemControleFlat, FiltrosControle, PatchItemControleFlat } from '@/lib/types'
 import type { FiltrosSelecionados } from '../hooks/use-controle-itens'
@@ -224,6 +224,16 @@ export function GradeItens({
   // antes a linha sumia da tela sem aviso nenhum na falha; agora fica
   // visível, marcada, e a próxima edição tenta de novo.
   const [idsComErroCriacao, setIdsComErroCriacao] = useState<Set<string>>(new Set())
+  // Ids de linhas JÁ EXISTENTES cuja última tentativa de EDIÇÃO falhou com
+  // erro de validação (4xx — ex.: 409 de conflito de duplicidade ao
+  // esvaziar a descrição de duas linhas iguais no mesmo documento; ver
+  // migration 018). Bug relatado pelo Matheus, 18/08/2026: antes, QUALQUER
+  // falha de PATCH chamava `recarregar()` (use-controle-itens.ts), que
+  // remonta a grade inteira e desfaz TUDO que estivesse sendo digitado em
+  // qualquer outra célula — parecia "a página recarregar e o produto
+  // voltar". Agora só falha de REDE/5xx recarrega; erro de validação marca
+  // SÓ esta linha, sem mexer no resto.
+  const [idsComErroEdicao, setIdsComErroEdicao] = useState<Set<string>>(new Set())
 
   // Diálogo de confirmação de exclusão de DOCUMENTO (não item) — mesmo
   // padrão de `tabela-documentos.tsx` (achado 3): erro mostrado DENTRO do
@@ -275,8 +285,20 @@ export function GradeItens({
         // mostra localmente (pode já ter mudado de novo enquanto este PATCH
         // estava em voo).
         ultimoPersistidoRef.current.set(id, itemServidor)
+        setIdsComErroEdicao(atual => {
+          if (!atual.has(id)) return atual
+          const novo = new Set(atual); novo.delete(id); return novo
+        })
       })
-      .catch(() => { /* erro já fica em erroAcao (hook); em falha, o hook força recarregar() e remonta a grade inteira */ })
+      .catch(() => {
+        // Erro já fica em `erroAcao` (hook mostra a mensagem no topo da
+        // página). Marca ESTA linha — não importa se foi erro de validação
+        // (fica assim até o usuário corrigir) ou de rede/5xx (o hook já
+        // chamou `recarregar()`, que remonta a grade inteira e limpa este
+        // estado sozinho junto com tudo mais — marcar aqui não atrapalha
+        // esse caso).
+        setIdsComErroEdicao(atual => new Set(atual).add(id))
+      })
       .finally(() => {
         emVooRef.current.delete(id)
         // Algo foi digitado DURANTE o voo? Já está acumulado em
@@ -315,19 +337,24 @@ export function GradeItens({
   function possivelmenteCriar(linha: ItemControleFlat) {
     if (criandoIds.current.has(linha.id)) return
 
-    // Achado 8 da revisão do Apolo: `createTextColumn` devolve `null` ao
-    // apagar o conteúdo de uma célula (Delete/Backspace até esvaziar) — o
-    // tipo `ItemControleFlat.descricao` promete `string`, mas em RUNTIME,
-    // numa linha ainda em edição na grade, isso não é garantido. Sem este
-    // `??`, `linha.descricao.trim()` lançava `TypeError` e travava o evento
-    // inteiro (nem a linha nova nem nenhuma outra edição daquele onChange
-    // era processada).
+    // Achado 8 da revisão do Apolo (18/08/2026, 2ª rodada): `descricao` e
+    // `unidade` usam `colunaTextoSemNulo()` (colunas-br.ts) agora, que NUNCA
+    // devolve `null` — a coluna do PACOTE (`createTextColumn` padrão)
+    // devolvia (Delete, Backspace até esvaziar, ou colar vazio), e o tipo
+    // `ItemControleFlat.descricao: string` prometia algo que o RUNTIME não
+    // garantia. `?? ''` continua aqui como segunda camada de defesa — barato
+    // e não custa nada manter, mesmo com a correção primária já na coluna.
     const descricao = (linha.descricao ?? '').trim()
 
     // Mínimo pro backend aceitar (criarItemAvulsoSchema): descrição não-vazia
     // e valor_total > 0. Enquanto isso não bate, a linha fica só local —
     // digitar linha nova gera VÁRIOS onChange (um por Tab/Enter), e não faz
     // sentido gastar um POST por tecla até ela ficar "completa o bastante".
+    // Decisão de escopo, 18/08/2026: diferente de EDITAR uma linha já
+    // existente (que agora aceita descrição vazia — pedido explícito do
+    // Matheus), CRIAR uma linha nova ainda exige pelo menos descrição +
+    // valor pra virar POST — uma linha em branco na grade nunca devia gerar
+    // requisição nenhuma sozinha.
     if (!descricao || linha.valor_total === null || linha.valor_total <= 0) return
 
     criandoIds.current.add(linha.id)
@@ -394,6 +421,10 @@ export function GradeItens({
             })
             continue // nunca existiu no banco
           }
+          setIdsComErroEdicao(atual => {
+            if (!atual.has(linhaRemovida.id)) return atual
+            const novo = new Set(atual); novo.delete(linhaRemovida.id); return novo
+          })
           onExcluirItem(linhaRemovida.id).catch(() => { /* erro já fica em erroAcao */ })
         }
       }
@@ -427,7 +458,7 @@ export function GradeItens({
       minWidth: 90,
     },
     {
-      ...keyColumn<ItemControleFlat, 'descricao'>('descricao', createTextColumn({ continuousUpdates: false })),
+      ...keyColumn<ItemControleFlat, 'descricao'>('descricao', colunaTextoSemNulo()),
       title: 'Produto',
       minWidth: 220,
       grow: 2,
@@ -438,7 +469,7 @@ export function GradeItens({
       minWidth: 90,
     },
     {
-      ...keyColumn<ItemControleFlat, 'unidade'>('unidade', createTextColumn({ continuousUpdates: false })),
+      ...keyColumn<ItemControleFlat, 'unidade'>('unidade', colunaTextoSemNulo()),
       title: 'Unidade',
       minWidth: 80,
     },
@@ -462,13 +493,13 @@ export function GradeItens({
     },
   ]
 
-  // Prioridade de pintura quando mais de uma se aplicaria: erro de criação
-  // (mais urgente — a linha pode se perder de vez se ignorada) > duplicata >
-  // rascunho não-persistido > normal. Na prática erro-criação e duplicata
-  // nunca coincidem (duplicata só existe em linha já persistida pelo
-  // servidor), mas a ordem fica explícita mesmo assim.
+  // Prioridade de pintura quando mais de uma se aplicaria: erro (criação OU
+  // edição — mais urgente, a linha pode se perder de vez se ignorada) >
+  // duplicata > rascunho não-persistido > normal. Na prática erro-criação e
+  // duplicata nunca coincidem (duplicata só existe em linha já persistida
+  // pelo servidor), mas a ordem fica explícita mesmo assim.
   function classeDaLinha(item: ItemControleFlat): string | undefined {
-    if (idsComErroCriacao.has(item.id)) return estilos.linhaErroCriacao
+    if (idsComErroCriacao.has(item.id) || idsComErroEdicao.has(item.id)) return estilos.linhaErro
     if (item.duplicado) return estilos.linhaDuplicada
     if (item.id.startsWith(PREFIXO_TEMP)) return estilos.linhaRascunho
     return undefined

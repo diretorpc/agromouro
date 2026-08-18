@@ -229,6 +229,29 @@ describe('PATCH /controle/itens/:id (router raiz)', () => {
     expect(res.body).toEqual(editado)
   })
 
+  // Bug relatado pelo Matheus, 18/08/2026: `descricao: z.string().min(1)`
+  // recusava a célula esvaziada com 400 — decisão dele, confirmada
+  // explicitamente: pode ficar vazia. O schema (camposItemEditavel,
+  // controleItens.ts) perdeu o `.min(1)`, continua exigindo que a chave,
+  // quando presente, seja uma STRING (não aceita `null` — o banco exige
+  // `not null`, ver comentário no schema).
+  it('descricao vazia ("") passa pelo schema — não é mais 400, chega no service', async () => {
+    editarItemControleMock.mockResolvedValue({ status: 'editado', item: { id: 'item-1', descricao: '' } })
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A, params: { id: 'item-1' }, body: { descricao: '' } })
+    await handler(req, res, next)
+
+    expect(res.statusCode).toBe(200)
+    expect(editarItemControleMock).toHaveBeenCalledWith('item-1', FAZENDA_A, { descricao: '' })
+  })
+
+  it('descricao: null (não string vazia) CONTINUA recusada com 400 — o banco exige not null, não é o mesmo caso', async () => {
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A, params: { id: 'item-1' }, body: { descricao: null } })
+    await handler(req, res, next)
+
+    expect(res.statusCode).toBe(400)
+    expect(editarItemControleMock).not.toHaveBeenCalled()
+  })
+
   it('conta_como_compra no corpo é descartado pelo schema antes de chegar no service', async () => {
     editarItemControleMock.mockResolvedValue({ status: 'editado', item: { id: 'item-1' } })
     const { req, res, next } = criarReqRes({

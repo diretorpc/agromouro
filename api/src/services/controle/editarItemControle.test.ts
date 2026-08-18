@@ -146,4 +146,60 @@ describe('editarItemControle', () => {
     expect(r.status).toBe('editado')
     expect(chamadasUpdate).toHaveLength(1)
   })
+
+  // Bug relatado pelo Matheus, 18/08/2026: apertar Delete numa célula de
+  // Produto (descrição) fazia "a página recarregar e o produto voltar".
+  // Decisão dele, confirmada explicitamente com o risco na mão: SIM, pode
+  // ficar vazio ("máxima liberdade, igual Excel"). `descricao text not
+  // null` no banco (schema.sql:100, migration 017 nunca mexe nisso) —
+  // string vazia satisfaz, `null` não satisfaria (por isso o service segue
+  // exigindo a CHAVE presente e do tipo string, só não mais `.min(1)` — ver
+  // controleItens.ts, `camposItemEditavel`).
+  it('descricao vazia ("") é aceita e persistida — pedido explícito do Matheus, "máxima liberdade"', async () => {
+    estadoBanco.itemSelect = { data: { id: 'item-1', documento_controle_id: 'doc-1' }, error: null }
+    const itemAtualizado = { id: 'item-1', descricao: '', conta_como_compra: false }
+    estadoBanco.itemUpdate = { data: itemAtualizado, error: null }
+
+    const r = await editarItemControle('item-1', FAZENDA_A, { descricao: '' })
+
+    expect(r).toEqual({ status: 'editado', item: itemAtualizado })
+    expect(chamadasUpdate).toHaveLength(1)
+    expect(chamadasUpdate[0].payload.descricao).toBe('')
+  })
+
+  it('unidade vazia ("") também é aceita e persistida — mesmo tratamento de descricao', async () => {
+    estadoBanco.itemSelect = { data: { id: 'item-1', documento_controle_id: 'doc-1' }, error: null }
+    estadoBanco.itemUpdate = { data: { id: 'item-1', unidade: '' }, error: null }
+
+    const r = await editarItemControle('item-1', FAZENDA_A, { unidade: '' })
+
+    expect(r.status).toBe('editado')
+    expect(chamadasUpdate[0].payload.unidade).toBe('')
+  })
+
+  // Risco explícito que o Apolo pediu pra "verificar de verdade" (não só
+  // assumir): a chave do índice de dedupe (idx_itens_nfe_dedupe_item,
+  // migration 018) inclui `descricao`. Esvaziar a descrição de DUAS linhas
+  // do MESMO documento que já compartilhem fornecedor+número+valor+
+  // ocorrência faz as duas colidirem entre si (as duas ficam com a MESMA
+  // chave: descricao=''). Confirma que esse 23505 específico — nascido de
+  // uma EDIÇÃO que esvaziou o campo, não de uma reimportação — cai no MESMO
+  // caminho 'conflito' já provado acima, não em 'erro' (500 cru). O
+  // mecanismo é genérico (qualquer 23505 vira 'conflito'), mas este teste
+  // documenta e prova ESTE gatilho específico, que é novo por causa da
+  // decisão de aceitar campo vazio.
+  it('esvaziar a descrição colide com outra linha do MESMO documento (mesma chave de dedupe): conflito, não 500 cru', async () => {
+    estadoBanco.itemSelect = { data: { id: 'item-2', documento_controle_id: 'doc-1' }, error: null }
+    estadoBanco.itemUpdate = {
+      data: null,
+      error: { code: '23505', message: 'duplicate key value violates unique constraint "idx_itens_nfe_dedupe_item"' },
+    }
+
+    // item-2 e item-1 (já existente) têm mesmo fornecedor/numero_documento/
+    // valor_total/ocorrencia — só a descrição os distinguia antes de os dois
+    // ficarem vazios.
+    const r = await editarItemControle('item-2', FAZENDA_A, { descricao: '' })
+
+    expect(r).toEqual({ status: 'conflito' })
+  })
 })

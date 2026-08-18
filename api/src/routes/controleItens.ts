@@ -63,10 +63,23 @@ const listarItensSchema = z.object({
 // `false` no UPDATE/INSERT sem nunca ler o corpo da requisição para esse
 // campo — duas camadas independentes de propósito. Ver spec, seção "Trava
 // de conta_como_compra".
+//
+// `descricao`/`unidade` SEM `.min(1)` — decisão do Matheus, 18/08/2026
+// (bug relatado: apagar a célula "Produto" recusava com 400 e a tela
+// "recarregava sozinha"). Perguntado explicitamente, com o risco na mão
+// (linha sem nome atrapalha a conferência contra a NF-e): ele quer poder
+// deixar vazio, "máxima liberdade, igual Excel". `descricao` continua
+// `z.string()` (não aceita `null` nem campo ausente quando a CHAVE está
+// presente no patch) porque o banco exige `not null`
+// (api/src/database/schema.sql:100, `itens_nfe.descricao text not null` —
+// confirmado na fonte viva, migration 017_controle.sql nunca mexe nessa
+// constraint) — string VAZIA satisfaz `not null` sem precisar de migration;
+// `null` não satisfaria. O frontend (colunas-br.ts, `colunaTextoSemNulo`)
+// nunca manda `null` pra estes dois campos, só `''`.
 const camposItemEditavel = {
-  descricao:        z.string().min(1),
+  descricao:        z.string(),
   quantidade:       z.number().nonnegative().nullable(),
-  unidade:          z.string().min(1),
+  unidade:          z.string(),
   valor_unitario:   z.number().nonnegative().nullable(),
   valor_total:      z.number().positive(),
   data_manual:      z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),

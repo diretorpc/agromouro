@@ -96,6 +96,40 @@ export function colunaNumeroBR() {
   })
 }
 
+// ─── Texto que NUNCA vira null (descricao, unidade) ─────────────────────────
+//
+// Bug relatado pelo Matheus, 18/08/2026: apertar Delete numa célula de
+// Produto fazia "a página recarregar e o produto voltar". Causa raiz:
+// `createTextColumn` PADRÃO devolve `null` de TRÊS jeitos diferentes —
+// (1) `deletedValue` (tecla Delete numa célula selecionada, sem entrar em
+// edição) é `null` por padrão; (2) `parseUserInput` padrão é
+// `(value) => value.trim() || null` — digitar e apagar tudo (Backspace)
+// também vira `null` ao confirmar; (3) `parsePastedValue` padrão tem a
+// MESMA armadilha pra colar célula vazia. `descricao` é `text not null` no
+// banco (confirmado na fonte viva: api/src/database/schema.sql:100 — a
+// migration 017_controle.sql nunca mexe nessa constraint); `unidade` é
+// nullable no banco, mas o zod da rota (camposItemEditavel,
+// controleItens.ts) exigia `.min(1)` nas DUAS, então `null` OU string vazia
+// batiam 400 de qualquer jeito.
+//
+// Decisão do Matheus (confirmada explicitamente, risco explicado): SIM, ele
+// quer poder deixar o campo vazio ("máxima liberdade, igual Excel"), mesmo
+// sabendo que isso atrapalha a conferência contra a NF-e. Não usamos `null`
+// pra representar "vazio" — usamos STRING VAZIA (`''`), que satisfaz o
+// `not null` do banco sem precisar de migration, e mantém o TIPO
+// `ItemControleFlat.descricao: string`/`unidade: string` HONESTO (nunca
+// `string | null`) em vez de espalhar `?? ''` defensivo pela grade inteira.
+// `camposItemEditavel.descricao`/`.unidade` (controleItens.ts) tiveram o
+// `.min(1)` removido — continuam exigindo `string`, só não mais "não-vazia".
+export function colunaTextoSemNulo() {
+  return createTextColumn<string>({
+    continuousUpdates: false,
+    deletedValue: '',
+    parseUserInput:   value => value.trim(),
+    parsePastedValue: value => value.replace(/[\n\r]+/g, ' ').trim(),
+  })
+}
+
 // ─── Data (data_manual) ─────────────────────────────────────────────────────
 
 // Mesmo padrão de `dataExiste` em api/src/services/contas/datas.ts — não

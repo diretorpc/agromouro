@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api } from '@/lib/api'
+import { api, ehErroDeValidacao } from '@/lib/api'
 import type {
   ItemControleFlat, FiltrosControle, ListaItensControle, PatchItemControleFlat, ResultadoGravarDocumento,
 } from '@/lib/types'
@@ -174,13 +174,30 @@ export function useControleItens() {
       return atualizado
     } catch (err) {
       setErroAcao(err instanceof Error ? err.message : 'Não foi possível salvar a edição.')
-      // Recarrega a PÁGINA inteira: o estado local pode estar mentindo (a
-      // grade já mostrou a edição otimista) — sem isso, uma falha de rede
-      // deixaria a tela com um valor que o banco nunca recebeu, sem aviso
-      // além da mensagem de erro pontual. `recarregar()` também bate
-      // `versaoDados`, que remonta a grade inteira — qualquer timer/patch
-      // pendente que ainda existisse é descartado junto.
-      recarregar()
+
+      // Bug relatado pelo Matheus, 18/08/2026: apagar a descrição de uma
+      // célula (Delete) mandava `PATCH {descricao: null}`, o zod recusava
+      // (400), e este `catch` chamava `recarregar()` incondicionalmente —
+      // que remonta a grade INTEIRA (key ligada a `versaoDados`) e desfaz
+      // TUDO que estivesse sendo digitado em qualquer outra célula, não só
+      // a que falhou. Parecia a tela "travando e voltando sozinha".
+      //
+      // Correção: só recarrega em falha de REDE ou erro do SERVIDOR (5xx) —
+      // aí sim o estado local pode estar mentindo (a grade já mostrou a
+      // edição otimista, sem confirmação nenhuma de que o banco recebeu).
+      // Erro de VALIDAÇÃO (4xx — campo inválido, conflito de duplicidade)
+      // é uma resposta CONCLUÍDA do servidor: a linha que falhou fica
+      // marcada (GradeItens cuida disso, achado 7 do mesmo espírito) e as
+      // outras edições em andamento na grade continuam intactas.
+      // `ehErroDeValidacao` é função pura, exportada de lib/api.ts —
+      // testada isolada (ver comando no ESTADO.md/relatório da sessão).
+      if (!ehErroDeValidacao(err)) {
+        // `recarregar()` também bate `versaoDados`, que remonta a grade
+        // inteira — qualquer timer/patch pendente que ainda existisse é
+        // descartado junto (correto aqui: a falha é de infraestrutura, não
+        // sabemos mais o que o banco realmente tem).
+        recarregar()
+      }
       throw err
     }
   }

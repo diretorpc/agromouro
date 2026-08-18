@@ -31,6 +31,12 @@
   --dsg-cell-background-color: #f1f5f9; /* slate-100 */
 }
 
-.linhaErroCriacao {
+/* Renomeada de `linhaErroCriacao` pra `linhaErro` (18/08/2026): passou a
+   cobrir os DOIS casos de falha de salvamento — linha NOVA que falha ao
+   criar (POST) e linha JÁ EXISTENTE que falha ao editar (PATCH, ex.: 409 de
+   conflito de duplicidade ao esvaziar a descrição de duas linhas iguais no
+   mesmo documento). Mesmo tratamento visual pros dois: "não salvou, olha
+   aqui". */
+.linhaErro {
   --dsg-cell-background-color: #fee2e2; /* red-100 */
 }

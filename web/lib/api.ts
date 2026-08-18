@@ -2,6 +2,36 @@ import { supabase } from './supabase'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
 
+// Carrega o status HTTP junto da mensagem — achado do Matheus, 18/08/2026
+// (grade editável de Controle): sem o status, quem chama `api.patch(...)`
+// não tinha como distinguir "o servidor RECUSOU o pedido por um motivo de
+// negócio" (400/409 — validação, conflito de duplicidade) de "a rede caiu"
+// ou "o servidor quebrou" (5xx) — os dois caíam no mesmo `catch`, e um
+// erro de VALIDAÇÃO acabava disparando o mesmo remédio pesado (recarregar a
+// tela inteira) que só faz sentido pra falha de rede. Ver
+// use-controle-itens.ts, `editarItem`.
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
+// Erro de VALIDAÇÃO/negócio (400-499) — o servidor TERMINOU de processar o
+// pedido e recusou por um motivo concreto (campo inválido, conflito de
+// duplicidade...). Diferente de falha de REDE (fetch nem completou — não é
+// `ApiError`, `err` é o `TypeError` que o `fetch()` lança) ou erro do
+// SERVIDOR (5xx — algo quebrou do lado de lá, sem garantia nenhuma do que
+// o banco recebeu). Só o primeiro caso permite confiar que "nada mudou
+// além do que o pedido tentou mudar" — os outros dois exigem desconfiar do
+// estado local inteiro. Função pura e exportada de propósito: testável sem
+// precisar montar um `fetch` de verdade.
+export function ehErroDeValidacao(err: unknown): boolean {
+  return err instanceof ApiError && err.status >= 400 && err.status < 500
+}
+
 async function getAuthHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession()
   const token = data.session?.access_token
@@ -27,7 +57,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
       const corpo = await res.json()
       if (corpo?.error) mensagem = corpo.error
     } catch { /* resposta sem corpo JSON — mantém a mensagem padrão */ }
-    throw new Error(mensagem)
+    throw new ApiError(mensagem, res.status)
   }
   if (res.status === 204) return undefined as T
   return res.json()
