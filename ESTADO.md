@@ -551,14 +551,22 @@ o subagente não tinha navegador em nenhuma das rodadas):
   classe de duplicata contra `rgb(255,255,255)` normal
 - botão "Excluir documento de origem" presente em cada linha
 
-**🔴 O QUE FALTA — só o Matheus consegue fazer:** eu não consegui provar a DIGITAÇÃO.
-Meus cliques não chegam na grade nesta sessão (o painel do navegador não é exibido,
-então o mouse não compõe: `pointer-events: none` no input, nenhuma célula selecionada,
-foco no `body`). Não sei dizer se é limitação da automação ou defeito da tela. Testar:
-digitar valor com milhar e centavo (`1.234,56`), colar um bloco do Excel de verdade,
-editar 2 células seguidas rápido na mesma linha, apagar o conteúdo de uma célula,
-criar linha nova. **Dado de produção intacto** — as tentativas não corromperam nada
-(28 itens antes e depois).
+**✅ DIGITAÇÃO TESTADA E APROVADA PELO MATHEUS em 18/08, no navegador dele** — colar
+do Excel e editar duas células seguidas rápido na mesma linha, os dois OK. Eu não
+consegui testar isso: meus cliques não chegam na grade quando o painel do navegador
+não é exibido (`pointer-events: none` no input, nenhuma célula selecionada, foco no
+`body`) — foi limitação da automação, não defeito da tela.
+
+**🐛 Bug que só apareceu no teste dele (commit `bd76cb7`):** apertar Delete numa
+célula de Produto mandava `null` ao servidor → 400 → o `catch` de `editarItem`
+remontava a grade inteira, o valor voltava e **qualquer outra edição em andamento
+sumia junto**. Era o achado 8 do Apolo, corrigido pela metade na rodada anterior (só
+o caminho de linha nova). Consertado em 3 frentes: Produto/Unidade aceitam texto
+vazio (decisão dele — "máxima liberdade, igual Excel", ciente de que linha sem nome
+atrapalha a conferência; sem migration, `''` já satisfaz o `not null`); erro 4xx
+passou a só marcar a linha, e só rede/5xx recarrega; e esvaziar a descrição de 2
+linhas iguais do mesmo documento colide na trava da 018 → 409 em português, não 500.
+**Confirmado funcionando por ele.**
 
 **Achados 9–12 do Apolo, aceitos como pendência de propósito** (nenhum é dinheiro):
 editar `valor_total` de linha importada desarma as duas defesas de duplicidade ao
