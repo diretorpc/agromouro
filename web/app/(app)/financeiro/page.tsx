@@ -76,6 +76,15 @@ const FORM_VAZIO: FormData = {
   valor_unitario: '', centro_custo: 'outro', data: new Date().toISOString().slice(0, 10),
 }
 
+// Edição de lançamento de conta paga: sem quantidade/unidade (lancamentos_financeiros
+// tem só um valor por linha, não item×preço como itens_nfe) — pedido do Matheus,
+// 18/08/2026 (editar TUDO: fornecedor, descrição, categoria, valor, data). Fornecedor
+// vem separado da descrição na tela (ver separarFornecedorDaConta) e os dois voltam a
+// virar um texto só, no mesmo formato "FORNECEDOR — resto", na hora de salvar — ver
+// handleEditarConta.
+type ContaEditForm = { fornecedor: string; descricao: string; categoria: string; valor: string; data: string }
+const CONTA_EDIT_FORM_VAZIO: ContaEditForm = { fornecedor: '', descricao: '', categoria: 'outro', valor: '', data: '' }
+
 const TIPOS = CATEGORIAS_FINANCEIRAS
 
 const CENTRO_CUSTO_STYLE: Record<string, string> = {
@@ -163,10 +172,16 @@ function fmtDate(dateStr: string) {
 // detecta o SEPARADOR, não o fornecedor de verdade. Uma conta SEM fornecedor
 // cuja descrição digitada à mão contenha " — " é partida errada — um pedaço
 // vira "fornecedor" inventado na coluna Origem. Chance baixa (exige o dono
-// digitar esse traço exato numa conta sem fornecedor) e não mexe em nenhum
-// valor de dinheiro — só apresentação. Conserto definitivo exigiria coluna
-// própria de fornecedor em lancamentos_financeiros (migration); decidido não
-// fazer agora.
+// digitar esse traço exato numa conta sem fornecedor). Conserto definitivo
+// exigiria coluna própria de fornecedor em lancamentos_financeiros (migration);
+// decidido não fazer agora.
+//
+// ATUALIZAÇÃO 18/08/2026 (2ª rodada): este campo agora é EDITÁVEL (dialog de
+// "Editar lançamento" no Financeiro) — deixou de ser só apresentação. Sem
+// cuidado, um dono que abre o dialog e limpa um "Fornecedor" que na verdade é
+// pedaço da descrição (mis-split acima) perderia esse texto ao salvar.
+// handleEditarConta detecta esse caso específico (fornecedor vazio + descrição
+// não tocada) e preserva o texto original em vez de descartar — ver ali.
 function separarFornecedorDaConta(descricao: string): { fornecedor: string | null; resto: string } {
   const separador = ' — '
   const indice = descricao.indexOf(separador)
@@ -355,8 +370,12 @@ export default function FinanceiroPage() {
   const [aplicandoEmMassa, setAplicandoEmMassa] = useState(false)
   const [erroEmMassa, setErroEmMassa] = useState<string | null>(null)
 
+  // Conta paga entra na seleção desde 18/08/2026 (pedido do Matheus): seu
+  // centro de custo mora em `lancamentos_financeiros.categoria`, não em
+  // `itens_nfe.centro_custo` — ver aplicarCentroEmMassa, que separa os ids por
+  // tabela na hora de salvar. Cartão/manual continuam de fora: ninguém pediu.
   function itemSelecionavel(item: ItemFinanceiro): boolean {
-    return item.source_table === 'itens_nfe'
+    return item.source_table === 'itens_nfe' || item.origem === 'conta'
   }
 
   function toggleSelecionado(id: string) {
@@ -395,17 +414,29 @@ export default function FinanceiroPage() {
     setErroEmMassa(null)
 
     const idsAlvo = Array.from(selecionados)
-    const { data: atualizados, error } = await supabase
-      .from('itens_nfe')
-      .update({ centro_custo: centroEmMassa })
-      .in('id', idsAlvo)
-      .select('id')
+    // Conta paga guarda centro de custo em lancamentos_financeiros.categoria,
+    // não em itens_nfe.centro_custo (ver itemSelecionavel) — separa os ids por
+    // tabela antes de salvar. Ids nunca colidem entre as duas (uuid), então dá
+    // pra decidir só olhando `itens` (fonte de verdade de quem é quem).
+    const idsConta = new Set(itens.filter(i => i.origem === 'conta').map(i => i.id))
+    const idsItensNfe = idsAlvo.filter(id => !idsConta.has(id))
+    const idsLancamentos = idsAlvo.filter(id => idsConta.has(id))
+
+    const [resNfe, resLanc] = await Promise.all([
+      idsItensNfe.length > 0
+        ? supabase.from('itens_nfe').update({ centro_custo: centroEmMassa }).in('id', idsItensNfe).select('id')
+        : Promise.resolve({ data: [] as { id: string }[], error: null }),
+      idsLancamentos.length > 0
+        ? supabase.from('lancamentos_financeiros').update({ categoria: centroEmMassa }).in('id', idsLancamentos).select('id')
+        : Promise.resolve({ data: [] as { id: string }[], error: null }),
+    ])
 
     setAplicandoEmMassa(false)
 
-    if (error) {
-      console.error('[Financeiro] Erro ao trocar centro de custo em massa:', error)
-      setErroEmMassa(`Erro ao salvar: ${error.message}`)
+    const erro = resNfe.error ?? resLanc.error
+    if (erro) {
+      console.error('[Financeiro] Erro ao trocar centro de custo em massa:', erro)
+      setErroEmMassa(`Erro ao salvar: ${erro.message}`)
       return
     }
 
@@ -413,7 +444,7 @@ export default function FinanceiroPage() {
     // sem erro NÃO garante que toda linha foi gravada — RLS filtra silenciosamente
     // (ver memória do projeto "rls-escrita-silenciosa"). Sem esta checagem, trocar
     // o centro de custo de 3 itens e só 2 passarem pela RLS pareceria sucesso total.
-    const idsAtualizados = new Set((atualizados ?? []).map(r => r.id))
+    const idsAtualizados = new Set([...(resNfe.data ?? []), ...(resLanc.data ?? [])].map(r => r.id))
     const idsFalhos = idsAlvo.filter(id => !idsAtualizados.has(id))
     if (idsFalhos.length > 0) {
       console.error('[Financeiro] Trocar centro de custo em massa: update não afetou todas as linhas — possível política RLS.', idsFalhos)
@@ -443,6 +474,12 @@ export default function FinanceiroPage() {
   const [addErro, setAddErro] = useState<string | null>(null)
   const [editItem, setEditItem] = useState<ItemFinanceiro | null>(null)
   const [editErro, setEditErro] = useState<string | null>(null)
+  // Conta paga não edita pelo formulário grande (quantidade/valor unitário não
+  // fazem sentido pra um lançamento de valor único) — dialog próprio, com
+  // fornecedor/descrição separados. Pedido do Matheus, 18/08/2026.
+  const [editContaItem, setEditContaItem] = useState<ItemFinanceiro | null>(null)
+  const [editContaForm, setEditContaForm] = useState<ContaEditForm>(CONTA_EDIT_FORM_VAZIO)
+  const [editContaErro, setEditContaErro] = useState<string | null>(null)
   const [deleteItem, setDeleteItem] = useState<ItemFinanceiro | null>(null)
   const [deleteErro, setDeleteErro] = useState<string | null>(null)
   const [salvando, setSalvando] = useState(false)
@@ -656,6 +693,72 @@ export default function FinanceiroPage() {
 
     setEditItem(null)
     setForm(FORM_VAZIO)
+    load()
+  }
+
+  function abrirEditarConta(item: ItemFinanceiro) {
+    const { fornecedor, resto } = separarFornecedorDaConta(item.descricao)
+    setEditContaForm({
+      fornecedor: fornecedor ?? '',
+      descricao:  resto,
+      categoria:  item.centro_custo,
+      valor:      String(item.valor_total),
+      data:       item.data_emissao ? item.data_emissao.slice(0, 10) : new Date().toISOString().slice(0, 10),
+    })
+    setEditContaErro(null)
+    setEditContaItem(item)
+  }
+
+  async function handleEditarConta() {
+    if (!editContaItem) return
+    if (!editContaForm.descricao.trim()) { setEditContaErro('A descrição não pode ficar vazia.'); return }
+    const valorNum = parseFloat(editContaForm.valor)
+    if (isNaN(valorNum) || valorNum < 0) { setEditContaErro('Informe um valor válido.'); return }
+    if (!editContaForm.data) { setEditContaErro('Informe a data.'); return }
+
+    setSalvando(true)
+    setEditContaErro(null)
+
+    // Mesmo formato que o backend grava no pagamento (ver montarLancamento em
+    // api/src/services/contas/pagamento.ts) — precisa continuar assim pra
+    // separarFornecedorDaConta seguir lendo o fornecedor de volta depois.
+    const fornecedor = editContaForm.fornecedor.trim()
+    const original = separarFornecedorDaConta(editContaItem.descricao)
+    // Achado do Apolo, 18/08/2026: o campo Fornecedor pode vir preenchido por um
+    // SPLIT AUTOMÁTICO da descrição (risco aceito, ver separarFornecedorDaConta),
+    // não por um fornecedor de verdade gravado. Se o dono só apaga esse campo sem
+    // tocar na descrição, salvar `descricao` sozinha jogaria fora um pedaço do
+    // texto original pra sempre. Detecta esse caso específico e preserva o texto
+    // original inteiro em vez de descartar.
+    const descricao = (!fornecedor && original.fornecedor && editContaForm.descricao.trim() === original.resto)
+      ? editContaItem.descricao
+      : (fornecedor ? `${fornecedor} — ${editContaForm.descricao.trim()}` : editContaForm.descricao.trim())
+
+    const { data: updated, error } = await supabase
+      .from('lancamentos_financeiros')
+      .update({
+        descricao,
+        valor: valorNum,
+        categoria: editContaForm.categoria,
+        data: editContaForm.data,
+      })
+      .eq('id', editContaItem.id)
+      .select('id')
+
+    setSalvando(false)
+
+    if (error) {
+      console.error('[Financeiro] Erro ao editar lançamento de conta paga:', error)
+      setEditContaErro(`Erro ao salvar: ${error.message}`)
+      return
+    }
+    if (!updated || updated.length === 0) {
+      console.error('[Financeiro] Update não afetou nenhuma linha — possível política RLS')
+      setEditContaErro('Sem permissão para editar este item. Verifique as políticas do banco.')
+      return
+    }
+
+    setEditContaItem(null)
     load()
   }
 
@@ -942,6 +1045,16 @@ export default function FinanceiroPage() {
               {erroEmMassa && (
                 <span className="text-sm text-red-600">{erroEmMassa}</span>
               )}
+              {/* Mesmo aviso do dialog de edição individual (achado do Apolo,
+                  18/08/2026) — a troca em massa também grava direto em
+                  lancamentos_financeiros.categoria quando a seleção inclui
+                  conta paga, e "Desfazer pagamento" também apaga isso. */}
+              {itens.some(i => selecionados.has(i.id) && i.origem === 'conta') && (
+                <span className="text-xs text-amber-700 basis-full">
+                  A seleção inclui lançamento de conta paga — a troca não muda a conta
+                  original em Contas a Pagar, e some se aquele pagamento for desfeito.
+                </span>
+              )}
             </div>
           )}
           <div className="flex flex-wrap items-center gap-2">
@@ -1158,6 +1271,17 @@ export default function FinanceiroPage() {
                               aria-label="Editar lançamento"
                               className="hover:bg-blue-50 hover:text-blue-600"
                               onClick={() => abrirEdicao(item)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                            </Button>
+                          )}
+                          {item.origem === 'conta' && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              aria-label="Editar lançamento"
+                              className="hover:bg-blue-50 hover:text-blue-600"
+                              onClick={() => abrirEditarConta(item)}
                             >
                               <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                             </Button>
@@ -1429,6 +1553,78 @@ export default function FinanceiroPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditItem(null)}>Cancelar</Button>
             <Button onClick={handleEdit} disabled={salvando || !form.descricao || !form.valor_unitario}>
+              {salvando ? 'Salvando…' : 'Salvar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Conta paga: sem quantidade/unidade aqui (lancamentos_financeiros tem só
+          um valor por linha, não item×preço como itens_nfe) — ver
+          handleEditarConta. Diálogo separado do "Editar Lançamento" de
+          propósito, pra não confundir com campos que não se aplicam. */}
+      <Dialog open={!!editContaItem} onOpenChange={open => { if (!open) { setEditContaItem(null); setEditContaErro(null) } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Editar lançamento (conta paga)</DialogTitle></DialogHeader>
+          <div className="space-y-1.5">
+            <Label>Descrição</Label>
+            <Input
+              value={editContaForm.descricao}
+              onChange={e => setEditContaForm(f => ({ ...f, descricao: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Fornecedor</Label>
+            <Input
+              placeholder="Opcional"
+              value={editContaForm.fornecedor}
+              onChange={e => setEditContaForm(f => ({ ...f, fornecedor: e.target.value }))}
+            />
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-1.5">
+              <Label>Valor (R$)</Label>
+              <Input
+                type="number" min="0" step="0.01" placeholder="0,00"
+                value={editContaForm.valor}
+                onChange={e => setEditContaForm(f => ({ ...f, valor: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Data</Label>
+              <Input
+                type="date"
+                value={editContaForm.data}
+                onChange={e => setEditContaForm(f => ({ ...f, data: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Centro de Custo</Label>
+              <Select value={editContaForm.categoria} onValueChange={v => setEditContaForm(f => ({ ...f, categoria: v ?? 'outro' }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {TIPOS.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          {/* Este lançamento veio de uma conta paga em Contas a Pagar — editar
+              aqui NÃO muda a conta original lá (são gravados separados desde o
+              pagamento). Mesmo aviso, na direção oposta do dialog de Contas. */}
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+            Este gasto veio de uma conta marcada como paga em Contas a Pagar. Editar aqui
+            não muda a conta original por lá — são registros separados. Se depois você
+            usar &quot;Desfazer pagamento&quot; naquela conta, esta correção se perde: o
+            lançamento é apagado e, ao pagar de novo, nasce com os dados de lá.
+          </p>
+          {editContaErro && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              {editContaErro}
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditContaItem(null)}>Cancelar</Button>
+            <Button onClick={handleEditarConta} disabled={salvando || !editContaForm.descricao.trim()}>
               {salvando ? 'Salvando…' : 'Salvar'}
             </Button>
           </DialogFooter>
