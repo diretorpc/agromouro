@@ -24,6 +24,50 @@
 
 # 1. NO AR — o que o sistema já faz
 
+## Contas a Pagar + Financeiro: edição completa, 2 cards de KPI — PR #60 mergeado em 18/08/2026
+
+https://github.com/diretorpc/agromouro/pull/60 — commit `3c2e8b4` na `main` (squash),
+branch `fix/contas-edicao-completa` apagada (local e remoto). Railway/Vercel fazem
+deploy automático.
+
+Pedido do Matheus: um boleto chegou do email com centro de custo errado (Insumos em
+vez de Combustível) e não tinha como editar — nem a conta em "Contas a Pagar", nem o
+lançamento que ela já tinha criado no Financeiro. Depois de testar a correção de
+categoria, ele pediu edição COMPLETA (descrição, fornecedor, categoria, valor, data)
+nos dois lugares — não só categoria.
+
+**Contas a Pagar:** dialog "Editar" cobre tudo agora, sem gate de status (funciona até
+em conta já paga/dispensada). 2 cards novos no topo: "Próximo vencimento do mês" (mês
+real de hoje, não olha filtro) e "Total de contas pagas" (reage só ao filtro de mês).
+
+**Financeiro:** lançamento de "conta paga" ganhou checkbox de seleção em massa (troca
+`lancamentos_financeiros.categoria`, separado de `itens_nfe.centro_custo`) e dialog de
+edição próprio (fornecedor/descrição separados na tela, recombinados no mesmo formato
+que o backend grava — `separarFornecedorDaConta`/`handleEditarConta`).
+
+**Correção crítica achada na revisão do Apolo (2ª rodada):** `PATCH /contas/:id`
+reabria conta já PAGA (status voltava pra `'aberta'`) toda vez que o corpo incluía
+`valor` — o novo dialog de edição completa reenvia esse campo sempre, mesmo editando só
+a categoria. Sem a correção: conta paga reaparecia como devendo no resumo do WhatsApp,
+e "pagar" de novo criava lançamento duplicado no Financeiro (gasto dobrado). Corrigido
+em `api/src/routes/contas.ts`: status/`valor_estimado` só mudam quando a conta ainda
+não está paga/dispensada **e** o valor de fato mudou. Coberto por
+`api/src/routes/contas.test.ts` (6 casos novos, nasceu nesta PR — rota não tinha teste
+próprio antes). Suite completa: 316/316.
+
+Revisão também corrigiu: aviso do Financeiro só aparece quando existe lançamento de
+verdade (boleto de nota nunca cria um — o gasto já está nos itens da NF-e); card "Total
+de contas pagas" agora inclui conta paga sem vencimento (fallback pra
+`data_pagamento`); preserva o texto original ao limpar um "fornecedor" que era só
+split automático da descrição (não editado antes); aviso de risco de duplicar boleto ao
+editar valor/vencimento/fornecedor de conta vinda de nota fiscal (dedupe do
+`gravarBoletoPdf.ts` usa esses 3 campos — risco latente, não observado em produção,
+aceito documentado em vez de resolvido com migration agora).
+
+`api/src/index.ts`: CORS libera qualquer `localhost:*` só fora de produção — facilita
+teste local quando várias sessões Claude ocupam portas diferentes (achado de uma
+sessão anterior, mesma PR).
+
 ## Financeiro: origem "Conta paga" mostra o fornecedor — PR #59 mergeado em 18/08/2026
 
 https://github.com/diretorpc/agromouro/pull/59 — commit `037f51c` na `main` (squash),
