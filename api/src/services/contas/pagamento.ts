@@ -56,6 +56,11 @@ export function montarLancamento(
 ): DadosLancamento {
   return {
     data:       dataPagamento,
+    // ⚠️ Este formato "FORNECEDOR — descrição" é LIDO de volta pela tela
+    // Financeiro (web/app/(app)/financeiro/page.tsx, separarFornecedorDaConta)
+    // pra mostrar o fornecedor na coluna Origem. Trocar o separador aqui sem
+    // trocar lá não quebra nada visivelmente — só volta a mostrar o crachá
+    // genérico "Conta paga" em silêncio, sem erro (achado do Apolo, 18/08/2026).
     descricao:  conta.fornecedor ? `${conta.fornecedor} — ${conta.descricao}` : conta.descricao,
     valor:      valorPago,
     tipo:       'despesa',

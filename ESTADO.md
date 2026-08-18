@@ -494,6 +494,31 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
+## Financeiro: origem "Conta paga" sem nome de fornecedor — corrigido, aguardando revisão e conferência visual — 18/08/2026
+
+Pedido do Matheus: lançamento vindo de conta a pagar quitada (`lancamentos_financeiros`
+com `origem = 'conta'`) mostrava só o crachá genérico "Conta paga" na coluna Origem da
+tela Financeiro — diferente dos lançamentos de NF-e, que mostram o nome do fornecedor.
+
+**Descoberta:** o backend (`api/src/services/contas/pagamento.ts`, função
+`montarLancamento`) já grava o fornecedor dentro do campo `descricao`, no formato
+`"FORNECEDOR — resto da descrição"` (separador é espaço + em-dash U+2014 + espaço) —
+intencional, só nunca foi separado de volta na tela.
+
+**Corrigido só no frontend, sem migration:** `web/app/(app)/financeiro/page.tsx` ganhou
+`separarFornecedorDaConta()`, que separa o texto pelo `indexOf(' — ')`. Fornecedor vai
+pra coluna Origem (mesmo estilo visual da NF-e: nome em negrito + "Conta paga" pequeno
+embaixo); o resto fica em Produto/Serviço, sem repetir o fornecedor. Se o separador não
+existir na descrição (registro sem fornecedor gravado), cai no comportamento antigo —
+não quebra nada.
+
+**Verificado:** função testada isolada em Node com 3 casos reais (Ube Terra, Pneuzão,
+sem fornecedor) — bateu certo. `npx tsc --noEmit` limpo. Matheus conferiu ao vivo no
+navegador (`http://localhost:3005/financeiro`) em 18/08 — confirmou que ficou certo.
+
+**Próximo passo:** aguardar revisão do Apolo (convocada, ainda rodando). Depois disso:
+commit + PR na branch `fix/financeiro-origem-conta-paga`.
+
 ## Aba "Controle" (gastos defensivos/adubos/sementes) — Epic 2.4 (tela) em execução via SDD — atualizado 17/08/2026
 
 ⚠️ **Este bloco estava desatualizado — reescrito do zero em 17/08 depois de o
