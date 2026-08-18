@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 import { FiltroColuna } from './filtro-coluna'
-import type { DocumentoControle, FiltrosControle } from '@/lib/types'
+import type { DocumentoControle, FiltrosControle, ItemDocumentoControle } from '@/lib/types'
 import type { FiltrosSelecionados } from '../hooks/use-controle-data'
 
 const STATUS_STYLE: Record<string, string> = {
@@ -37,6 +37,17 @@ function formatarData(d: string | null): string {
   return d ? d.slice(0, 10).split('-').reverse().join('/') : '—'
 }
 
+// Fallback pro número do documento repete a mesma regra que o backend já aplica
+// na gravação (item sem número próprio herda o do documento) — aqui é só exibição.
+function formatarNf(item: ItemDocumentoControle | null, doc: DocumentoControle): string {
+  return (item?.numero_documento ?? doc.numero_documento) ?? '—'
+}
+
+function formatarQuantidade(item: ItemDocumentoControle | null): string {
+  if (!item || item.quantidade === null) return '—'
+  return `${item.quantidade} ${item.unidade}`
+}
+
 export function TabelaDocumentos({
   documentos, filtrosDisponiveis, filtros, onFiltrosChange,
   paginaAtual, totalPaginas, onPaginaChange, onAbrirPdf, comErro,
@@ -58,7 +69,7 @@ export function TabelaDocumentos({
 
   return (
     <div>
-      <Table>
+      <Table className="border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
         <TableHeader>
           <TableRow>
             <TableHead>
@@ -96,23 +107,18 @@ export function TabelaDocumentos({
                 />
               </div>
             </TableHead>
-            <TableHead>Item</TableHead>
-            <TableHead className="text-right">Valor</TableHead>
-            <TableHead>
-              <FiltroColuna
-                label="Status"
-                valores={filtrosDisponiveis.status}
-                selecionados={filtros.status}
-                onChange={status => onFiltrosChange({ ...filtros, status })}
-              />
-            </TableHead>
+            <TableHead>NF</TableHead>
+            <TableHead>Produto</TableHead>
+            <TableHead className="text-right">Quant.</TableHead>
+            <TableHead className="text-right">V.Unit.</TableHead>
+            <TableHead className="text-right">V.Total</TableHead>
             <TableHead className="text-center">PDF</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {documentos.length === 0 && mensagemVazia && (
             <TableRow>
-              <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+              <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
                 {mensagemVazia}
               </TableCell>
             </TableRow>
@@ -126,7 +132,17 @@ export function TabelaDocumentos({
               <TableRow key={item ? item.id : `${doc.id}-vazio`}>
                 {i === 0 && (
                   <TableCell rowSpan={linhas.length} className="align-top">
-                    <div>{doc.fornecedor ?? '—'}</div>
+                    <div className="flex items-center gap-2">
+                      <span>{doc.fornecedor ?? '—'}</span>
+                      {/* Coluna Status foi removida — mas documento com erro
+                          continua precisando ser visível sem abrir cada linha.
+                          `processado` é o caso normal e não ganha selo. */}
+                      {doc.status === 'erro' && (
+                        <Badge variant="outline" className={STATUS_STYLE.erro}>
+                          erro
+                        </Badge>
+                      )}
+                    </div>
                     {/* Total do documento SEMPRE visível, não só quando o
                         documento veio sem item novo. Reimportar um extrato
                         cumulativo é o fluxo normal: a maioria das linhas já
@@ -145,12 +161,17 @@ export function TabelaDocumentos({
                     {formatarData(doc.data_documento)}
                   </TableCell>
                 )}
+                <TableCell>{formatarNf(item, doc)}</TableCell>
                 <TableCell>
                   {item ? item.descricao : (
                     <span className="italic text-muted-foreground">
                       (nenhum item novo — documento já importado antes)
                     </span>
                   )}
+                </TableCell>
+                <TableCell className="text-right">{formatarQuantidade(item)}</TableCell>
+                <TableCell className="text-right">
+                  {item ? formatarValor(item.valor_unitario) : '—'}
                 </TableCell>
                 <TableCell className="text-right">
                   {/* Só valor de ITEM entra nesta coluna. Na linha "nenhum item
@@ -159,13 +180,6 @@ export function TabelaDocumentos({
                       na célula do fornecedor. */}
                   {item ? formatarValor(item.valor_total) : '—'}
                 </TableCell>
-                {i === 0 && (
-                  <TableCell rowSpan={linhas.length} className="align-top">
-                    <Badge variant="outline" className={STATUS_STYLE[doc.status] ?? ''}>
-                      {doc.status}
-                    </Badge>
-                  </TableCell>
-                )}
                 {i === 0 && (
                   <TableCell rowSpan={linhas.length} className="text-center align-top">
                     <button
