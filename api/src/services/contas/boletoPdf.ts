@@ -196,6 +196,13 @@ export async function lerBoletoDoPdf(
   }
 
   try {
+    // `.create()`, não `.stream()`: o SDK só exige streaming quando o PRÓPRIO
+    // SDK calcula que `max_tokens` PODE levar mais de 10 minutos
+    // (3.600.000ms × max_tokens ÷ 128.000 > 600.000ms, ou seja, max_tokens >
+    // ~21.333) — 1024 fica bem abaixo disso, então o guard-rail nunca dispara
+    // aqui. Achado ao vivo em documentoPdf.ts (18/08/2026), que usa
+    // `max_tokens: 32000` e caía nesse guard em todo PDF real — ver o
+    // comentário lá para o caso que quebrou.
     const resposta = await anthropic.messages.create({
       model:      MODELO,
       max_tokens: 1024,

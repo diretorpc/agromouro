@@ -526,7 +526,19 @@ export async function lerDocumentoPdf(
       throw new Error(`hojeISO inválido: "${hojeISO}" — esperado 'YYYY-MM-DD' com data existente`)
     }
 
-    const resposta = await anthropic.messages.create({
+    // `.stream().finalMessage()`, não `.create()`: com `max_tokens: 32000` (bem
+    // acima do teto de ~21.333 que o próprio SDK calcula — 3.600.000ms × max_tokens
+    // ÷ 128.000 > 600.000ms) o SDK RECUSA rodar sem streaming e lança
+    // "Streaming is required for operations that may take longer than 10 minutes"
+    // antes mesmo de fazer a chamada de rede — todo PDF caía no catch abaixo e
+    // virava falha, sempre (achado ao vivo, 18/08/2026, fora dos testes porque a
+    // suíte mocka `anthropic.messages.create`). `.finalMessage()` devolve a
+    // resposta completa já montada a partir dos eventos do stream — mesmo
+    // formato de `resposta.stop_reason`/`resposta.content` que `.create()`
+    // devolvia, então nada abaixo desta chamada precisou mudar. boletoPdf.ts NÃO
+    // tem este problema: `max_tokens: 1024` fica bem abaixo do teto (ver
+    // comentário lá).
+    const resposta = await anthropic.messages.stream({
       model:      MODELO,
       // 300 itens (MAX_ITENS) × ~200 bytes por linha do JSON deste schema
       // (chaves + aspas + vírgulas de descricao/quantidade/unidade/
@@ -548,7 +560,7 @@ export async function lerDocumentoPdf(
           { type: 'text', text: INSTRUCAO },
         ],
       }],
-    })
+    }).finalMessage()
 
     // Recusa por política: 200 com stop_reason 'refusal' e conteúdo vazio.
     // Não é erro, é conclusão — reler amanhã dá a mesma recusa.
