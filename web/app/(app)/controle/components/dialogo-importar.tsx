@@ -51,8 +51,8 @@ export function DialogoImportar({ onImportar }: DialogoImportarProps) {
     // fim, um 413/500 do servidor com mensagem que não explica nada.
     // `file.type` vem do sistema operacional e pode vir vazio em alguns casos —
     // por isso aceita também a extensão .pdf em vez de recusar por falta de tipo.
-    const pareceP = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
-    if (!pareceP) {
+    const parecePdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+    if (!parecePdf) {
       setEstado({ fase: 'erro', mensagem: 'Só é possível importar arquivo PDF. Escolha um arquivo .pdf.' })
       limparInput()
       return
