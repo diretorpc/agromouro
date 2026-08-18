@@ -22,6 +22,12 @@ export type ContaAPI = Conta & {
   valor_pago: number | null
   observacao: string | null
   nota_fiscal_id: string | null
+  // Id do lançamento que este pagamento criou em lancamentos_financeiros — null
+  // quando a conta veio de NF-e (o gasto já mora nos itens da nota, nenhum
+  // lançamento "conta paga" é criado; ver precisaCriarLancamento em
+  // api/src/services/contas/pagamento.ts). Usado pra saber se o aviso "corrija
+  // também no Financeiro" faz sentido pra ESTA conta (achado do Apolo, 18/08/2026).
+  lancamento_id: string | null
   numero_parcela: number | null
   total_parcelas: number | null
   created_at: string

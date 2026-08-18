@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import {
-  CalendarClock, AlertTriangle, Clock, Plus,
+  CalendarClock, AlertTriangle, Clock, Plus, CalendarCheck, Wallet,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -13,13 +13,14 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Combobox } from '@/components/ui/combobox'
 import { api } from '@/lib/api'
 import { CATEGORIAS_CONTAS_A_PAGAR } from '@/lib/centro-custo'
 import { FormularioContaFixa } from './formulario-conta-fixa'
 import { FormularioContaAvulsa } from './formulario-conta-avulsa'
 import { DialogoVencimento } from './dialogo-vencimento'
-import { ListaContas, fmtBRL, type SortColuna } from './lista-contas'
-import { ENCERRADAS, type Conta, type ContaAPI } from './tipos'
+import { ListaContas, fmtBRL, fmtDate, type SortColuna } from './lista-contas'
+import { ENCERRADAS, PREFIXO_CONFERIR, type Conta, type ContaAPI } from './tipos'
 import { hojeISO, diasEntre } from './datas'
 
 // ─── Cálculo dos três números (task-9-brief.md, verbatim — não alterar) ───────
@@ -55,6 +56,42 @@ export function calcularTotais(contas: Conta[], hoje: string) {
   }
 
   return { semanaConfirmado, semanaEstimado, atrasadoTotal, atrasadoQtd, aguardandoQtd }
+}
+
+// ─── Card "Próximo vencimento do mês" ──────────────────────────────────────
+// Sempre o mês REAL de hoje, de propósito — não olha os filtros da tela (pedido
+// do Matheus, 18/08/2026): é "o que vem por aí", não "o que estou filtrando".
+// Só entre hoje e o fim do mês; vencimento passado é "Atrasado" (card ao lado),
+// não "próximo". Sem essa exclusão uma conta atrasada de dia 2 apareceria como
+// "próxima" no dia 28 do mesmo mês.
+export function proximoVencimentoDoMes(contas: Conta[], hoje: string): Conta | null {
+  const mesAtual = hoje.slice(0, 7)
+  let proxima: Conta | null = null
+  for (const c of contas) {
+    if (ENCERRADAS.has(c.status)) continue
+    if (!c.vencimento) continue
+    if (c.vencimento.slice(0, 7) !== mesAtual) continue
+    if (diasEntre(hoje, c.vencimento) < 0) continue
+    if (!proxima || c.vencimento < proxima.vencimento!) proxima = c
+  }
+  return proxima
+}
+
+// ─── Card "Total de contas pagas" ──────────────────────────────────────────
+// Reage só ao filtro de MÊS da tela (não ao de status nem ao de tipo — decisão
+// do Matheus, 18/08/2026): troca o seletor de mês e o card mostra o total pago
+// naquele mês. Mês é sobre `vencimento` quando existe, mesma convenção do resto
+// da tela (contaBateMes) — não `data_pagamento`, pra uma conta de agosto paga em
+// setembro continuar contando como "de agosto". MAS conta sem vencimento (caso
+// real: boleto de nota sem data — ver gravarBoletoPdf.ts, ou marcada "Já foi
+// paga" direto do card "Falta vencimento") cai pra `data_pagamento` — achado do
+// Apolo, 18/08/2026: sem este fallback ela não entra em NENHUM mês (só aparece
+// filtrando "todos os meses", que não é o padrão da tela) e o card escondia
+// dinheiro pago de verdade.
+export function totalPagoNoMes(contas: ContaAPI[], filtroMes: string): { total: number; qtd: number } {
+  const pagas = contas.filter(c => c.status === 'paga'
+    && (filtroMes === 'todos' || (c.vencimento ?? c.data_pagamento ?? '').startsWith(filtroMes)))
+  return { total: pagas.reduce((s, c) => s + (c.valor ?? 0), 0), qtd: pagas.length }
 }
 
 // ─── Tipos da página ────────────────────────────────────────────────────────
@@ -111,6 +148,14 @@ function contaBateMes(c: ContaAPI, filtroMes: string, hoje: string): boolean {
   return c.vencimento.startsWith(filtroMes)
 }
 
+// "2026-08" → "agosto de 2026". Único lugar de verdade — estava duplicado 2x
+// no JSX (seletor de mês da lista); o card "Total de contas pagas" (novo,
+// 18/08/2026) é o 3º uso.
+function labelMes(mes: string): string {
+  const [y, mo] = mes.split('-')
+  return new Date(+y, +mo - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+}
+
 // Ordena o RESTO da lista (abaixo do grupo "sem data" fixo no topo — ver
 // contasFiltradas). Não decide sozinha quem fica em cima; isso continua sendo
 // só a regra de "sem data sobe" em contasFiltradas.
@@ -129,6 +174,15 @@ function compararContasPorColuna(a: ContaAPI, b: ContaAPI, coluna: SortColuna, d
 // ─── Formulários auxiliares (estado local dos diálogos) ───────────────────────
 
 type PagamentoForm = { data_pagamento: string; valor_pago: string }
+
+// Edição completa da conta (descrição, fornecedor, categoria, valor, vencimento)
+// — pedido do Matheus, 18/08/2026: sem gate de status, mesma razão do antigo
+// "Editar categoria" que este dialog substitui (conta paga com dado errado
+// também precisa de conserto). `valor` e `vencimento` ficam como texto no form
+// e só viram number/ISO na hora de montar o PATCH — mesmo padrão do resto do
+// arquivo (ver PagamentoForm/handleMarcarPaga).
+type EditContaForm = { descricao: string; fornecedor: string; categoria: string; valor: string; vencimento: string }
+const EDIT_FORM_VAZIO: EditContaForm = { descricao: '', fornecedor: '', categoria: '', valor: '', vencimento: '' }
 
 export default function ContasPage() {
   const [contas, setContas]           = useState<ContaAPI[]>([])
@@ -154,6 +208,10 @@ export default function ContasPage() {
   const [valorDialog, setValorDialog] = useState<ContaAPI | null>(null)
   const [valorInput, setValorInput]   = useState('')
   const [valorErro, setValorErro]     = useState<string | null>(null)
+
+  const [editDialog, setEditDialog] = useState<ContaAPI | null>(null)
+  const [editForm, setEditForm]     = useState<EditContaForm>(EDIT_FORM_VAZIO)
+  const [editErro, setEditErro]     = useState<string | null>(null)
 
   const [pagarDialog, setPagarDialog] = useState<ContaAPI | null>(null)
   const [pagarForm, setPagarForm]     = useState<PagamentoForm>({ data_pagamento: '', valor_pago: '' })
@@ -196,6 +254,8 @@ export default function ContasPage() {
 
   const hoje = hojeISO()
   const totais = calcularTotais(contas, hoje)
+  const proximaConta = proximoVencimentoDoMes(contas, hoje)
+  const pagoNoMes = totalPagoNoMes(contas, filtroMes)
 
   const meses = Array.from(
     new Set([
@@ -251,6 +311,54 @@ export default function ContasPage() {
     } catch (err) {
       console.error('[Contas] Erro ao registrar valor:', err)
       setValorErro('Não foi possível salvar o valor. Tente novamente.')
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  // ─── Ações: editar conta (descrição, fornecedor, categoria, valor, vencimento) ──
+  // Sem gate de status: conta paga com dado errado (ex: boleto que chegou do
+  // email como "Insumos" quando era "Combustível") também precisa de conserto
+  // — pedido do Matheus, 18/08/2026. Corrige só a conta; o lançamento que ela
+  // JÁ criou no Financeiro (se paga) não muda sozinho — é gravado à parte no
+  // momento do pagamento (ver montarLancamento em pagamento.ts) e precisa ser
+  // corrigido lá também (aviso no dialog abaixo).
+
+  function abrirEditDialog(conta: ContaAPI) {
+    setEditForm({
+      descricao:  conta.descricao,
+      fornecedor: conta.fornecedor ?? '',
+      categoria:  conta.categoria ?? '',
+      valor:      conta.valor !== null ? String(conta.valor) : '',
+      vencimento: conta.vencimento ?? '',
+    })
+    setEditErro(null)
+    setEditDialog(conta)
+  }
+
+  async function handleEditarConta() {
+    if (!editDialog) return
+    if (!editForm.descricao.trim()) { setEditErro('A descrição não pode ficar vazia.'); return }
+    let valorNum: number | undefined
+    if (editForm.valor.trim() !== '') {
+      valorNum = parseFloat(editForm.valor)
+      if (isNaN(valorNum) || valorNum < 0) { setEditErro('Informe um valor válido.'); return }
+    }
+    setSalvando(true)
+    setEditErro(null)
+    try {
+      await api.patch(`/contas/${editDialog.id}`, {
+        descricao:  editForm.descricao.trim(),
+        fornecedor: editForm.fornecedor.trim() || null,
+        categoria:  editForm.categoria.trim() || null,
+        ...(valorNum !== undefined ? { valor: valorNum } : {}),
+        ...(editForm.vencimento ? { vencimento: editForm.vencimento } : {}),
+      })
+      setEditDialog(null)
+      await load()
+    } catch (err) {
+      console.error('[Contas] Erro ao editar conta:', err)
+      setEditErro('Não foi possível salvar. Tente novamente.')
     } finally {
       setSalvando(false)
     }
@@ -382,7 +490,7 @@ export default function ContasPage() {
       {/* ── KPIs ── */}
       <div className="space-y-4">
         <p className="text-sm font-semibold text-muted-foreground">Resumo geral</p>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
@@ -426,6 +534,43 @@ export default function ContasPage() {
               </p>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                <CalendarCheck className="h-4 w-4" />Próximo vencimento
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {proximaConta ? (
+                <>
+                  <p className="text-2xl font-bold tabular-nums">{fmtDate(proximaConta.vencimento!)}</p>
+                  <p className="text-sm font-medium text-foreground mt-1 truncate" title={proximaConta.fornecedor ?? proximaConta.descricao}>
+                    {proximaConta.fornecedor ?? proximaConta.descricao}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {proximaConta.valor !== null ? fmtBRL(proximaConta.valor) : 'valor não informado'}
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground py-2">Nenhum vencimento este mês</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                <Wallet className="h-4 w-4" />Total de contas pagas
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold text-green-600 tabular-nums">{fmtBRL(pagoNoMes.total)}</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {pagoNoMes.qtd} {pagoNoMes.qtd === 1 ? 'conta paga' : 'contas pagas'} — {filtroMes === 'todos' ? 'todos os meses' : labelMes(filtroMes)}
+              </p>
+            </CardContent>
+          </Card>
         </div>
       </div>
 
@@ -453,17 +598,13 @@ export default function ContasPage() {
               <Select value={filtroMes} onValueChange={v => setFiltroMes(v ?? 'todos')}>
                 <SelectTrigger className="w-44 h-9 text-sm">
                   <SelectValue>
-                    {filtroMes === 'todos'
-                      ? 'Todos os meses'
-                      : (() => { const [y, mo] = filtroMes.split('-'); return new Date(+y, +mo - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) })()}
+                    {filtroMes === 'todos' ? 'Todos os meses' : labelMes(filtroMes)}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todos">Todos os meses</SelectItem>
                   {meses.map(m => (
-                    <SelectItem key={m} value={m}>
-                      {(() => { const [y, mo] = m.split('-'); return new Date(+y, +mo - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) })()}
-                    </SelectItem>
+                    <SelectItem key={m} value={m}>{labelMes(m)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -493,6 +634,7 @@ export default function ContasPage() {
             onDispensar={abrirDispensarDialog}
             onDesfazer={abrirDesfazerDialog}
             onEditarValor={abrirValorDialog}
+            onEditar={abrirEditDialog}
             onInformarData={setDataDialog}
             sortColuna={sortColuna}
             sortDirecao={sortDirecao}
@@ -534,6 +676,103 @@ export default function ContasPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setValorDialog(null)}>Cancelar</Button>
             <Button onClick={handleRegistrarValor} disabled={salvando || !valorInput}>
+              {salvando ? 'Salvando…' : 'Salvar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog: editar conta ── */}
+      <Dialog open={!!editDialog} onOpenChange={open => { if (!open) { setEditDialog(null); setEditErro(null) } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Editar conta</DialogTitle></DialogHeader>
+          {/* Boleto de nota fiscal: valor/vencimento/fornecedor vieram do XML ou
+              do PDF do boleto. O sistema usa esses 3 campos pra reconhecer "já
+              tenho essa conta" quando o mesmo boleto chega de novo por outro
+              caminho (ex: nota por e-mail + PDF do boleto depois — ver
+              gravarBoletoPdf.ts). Editar aqui pra um valor diferente do
+              documento pode fazer o sistema não reconhecer o boleto repetido e
+              criar uma conta gêmea — achado do Apolo, 18/08/2026 (risco raro,
+              não observado ainda, mas é dinheiro dobrado se acontecer). */}
+          {editDialog?.nota_fiscal_id && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+              Esta conta veio de uma nota fiscal. Trocar valor, vencimento ou fornecedor
+              pode fazer o sistema não reconhecer se o mesmo boleto chegar de novo por
+              outro caminho (ex: PDF por e-mail) — e criar uma conta duplicada.
+            </p>
+          )}
+          <div className="space-y-1.5">
+            <Label>Descrição</Label>
+            <Input
+              value={editForm.descricao}
+              onChange={e => setEditForm(f => ({ ...f, descricao: e.target.value }))}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Fornecedor</Label>
+              <Input
+                placeholder="Opcional"
+                value={editForm.fornecedor}
+                onChange={e => setEditForm(f => ({ ...f, fornecedor: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Categoria</Label>
+              <Combobox
+                placeholder="Opcional"
+                value={editForm.categoria}
+                onValueChange={categoria => setEditForm(f => ({ ...f, categoria }))}
+                items={categoriasExistentes}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Vencimento</Label>
+              <Input
+                type="date"
+                value={editForm.vencimento}
+                onChange={e => setEditForm(f => ({ ...f, vencimento: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Valor (R$)</Label>
+              <Input
+                type="number" min="0" step="0.01" placeholder="0,00"
+                value={editForm.valor}
+                onChange={e => setEditForm(f => ({ ...f, valor: e.target.value }))}
+              />
+            </div>
+          </div>
+          {/* Conta já paga: o gasto correspondente pode estar em 2 lugares
+              diferentes, dependendo de como a conta nasceu — achado do Apolo,
+              18/08/2026, corrigindo o texto genérico de antes. Conta de NOTA
+              (nota_fiscal_id preenchido) NUNCA cria lançamento próprio — o
+              gasto já mora nos itens da NF-e (ver precisaCriarLancamento em
+              api/src/services/contas/pagamento.ts); o aviso antigo mandava o
+              dono procurar no Financeiro uma linha "Conta paga" que não existe
+              nesse caso. Só avisa sobre o Financeiro quando `lancamento_id`
+              confirma que existe, de verdade, um lançamento pra corrigir lá. */}
+          {editDialog?.status === 'paga' && editDialog.lancamento_id && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+              Esta conta já está paga — o gasto que ela lançou no Financeiro não muda
+              sozinho. Corrija por lá também, na linha deste lançamento.
+            </p>
+          )}
+          {editDialog?.status === 'paga' && !editDialog.lancamento_id && editDialog.nota_fiscal_id && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+              Esta conta veio de uma nota fiscal — o gasto de verdade está nos itens
+              dessa nota, não num lançamento próprio aqui. Corrija o centro de custo do
+              item lá no Financeiro (não vai achar uma linha "Conta paga" pra esta conta).
+            </p>
+          )}
+          {editErro && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{editErro}</p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditDialog(null)}>Cancelar</Button>
+            <Button onClick={handleEditarConta} disabled={salvando || !editForm.descricao.trim()}>
               {salvando ? 'Salvando…' : 'Salvar'}
             </Button>
           </DialogFooter>
@@ -656,8 +895,8 @@ function PageSkeleton() {
   return (
     <div className="p-6 space-y-6 animate-pulse">
       <div className="h-8 w-48 bg-muted rounded" />
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-28 bg-muted rounded-xl" />)}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-28 bg-muted rounded-xl" />)}
       </div>
       <div className="h-72 bg-muted rounded-xl" />
     </div>
