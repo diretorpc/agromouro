@@ -4,7 +4,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Package, Tractor, FileText, Bell, LogOut, CircleDollarSign, BarChart2, MapPin, CreditCard, Receipt } from 'lucide-react'
+import { LayoutDashboard, Package, Tractor, FileText, Bell, LogOut, CircleDollarSign, BarChart2, MapPin, CreditCard, Receipt, Files } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
 import { FazendaSwitcher } from '@/components/fazenda-switcher'
@@ -15,6 +15,7 @@ const navItems = [
   { href: '/estoque',    label: 'Estoque',          icon: Package },
   { href: '/operacoes',  label: 'Operações',        icon: Tractor },
   { href: '/nfe',        label: 'NF-e',             icon: FileText },
+  { href: '/controle',   label: 'Controle',         icon: Files },
   { href: '/cartoes',    label: 'Cartões',          icon: CreditCard },
   { href: '/contas',     label: 'Contas',           icon: Receipt },
   { href: '/financeiro', label: 'Financeiro',       icon: CircleDollarSign },

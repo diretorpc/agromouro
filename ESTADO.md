@@ -494,6 +494,170 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
+## 🟡 Feature "Controle" (defensivos/adubos/sementes) — Epic 2.4 (tela) codada, falta teste ao vivo — 17/08/2026
+
+Branch `feature/controle-gastos`, commits `40b8487`..`249cd4f` (**só local, não subiu
+pro GitHub ainda**). Cruza a NF-e automática com PDF importado manualmente (extrato de
+fornecedor tipo Solos/Syagri, ou contrato tipo Mosaic).
+
+**Epic 2.4 (tela `/controle`) — as 10/10 tarefas do plano de feature prontas.**
+Executada via `superpowers:subagent-driven-development`
+(`docs/superpowers/plans/2026-08-17-controle-tela.md`, ledger em
+`.superpowers/sdd/2026-08-17-controle-tela/progress.md`, dentro desta worktree): 8
+tarefas + revisão de cada uma + **revisão final do branch inteiro**, que achou 7
+problemas "importante" que só apareciam com tudo montado junto (menu de filtro cortado
+pela tabela, filtro fechando a cada seleção, upload sem feedback, reimportação sem
+total visível, filtro usando coluna não-normalizada, erro de PDF mudo, itens sem
+ordem) — todos corrigidos numa rodada só, confirmada por re-revisão, sem quebra nova.
+4 achados "menor" residuais aceitos conscientemente (ordem de item ainda instável em
+certo sentido, um caso de acento/NBSP bem estreito, menu em maiúsculas vs. linha da
+tabela em grafia crua, caixa de sucesso sem nome do arquivo) — nenhum é dinheiro ou
+vazamento entre fazendas.
+
+**Teste ao vivo começou em 18/08/2026, pela manhã (sessão seguinte).** Login funcionou
+depois de corrigir `web/.env.local` da worktree (faltava — copiado do checkout
+principal — e apontava pra API de **produção**, corrigido pra local). Verificado no
+navegador (sem PDF ainda): menu "Controle" no lugar certo, Popover do filtro abre sem
+cortar (resolve o achado 1 da revisão final), Esc fecha, diálogo abre/fecha certo.
+
+**🔴 BUG CRÍTICO achado no primeiro upload real — corrigido em 18/08/2026, commit
+`f91d19a`.** `documentoPdf.ts` chamava a API da Anthropic com `max_tokens: 32000` SEM
+streaming; o SDK recusa qualquer chamada não-streaming acima de ~21.333 tokens
+("Streaming is required for operations that may take longer than 10 minutes") — **toda
+importação de PDF, sem exceção, falhava com 503** "leitor indisponível", desde que a
+feature foi escrita. Nenhum teste pegou isso porque a suíte inteira mocka a chamada de
+IA — nunca bateu na API real antes de hoje. Corrigido trocando `.create()` por
+`.stream().finalMessage()` (mesmo shape de retorno, confirmado lendo o código-fonte do
+SDK). `boletoPdf.ts` (leitor irmão, `max_tokens: 1024`) NÃO precisava do mesmo
+conserto — fica bem abaixo do limiar, confirmado pelo cálculo exato do SDK. Revisado
+pelo Apolo, sem achado crítico/importante. **Ainda falta**: testar com um PDF de
+extrato/contrato de verdade (o teste do conserto usou um PDF qualquer só pra confirmar
+que o erro de streaming sumiu, não testou a qualidade da extração).
+
+**Lição registrada:** nem `lerDocumentoPdf` nem `lerBoletoDoPdf` têm teste (nem
+mockado) sobre a chamada real ao SDK — só a validação pura (`validarDocumentoLido`/
+`validarBoletoLido`). Foi esse buraco que deixou o bug do streaming invisível por
+todas as revisões anteriores. Vale um teste que force `max_tokens` alto e confirme que
+o código usa `.stream()`, pra não repetir a categoria.
+
+### 18/08/2026 tarde — chamadas repetidas diagnosticadas e corrigidas; botão Excluir construído
+
+**Bug das "dezenas de chamadas repetidas"** (sintoma achado de manhã, sem diagnóstico
+até aqui): causa raiz não era loop de re-render — é `FiltroColuna` (checkboxes de
+fornecedor) e os dois `<input type="date">` disparando uma requisição a cada
+clique/mudança, sem espera nenhuma. Corrigido com debounce de 300ms dentro do
+`useEffect` de `web/app/(app)/controle/hooks/use-controle-data.ts` (mantendo a trava
+`cancelado` que já existia). Testado ao vivo no navegador: mudar o período aplicou o
+filtro certo, sem travar e sem disparo duplo perceptível.
+
+**Botão "Excluir documento" construído** (pedido dele, confirmado nesta sessão):
+`api/src/services/controle/excluirDocumentoControle.ts` (novo, apaga itens_nfe antes
+do documento — FK `ON DELETE RESTRICT` da migration 017 — depois tenta apagar o PDF do
+Storage, best-effort), rota `DELETE /controle/documentos/:id`, botão + diálogo de
+confirmação em `tabela-documentos.tsx`. **Decisão registrada no próprio arquivo:** sem
+função atômica no Postgres (diferente do padrão de `excluir_nota_fiscal`, migration
+009) — Controle nunca mexe em estoque/lançamento (`conta_como_compra` é sempre falso
+aqui), então não há o que desfazer numa falha parcial.
+
+Testado ao vivo: o diálogo abre certo com "Cancelar"/"Excluir". **A exclusão de
+verdade não foi testada** — cancelei de propósito pra não apagar o documento real da
+SYAGRI que está na tela de teste.
+
+**Revisão do Apolo: sem crítico/alto.** 3 achados médios + 5 baixos. Os 3 médios e 2
+baixos rápidos foram corrigidos na mesma sessão (decisão do Matheus: só os
+importantes agora):
+- documento não "mente" mais na tela se o delete falhar no meio (marca erro, igual
+  `marcarDocumentoComErro`); tela recarrega sozinha no erro também, não só no sucesso
+- debounce de 300ms agora só no clique de filtro — montagem/paginação/import/exclusão
+  disparam na hora
+- rota `DELETE /controle/documentos/:id` ganhou teste (400/404/204/500)
+- 2 textos corrigidos ("item vinculado" no singular certo; "PDF deixa de ficar
+  acessível" em vez de prometer remoção garantida)
+
+**3 achados baixos, aceitos como pendência de propósito** (nenhum é dinheiro nem
+vazamento entre fazendas): DELETE sem `count:'exact'` (duas abas excluindo o mesmo
+documento ao mesmo tempo não dá erro, é inofensivo); id fora do formato UUID vira 500
+em vez de 404; sem guarda contra excluir documento no meio do processamento (caminho
+já é limpo mesmo sem a guarda, só não está escrito em lugar nenhum).
+
+**Testado ao vivo depois da correção:** recarreguei `/controle` no navegador, tabela
+carrega normal, cliquei em "Excluir documento" e o texto novo apareceu certo ("e 28
+itens vinculados? O PDF original deixa de ficar acessível."). Cancelei de novo — a
+exclusão de verdade (clicar "Excluir" e confirmar que a linha some) **continua nunca
+testada**.
+
+**✅ Exclusão real testada pelo Matheus, ao vivo — deu certo.** Também confirmou que
+as quantidades (kg, litros) vieram corretas na tela — o fix de unidade do commit
+`87de655` (sessão anterior) está validado na prática.
+
+**Ainda em aberto:**
+- Nada subiu pro GitHub ainda — mesmo estado de antes, só local em
+  `feature/controle-gastos`.
+
+Pra medir de novo em vez de confiar no texto: `cd api && npm test && npx tsc --noEmit`
+(e o mesmo dentro de `web/` para o build).
+
+Servidores rodando nesta sessão (18/08 manhã): API na porta 3001, site na 3000 — caem
+quando a sessão do Claude Code encerra, subir de novo com `cd api && npm run dev` e
+`cd web && npm run dev` (+ `web/.env.local` da worktree precisa existir, copiado do
+checkout principal com `NEXT_PUBLIC_API_URL` trocado pra `http://localhost:3001`).
+
+**✅ Migration 018 aplicada em produção em 17/08/2026** — 3 consultas de verificação
+rodadas pelo Matheus no Supabase, as 3 bateram (índice de item com as 6 colunas e o
+WHERE certo, índice de documento virou parcial, as 2 colunas novas de `itens_nfe`
+existem). Trava de duplicidade por item está viva no banco.
+
+**5 de 10 tarefas do plano prontas:** migration 017 + bucket + leitor de PDF (sessão
+anterior, `ba68b0e`); `gravarDocumentoPdf.ts` + migration 018 (Epic 2.2, `40b8487`);
+rota da API — `POST /controle/documentos` (upload), `GET /controle/documentos` (lista
+com itens), `GET /controle/documentos/:id/arquivo` (signed URL do PDF original) — Epic
+2.3, `d4e8ca5`.
+
+**Isolamento por fazenda testado com mutação de verdade** (Apolo alterou o código pra
+tirar cada filtro de `fazenda_id` um de cada vez e confirmou que a suíte falha em todos
+os 5 pontos sensíveis, inclusive a rota de signed URL — que NÃO passa pela RLS do
+Postgres, então precisa checar `fazenda_id` no código mesmo).
+
+**Achados médios/baixos aceitos como pendência, não corrigidos de propósito** (decisão
+do Matheus, sessão de 17/08 — nenhum é dinheiro ou vazamento entre fazendas):
+- `GET /controle/documentos` sem `.limit()`/paginação — 4+ documentos cheios de itens
+  podem estourar o teto de linhas do PostgREST (padrão 1000) e truncar em silêncio;
+  ~220 documentos estouram o `IN()` da query por tamanho de URL.
+- Reimportação de documento onde TODOS os itens já existiam (extrato regerado) grava um
+  "documento fantasma" com `valor_total` cheio e `itens: []` no `GET /` — nada no
+  payload distingue isso de "gravação falhou". `itensDuplicados` só existe na resposta
+  do POST (efêmera), não é persistido.
+- `divergenciaTotal` (calculado na leitura do PDF, é a defesa contra a IA repetir linha)
+  é jogado fora — nunca chega no `gravarDocumentoDoPdf()` nem na rota.
+- Sem rate limit próprio na rota de upload e sem checar hash ANTES de chamar a IA —
+  clique duplo no botão paga 2 leituras de Opus (~US$ 1 cada).
+- Bucket `controle-documentos` no painel do Supabase ainda não confirmado se foi
+  ajustado pra `file_size_limit ~10MB` / `allowed_mime_types application/pdf` (hoje
+  "Any / 50 MB" — pendência manual registrada desde a migration 017).
+
+**Histórico resumido de revisão** (Epic 2.2, sessão 17/08 — detalhe completo já não
+cabe aqui de propósito, ver git log das migrations 017/018 e o corpo dos commits
+`40b8487`/`d4e8ca5` se precisar reconstituir):
+- 2 críticos de dinheiro dobrando resolvidos: dedupe por documento não pegava extrato
+  regerado mês a mês (corrigido com dedupe por ITEM, migration 018); `conta_como_compra`
+  virou sempre `false` pra item de PDF (Controle é conferência, gasto de verdade
+  continua vindo só da NF-e).
+- 4 altos de "tela de conferência ficando errada" resolvidos: documento preso pra
+  sempre em erro parcial; linha legítima repetida no mesmo documento sendo descartada;
+  contrato sem número próprio sem proteção; e (Epic 2.3) mensagens de erro genéricas +
+  falha de infra da IA tratada como PDF inválido.
+
+**Limitação aceita, registrada no código (não é dinheiro, é conferência rara):** item de
+extrato SEM número de duplicata legível usa como identidade o código do cliente
+(estável) + descrição + valor. Se o MESMO produto pelo MESMO valor aparecer em dois
+MESES diferentes sem número de duplicata em nenhum dos dois, o segundo é tratado como
+"já existe" e a compra nova some da conferência — silencioso. Estreito (só afeta item
+sem número, que é o caso raro) e não mexe em dinheiro (`conta_como_compra` já é `false`).
+
+**Próximo passo:** a TELA (upload, lista, visualização do PDF, cruzamento com NF-e) —
+ainda não desenhada nem no PLAN.md. Antes de destravar upload de verdade pelo público,
+vale revisitar a lista de pendências acima.
+
 ## Financeiro: origem "Conta paga" sem nome de fornecedor — pronto, falta só abrir o PR — 18/08/2026
 
 Pedido do Matheus: lançamento vindo de conta a pagar quitada (`lancamentos_financeiros`
@@ -537,40 +701,6 @@ Matheus conferiu ao vivo no navegador (`http://localhost:3005/financeiro`) a 1ª
 
 **Commitado** (`9edcca7` + fixes da 2ª rodada, branch `fix/financeiro-origem-conta-paga`).
 **Próximo passo:** abrir o PR.
-
-## Aba "Controle" (gastos defensivos/adubos/sementes) — Epic 2.4 (tela) em execução via SDD — atualizado 17/08/2026
-
-⚠️ **Este bloco estava desatualizado — reescrito do zero em 17/08 depois de o
-Matheus perguntar "qual a próxima epic?" e a resposta revelar que ninguém tinha
-mantido este arquivo em dia.** O texto anterior dizia "nada commitado ainda"; na
-verdade o trabalho avançou bastante numa worktree separada. **Detalhe completo,
-histórico de revisão do Apolo e comandos pra reconferir vivem no `ESTADO.md` DENTRO
-da worktree** (regra do próprio arquivo: detalhe mora perto do código, aqui só a
-frase-resumo) — não copiado pra cá de propósito, pra não discordar depois:
-`C:\Users\Dib\Projetos\pessoal\agromouro-base\.claude\worktrees\ou-e5b8ce\ESTADO.md`
-
-Trabalho inteiro na branch `feature/controle-gastos`, dentro dessa worktree — **a
-checkout principal (aqui) continua limpa, na `main`, sem nada disso**. Ainda não
-subiu pro GitHub.
-
-**Prontas e commitadas (Epics 1.1 a 2.3 — migration 017+018, bucket, leitor de PDF,
-gravação com dedupe, rotas da API):** todas revisadas várias vezes pelo Apolo,
-incluindo 2 achados críticos de dinheiro dobrando (já corrigidos) e teste de
-isolamento por fazenda com mutação de código real. Migration 017 **e** 018 já
-aplicadas em produção, confirmadas pelo Matheus rodando as consultas de verificação.
-
-**Em execução agora: Epic 2.4 (a tela `/controle`)**, via
-`superpowers:subagent-driven-development` — 8 tarefas planejadas
-(`docs/superpowers/plans/2026-08-17-controle-tela.md`, dentro da worktree), ledger de
-progresso em `.superpowers/sdd/2026-08-17-controle-tela/progress.md`. Tasks 1-3
-prontas e aprovadas (rota de filtros, paginação/filtro no `GET /controle/documentos`,
-tipos do frontend); Task 4 (hook `use-controle-data.ts`) com 1 achado "importante" em
-correção (possível bloqueio de pop-up ao abrir o PDF — `window.open` depois de um
-`await` perde o gesto de clique em alguns navegadores).
-
-**Próximo passo:** terminar as tasks 4-8 (fix da Task 4, depois componentes de UI —
-filtro por coluna estilo Excel, tabela com células mescladas, diálogo de upload,
-página + item no menu), revisão final do branch, e então push.
 
 ## Leitor de NFS-e (nota de serviço) — codado em 17/08/2026, 5 rodadas de revisão do Apolo feitas
 

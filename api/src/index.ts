@@ -11,6 +11,7 @@ import { alertaRoutes }   from './routes/alertas'
 import { cartaoRoutes }   from './routes/cartoes'
 import { contaRoutes }    from './routes/contas'
 import { nfeRoutes }      from './routes/nfe'
+import { controleRoutes } from './routes/controle'
 import { whatsappWebhook }   from './webhooks/whatsapp'
 import { nfeWebhook }        from './webhooks/nfe'
 import { nfeEmailWebhook }   from './webhooks/nfeEmailWebhook'
@@ -112,6 +113,10 @@ app.use('/webhook/nfe-email', express.raw({ type: '*/*', limit: '5mb' }))
 app.use('/webhook', express.json({ limit: '5mb' }))
 // XLSX de extrato bancário chega como base64: 1 MB de arquivo → ~1.37 MB encoded
 app.use('/cartoes/importar-preview', express.json({ limit: '10mb' }))
+// PDF de extrato/contrato de fornecedor chega como base64 (~1.37x o tamanho
+// do arquivo); o bucket "controle-documentos" aceita até ~10 MB de PDF
+// (ver migration 017_controle.sql) — 15mb dá folga pro overhead do base64.
+app.use('/controle/documentos', express.json({ limit: '15mb' }))
 app.use(express.json({ limit: '2mb' }))
 
 // ─── Health check — público, sem auth ────────────────────────────────────────
@@ -127,6 +132,7 @@ app.use('/alertas',   requireAuth, alertaRoutes)
 app.use('/cartoes',   requireAuth, cartaoRoutes)
 app.use('/contas',    requireAuth, contaRoutes)
 app.use('/nfe',       requireAuth, nfeRoutes)
+app.use('/controle/documentos', requireAuth, controleRoutes)
 
 // ─── Admin — trigger manual de jobs (requer autenticação) ────────────────────
 const adminLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 3, standardHeaders: true, legacyHeaders: false })

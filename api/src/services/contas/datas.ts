@@ -34,3 +34,14 @@ export function diasEntre(aISO: string, bISO: string): number {
   const [by, bm, bd] = bISO.split('-').map(Number)
   return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86_400_000)
 }
+
+// O formato bater NÃO prova que a data existe: '2026-02-31' passa num regex
+// \d{4}-\d{2}-\d{2}, e `Date.UTC` não reclama — ele ROLA para 3 de março.
+// Compartilhada aqui de propósito (achado do Apolo em documentoPdf.ts): antes
+// existiam duas cópias idênticas (boletoPdf.ts e o antigo relatorioPdf.ts) —
+// cada leitor de PDF que precisar confirmar uma data usa esta.
+export function dataExiste(iso: string): boolean {
+  const [ano, mes, dia] = iso.split('-').map(Number)
+  const d = new Date(Date.UTC(ano, mes - 1, dia))
+  return d.getUTCFullYear() === ano && d.getUTCMonth() === mes - 1 && d.getUTCDate() === dia
+}
