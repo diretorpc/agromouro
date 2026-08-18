@@ -24,6 +24,51 @@
 
 # 1. NO AR — o que o sistema já faz
 
+## Financeiro: origem "Conta paga" mostra o fornecedor — PR #59 mergeado em 18/08/2026
+
+https://github.com/diretorpc/agromouro/pull/59 — commit `037f51c` na `main` (squash),
+branch `fix/financeiro-origem-conta-paga` apagada (local e remoto). Railway/Vercel
+fazem deploy automático da `main`.
+
+Pedido do Matheus: lançamento vindo de conta a pagar quitada (`lancamentos_financeiros`
+com `origem = 'conta'`) mostrava só o crachá genérico "Conta paga" na coluna Origem da
+tela Financeiro — diferente dos lançamentos de NF-e, que mostram o nome do fornecedor.
+
+**Descoberta:** o backend (`api/src/services/contas/pagamento.ts`, função
+`montarLancamento`) já grava o fornecedor dentro do campo `descricao`, no formato
+`"FORNECEDOR — resto da descrição"` (separador é espaço + em-dash U+2014 + espaço) —
+intencional, só nunca foi separado de volta na tela.
+
+**Corrigido só no frontend, sem migration:** `web/app/(app)/financeiro/page.tsx` ganhou
+`separarFornecedorDaConta()` + `textoDescricaoExibido()` (fonte única do texto exibido,
+usada tanto na célula quanto na ordenação da coluna). Fornecedor vai pra coluna Origem
+(nome em negrito + crachá esmeralda pequeno "Conta paga" embaixo, pra continuar
+diferenciando de nota fiscal); o resto fica em Produto/Serviço, sem repetir o
+fornecedor. Sem separador válido (ou fornecedor/resto vazio após trim), cai no
+comportamento antigo — crachá genérico, texto completo.
+
+**2 rodadas de revisão do Apolo, ambas com achados corrigidos antes do merge:**
+1. Ordenação da coluna "Produto/Serviço" quebrada (comparava texto com fornecedor,
+   exibia só o resto) — corrigido com `textoDescricaoExibido()` como fonte única.
+   Célula podia ficar muda (descrição terminando logo após o separador) — corrigido
+   com `.trim()` + fallback.
+2. Fornecedor não era trimado (podia renderizar nome/linha em branco com espaço) —
+   corrigido, trim nos dois lados agora. Variável morta (`descricaoConta` calculada e
+   nunca usada, função rodando 2x por linha) — removida.
+
+**Risco aceito por decisão do Matheus (não é bug, é escolha registrada):** o parser
+detecta o SEPARADOR, não o fornecedor de verdade — uma conta SEM fornecedor cuja
+descrição digitada à mão contenha " — " pode gerar um "fornecedor" inventado na coluna
+Origem. Chance baixa (exige o dono digitar esse traço exato numa conta sem fornecedor),
+não mexe em nenhum valor de dinheiro — só apresentação. Conserto definitivo exigiria
+coluna própria de fornecedor em `lancamentos_financeiros` (migration) — decidido não
+fazer agora, documentado em comentário no código (`page.tsx`, perto de
+`separarFornecedorDaConta`).
+
+**Verificado:** função testada isolada em Node (várias vezes, incluindo espaços em
+branco e casos limite) — bateu certo nas duas rodadas. `npx tsc --noEmit` limpo.
+Matheus conferiu ao vivo no navegador antes do PR ir pro ar e confirmou o merge.
+
 ## Financeiro: cor de destaque pra nota agrupada — corrigido em 17/08/2026, commitado (`19ed6eb`)
 
 Pedido do Matheus: quando uma nota tem vários itens (linha expansível "N itens desta

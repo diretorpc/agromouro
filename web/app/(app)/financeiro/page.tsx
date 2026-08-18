@@ -152,6 +152,44 @@ function fmtDate(dateStr: string) {
   return new Date(year, month - 1, day).toLocaleDateString('pt-BR')
 }
 
+// Lançamento de conta paga (contas_a_pagar) chega aqui com o fornecedor já
+// embutido no texto — "FORNECEDOR — descrição" (ver montarLancamento em
+// api/src/services/contas/pagamento.ts). Separa os dois pra exibir o
+// fornecedor na coluna Origem, igual nota fiscal, em vez de repetir tudo
+// junto em Produto/Serviço. Sem essa separação o texto vem inteiro e a
+// coluna Origem só mostra o crachá genérico "Conta paga".
+//
+// ⚠️ Risco aceito (achado do Apolo, 18/08/2026, decisão do Matheus): isto
+// detecta o SEPARADOR, não o fornecedor de verdade. Uma conta SEM fornecedor
+// cuja descrição digitada à mão contenha " — " é partida errada — um pedaço
+// vira "fornecedor" inventado na coluna Origem. Chance baixa (exige o dono
+// digitar esse traço exato numa conta sem fornecedor) e não mexe em nenhum
+// valor de dinheiro — só apresentação. Conserto definitivo exigiria coluna
+// própria de fornecedor em lancamentos_financeiros (migration); decidido não
+// fazer agora.
+function separarFornecedorDaConta(descricao: string): { fornecedor: string | null; resto: string } {
+  const separador = ' — '
+  const indice = descricao.indexOf(separador)
+  if (indice === -1) return { fornecedor: null, resto: descricao }
+  const resto = descricao.slice(indice + separador.length).trim()
+  const fornecedor = descricao.slice(0, indice).trim()
+  // Conta com descrição "FORNECEDOR — " (nada depois do separador) ou
+  // " — resto" (nada antes) não pode virar célula muda nem fornecedor em
+  // branco na coluna Origem — cai pro texto completo, igual ao caso "não
+  // achou separador" (achado do Apolo, 18/08/2026, 2ª rodada).
+  if (!resto || !fornecedor) return { fornecedor: null, resto: descricao }
+  return { fornecedor, resto }
+}
+
+// Fonte única do texto exibido em Produto/Serviço — usada tanto na ordenação
+// quanto no JSX. Antes da separação por fornecedor os dois liam o mesmo
+// `item.descricao`; separar só na renderização quebrou a ordenação (a coluna
+// ordenava pelo texto com fornecedor, mas mostrava só o resto) — achado do
+// Apolo, 18/08/2026.
+function textoDescricaoExibido(item: ItemFinanceiro): string {
+  return item.origem === 'conta' ? separarFornecedorDaConta(item.descricao).resto : item.descricao
+}
+
 // Mesma função de web/lib/centro-custo.ts (categoriaLabel) — nome local
 // mantido porque os 9 lugares que chamam já esperam "tipoLabel".
 const tipoLabel = categoriaLabel
@@ -175,7 +213,7 @@ type SortColunaFinanceiro = 'descricao' | 'quantidade' | 'valor_unitario' | 'val
 function compararItensPorColuna(a: ItemFinanceiro, b: ItemFinanceiro, coluna: SortColunaFinanceiro, direcao: 'asc' | 'desc'): number {
   let cmp = 0
   switch (coluna) {
-    case 'descricao':      cmp = a.descricao.localeCompare(b.descricao); break
+    case 'descricao':      cmp = textoDescricaoExibido(a).localeCompare(textoDescricaoExibido(b)); break
     case 'quantidade':     cmp = a.quantidade - b.quantidade; break
     case 'valor_unitario': cmp = a.valor_unitario - b.valor_unitario; break
     case 'valor_total':    cmp = a.valor_total - b.valor_total; break
@@ -1042,6 +1080,7 @@ export default function FinanceiroPage() {
 
                 if (!multiplo) {
                   const item = grupo.itens[0]
+                  const fornecedorConta = item.origem === 'conta' ? separarFornecedorDaConta(item.descricao).fornecedor : null
                   return (
                     <TableRow key={item.id}>
                       <TableCell className="text-sm w-[160px]">
@@ -1049,6 +1088,13 @@ export default function FinanceiroPage() {
                           <Badge variant="secondary" className="text-xs">
                             {item.cartao_apelido ?? 'Cartão'}
                           </Badge>
+                        ) : item.origem === 'conta' && fornecedorConta ? (
+                          <div>
+                            <p className="font-medium text-sm whitespace-normal break-words">{fornecedorConta}</p>
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-emerald-50 text-emerald-700 border-emerald-200">
+                              Conta paga
+                            </Badge>
+                          </div>
                         ) : item.origem === 'conta' ? (
                           <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
                             Conta paga
@@ -1065,7 +1111,7 @@ export default function FinanceiroPage() {
                         )}
                       </TableCell>
                       <TableCell className="font-medium text-sm whitespace-normal break-words">
-                        {item.descricao}
+                        {textoDescricaoExibido(item)}
                       </TableCell>
                       <TableCell className="text-right text-sm text-muted-foreground">
                         {item.quantidade} {item.unidade}
