@@ -430,15 +430,36 @@ certo sentido, um caso de acento/NBSP bem estreito, menu em maiúsculas vs. linh
 tabela em grafia crua, caixa de sucesso sem nome do arquivo) — nenhum é dinheiro ou
 vazamento entre fazendas.
 
-**⚠️ NUNCA TESTADO NA TELA — nem por mim, nem por ninguém.** A tela fica atrás de
-login e eu não posso digitar a senha do Matheus (regra dura). `tsc`/`build`/testes
-automatizados passam limpos nos dois lados, mas isso não prova que o Popover do
-filtro abre certo, nem que a seleção múltipla funciona, nem nada visual. **Roteiro de
-teste manual está no relatório final do fix**
-(`.superpowers/sdd/2026-08-17-controle-tela/task-final-fix-report.md`, dentro desta
-worktree — não versionado, só existe localmente). Servidores deixados rodando ao
-fim da sessão: API na porta 3001, site na 3000 (pode já ter caído se a sessão
-encerrou — rodar `cd api && npm run dev` e `cd web && npm run dev` de novo).
+**Teste ao vivo começou em 18/08/2026, pela manhã (sessão seguinte).** Login funcionou
+depois de corrigir `web/.env.local` da worktree (faltava — copiado do checkout
+principal — e apontava pra API de **produção**, corrigido pra local). Verificado no
+navegador (sem PDF ainda): menu "Controle" no lugar certo, Popover do filtro abre sem
+cortar (resolve o achado 1 da revisão final), Esc fecha, diálogo abre/fecha certo.
+
+**🔴 BUG CRÍTICO achado no primeiro upload real — corrigido em 18/08/2026, commit
+`f91d19a`.** `documentoPdf.ts` chamava a API da Anthropic com `max_tokens: 32000` SEM
+streaming; o SDK recusa qualquer chamada não-streaming acima de ~21.333 tokens
+("Streaming is required for operations that may take longer than 10 minutes") — **toda
+importação de PDF, sem exceção, falhava com 503** "leitor indisponível", desde que a
+feature foi escrita. Nenhum teste pegou isso porque a suíte inteira mocka a chamada de
+IA — nunca bateu na API real antes de hoje. Corrigido trocando `.create()` por
+`.stream().finalMessage()` (mesmo shape de retorno, confirmado lendo o código-fonte do
+SDK). `boletoPdf.ts` (leitor irmão, `max_tokens: 1024`) NÃO precisava do mesmo
+conserto — fica bem abaixo do limiar, confirmado pelo cálculo exato do SDK. Revisado
+pelo Apolo, sem achado crítico/importante. **Ainda falta**: testar com um PDF de
+extrato/contrato de verdade (o teste do conserto usou um PDF qualquer só pra confirmar
+que o erro de streaming sumiu, não testou a qualidade da extração).
+
+**Lição registrada:** nem `lerDocumentoPdf` nem `lerBoletoDoPdf` têm teste (nem
+mockado) sobre a chamada real ao SDK — só a validação pura (`validarDocumentoLido`/
+`validarBoletoLido`). Foi esse buraco que deixou o bug do streaming invisível por
+todas as revisões anteriores. Vale um teste que force `max_tokens` alto e confirme que
+o código usa `.stream()`, pra não repetir a categoria.
+
+Servidores rodando nesta sessão (18/08 manhã): API na porta 3001, site na 3000 — caem
+quando a sessão do Claude Code encerra, subir de novo com `cd api && npm run dev` e
+`cd web && npm run dev` (+ `web/.env.local` da worktree precisa existir, copiado do
+checkout principal com `NEXT_PUBLIC_API_URL` trocado pra `http://localhost:3001`).
 
 **✅ Migration 018 aplicada em produção em 17/08/2026** — 3 consultas de verificação
 rodadas pelo Matheus no Supabase, as 3 bateram (índice de item com as 6 colunas e o
