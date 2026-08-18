@@ -494,6 +494,85 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
+## 🟡 Controle: tabela TOTALMENTE EDITÁVEL (estilo Excel) — codada 18/08/2026, falta o Matheus testar a digitação
+
+Branch `feature/controle-tabela-editavel`, commit `e6fb46b` (**só local, não subiu**).
+Desenho: `docs/superpowers/specs/2026-08-18-controle-tabela-editavel-design.md`.
+
+**Por que existe:** o Matheus testou a tela entregue no PR #61 e disse *"não ficou
+igual eu pedi, eu queria uma tabela totalmente editável como se fosse um Excel"*. O
+"estilo Excel" do plano anterior era só o FILTRO por coluna; editar célula tinha sido
+marcado como "fora de escopo" no papel, **sem ninguém perguntar a ele**. Lição de
+processo: escopo cortado no plano precisa ser confirmado com o dono, não decidido
+pelo executor.
+
+**Decisões dele, travadas antes de codar:** clicar na célula e digitar (Enter salva,
+Tab anda), adicionar/apagar linha, colar do Excel com várias linhas, salvar sozinho
+sem botão. Quando avisado de que editar à mão faria o sistema perder o reconhecimento
+de "já importei isso" e duplicar linha, respondeu que **isso é bom — duplicata deve
+aparecer PINTADA**, e virou feature em vez de risco.
+
+**⚠️ MIGRATION 019 JÁ APLICADA EM PRODUÇÃO em 18/08** (`duplicata_confirmada_em`,
+`duplicata_confirmada_vezes` em `itens_nfe`) — rodada pelo Matheus, verificação
+devolveu as 2 colunas certas. O código NÃO funciona sem ela (`GET /controle/itens`
+devolve 500 `column ... does not exist`).
+
+**Bug crítico achado só porque a tela foi aberta de verdade:** as 4 rotas de item
+nasceram dentro do router montado em `/controle/documentos`, resolvendo em
+`/controle/documentos/itens`, enquanto o front sempre chamou `/controle/itens` — 404
+em tudo, tela vazia. **Os 479 testes passavam**, porque `controle.test.ts` chama os
+handlers direto e nunca passa pelo `app.use()` real. Mesma categoria do bug de
+streaming de hoje cedo (suíte verde, feature 100% morta na vida real). Corrigido com
+router próprio (`controleItens.ts`) + `routeMounts.test.ts`, que cruza o `index.ts`
+lido como TEXTO com os caminhos literais do hook do frontend — e foi provado por
+mutação (reintroduzir o bug faz 2 dos 5 testes falharem).
+
+**Revisão do Apolo: 12 achados, nenhum passou batido.** Os 8 acionáveis corrigidos;
+2 eram CRÍTICOS que corrompiam dado em silêncio:
+- número em pt-BR lido com `parseFloat` cru — `"1.234,56"` virava **1.234** (R$ 1.234,56
+  → R$ 1,23), com 200 OK e sem erro. Valia igual pro colar do Excel, que é o pedido.
+- autosave descartava o patch pendente junto com o timer: editar 2 células da mesma
+  linha em menos de 400 ms persistia só a última, e a primeira sumia da tela quando o
+  servidor respondia.
+Mais: colar data `"01/12/2025"` virava 12 de janeiro; a pintura âmbar ficava atrás do
+fundo branco opaco das células (feature invisível); e o `package-lock.json` tinha
+arrastado **118 pacotes de carona** (incl. `@supabase/supabase-js` e 3 majors) que o
+Vercel instalaria em produção sem ninguém ter pedido — restaurado para 7 adicionados,
+0 trocados.
+
+**REGRESSÃO pega pelo Apolo:** a troca de componentes desligou o botão de excluir
+documento que o PR #61 tinha entregue HORAS antes. Nenhum arquivo vivo chamava
+`DELETE /controle/documentos/:id`. Restaurado.
+
+**✅ Medido por mim no navegador, depois das correções** (não é promessa do executor —
+o subagente não tinha navegador em nenhuma das rodadas):
+- os 28 itens carregam; formato pt-BR certo na tela (`3.956,75`, `44,2`, `25.480`)
+- pintura funciona: `getComputedStyle` da célula devolve `rgb(254,243,199)` com a
+  classe de duplicata contra `rgb(255,255,255)` normal
+- botão "Excluir documento de origem" presente em cada linha
+
+**🔴 O QUE FALTA — só o Matheus consegue fazer:** eu não consegui provar a DIGITAÇÃO.
+Meus cliques não chegam na grade nesta sessão (o painel do navegador não é exibido,
+então o mouse não compõe: `pointer-events: none` no input, nenhuma célula selecionada,
+foco no `body`). Não sei dizer se é limitação da automação ou defeito da tela. Testar:
+digitar valor com milhar e centavo (`1.234,56`), colar um bloco do Excel de verdade,
+editar 2 células seguidas rápido na mesma linha, apagar o conteúdo de uma célula,
+criar linha nova. **Dado de produção intacto** — as tentativas não corromperam nada
+(28 itens antes e depois).
+
+**Achados 9–12 do Apolo, aceitos como pendência de propósito** (nenhum é dinheiro):
+editar `valor_total` de linha importada desarma as duas defesas de duplicidade ao
+mesmo tempo (a chave do "Caso 2" inclui o valor); a varredura de duplicatas não tem
+`.range()`/`.order()` e vira arbitrária acima de 1000 itens (hoje são 28 — latente);
+`marcarDuplicataConfirmada` não filtra `documento_controle_id` e não é atômico no
+contador; e `use-controle-data.ts` + `tabela-documentos.tsx` ficaram no repo como
+código morto.
+
+**Decisões de produto que ele ainda não viu** (o executor tomou sozinho): a tabela
+ficou ACHATADA (sumiu a faixa de fornecedor mesclada), o "Total do PDF" saiu da tela,
+e apagar linha importada libera a trava de dedupe daquele item (reimportar traz de
+volta).
+
 ## ✅ Feature "Controle" (defensivos/adubos/sementes) — PR #61 mergeado em 18/08/2026
 
 https://github.com/diretorpc/agromouro/pull/61 — squash em `main`, branch
