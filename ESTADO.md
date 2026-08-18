@@ -494,11 +494,15 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
-## 🟡 Feature "Controle" (defensivos/adubos/sementes) — Epic 2.4 (tela) codada, falta teste ao vivo — 17/08/2026
+## ✅ Feature "Controle" (defensivos/adubos/sementes) — PR #61 mergeado em 18/08/2026
 
-Branch `feature/controle-gastos`, commits `40b8487`..`249cd4f` (**só local, não subiu
-pro GitHub ainda**). Cruza a NF-e automática com PDF importado manualmente (extrato de
-fornecedor tipo Solos/Syagri, ou contrato tipo Mosaic).
+https://github.com/diretorpc/agromouro/pull/61 — squash em `main`, branch
+`feature/controle-gastos` apagada no remoto (o worktree local desta sessão continua
+com a branch, não apagada de propósito — é o worktree ativo). Railway/Vercel fazem
+deploy automático no push — **ainda não confirmado de fora** que o ar já serve o
+código novo, mesmo padrão de incerteza de outros itens desta seção. Cruza a NF-e
+automática com PDF importado manualmente (extrato de fornecedor tipo Solos/Syagri, ou
+contrato tipo Mosaic).
 
 **Epic 2.4 (tela `/controle`) — as 10/10 tarefas do plano de feature prontas.**
 Executada via `superpowers:subagent-driven-development`
@@ -591,8 +595,8 @@ as quantidades (kg, litros) vieram corretas na tela — o fix de unidade do comm
 `87de655` (sessão anterior) está validado na prática.
 
 **Ainda em aberto:**
-- Nada subiu pro GitHub ainda — mesmo estado de antes, só local em
-  `feature/controle-gastos`.
+- Confirmar que o deploy (Railway API + Vercel web) já serve o código novo — próxima
+  vez que alguém abrir `/controle` em produção resolve isso.
 
 Pra medir de novo em vez de confiar no texto: `cd api && npm test && npx tsc --noEmit`
 (e o mesmo dentro de `web/` para o build).
