@@ -30,17 +30,54 @@ const { estadoBanco, createSignedUrlMock } = vi.hoisted(() => ({
 }))
 
 vi.mock('../services/supabase', () => {
+  // Espelha a coluna GERADA documentos_controle.fornecedor_normalizado
+  // (migration 017: upper(btrim(regexp_replace(fornecedor,'\s+',' ','g')))).
+  // Calculada aqui, e não escrita à mão nas fixtures, de propósito: fixture que
+  // escreve o valor normalizado à mão pode mentir (dizer que duas grafias têm o
+  // mesmo normalizado quando o Postgres diria outra coisa) e o teste passaria
+  // provando nada.
+  function fornecedorNormalizado(fornecedor: unknown): string | null {
+    if (typeof fornecedor !== 'string') return null
+    const limpo = fornecedor.replace(/\s+/g, ' ').trim().toUpperCase()
+    return limpo === '' ? null : limpo
+  }
+
   function builder(tabela: 'documentos_controle' | 'itens_nfe') {
     const filtros: Record<string, any> = {}
     const filtrosIn: Record<string, any[]> = {}
     const filtrosGte: Record<string, any> = {}
     const filtrosLte: Record<string, any> = {}
+    const ordenacoes: { campo: string; ascendente: boolean }[] = []
     let colunas: string[] | null = null
     let contarTotal = false
     let rangeSlice: [number, number] | null = null
 
     function linhasBase() {
-      return tabela === 'documentos_controle' ? estadoBanco.documentos : estadoBanco.itens
+      if (tabela === 'itens_nfe') return estadoBanco.itens
+      // documentos_controle: coluna gerada entra aqui, como no banco real.
+      return estadoBanco.documentos.map(d => ({
+        ...d,
+        fornecedor_normalizado: fornecedorNormalizado(d.fornecedor),
+      }))
+    }
+    // `.order()` de verdade — o mock antigo devolvia o builder e ignorava o
+    // pedido, então nenhum teste conseguia provar ordenação (nem detectar que
+    // ela sumiu). Aplica na ordem em que foi pedida: 1º critério, depois
+    // desempate, igual ao PostgREST.
+    function ordenar(linhas: any[]) {
+      if (ordenacoes.length === 0) return linhas
+      return [...linhas].sort((a, b) => {
+        for (const { campo, ascendente } of ordenacoes) {
+          const va = a[campo]
+          const vb = b[campo]
+          if (va === vb) continue
+          // null por último, como o `NULLS LAST` padrão do Postgres em ASC.
+          if (va === null || va === undefined) return 1
+          if (vb === null || vb === undefined) return -1
+          return (va < vb ? -1 : 1) * (ascendente ? 1 : -1)
+        }
+        return 0
+      })
     }
     function filtrar() {
       return linhasBase().filter(l =>
@@ -63,7 +100,10 @@ vi.mock('../services/supabase', () => {
         contarTotal = opts?.count === 'exact'
         return obj
       }),
-      order: vi.fn(() => obj),
+      order: vi.fn((campo: string, opts?: { ascending?: boolean }) => {
+        ordenacoes.push({ campo, ascendente: opts?.ascending !== false })
+        return obj
+      }),
       eq: vi.fn((campo: string, valor: any) => { filtros[campo] = valor; return obj }),
       in: vi.fn((campo: string, valores: any[]) => { filtrosIn[campo] = valores; return obj }),
       gte: vi.fn((campo: string, valor: any) => { filtrosGte[campo] = valor; return obj }),
@@ -77,7 +117,7 @@ vi.mock('../services/supabase', () => {
         return Promise.resolve({ data: projetar(linhas[0]), error: null })
       }),
       then(resolve: any) {
-        const todasFiltradas = filtrar()
+        const todasFiltradas = ordenar(filtrar())
         const pagina = rangeSlice ? todasFiltradas.slice(rangeSlice[0], rangeSlice[1] + 1) : todasFiltradas
         return Promise.resolve(resolve({
           data: pagina.map(projetar),
@@ -276,6 +316,27 @@ describe('GET /controle/documentos/filtros', () => {
     expect(res.body.status).toEqual(['importado', 'processando', 'processado', 'erro'])
   })
 
+  // ACHADO da revisão final: o menu lia `fornecedor` CRU. Duas leituras por IA do
+  // MESMO fornecedor saem grafadas diferente (caixa, espaço duplo, espaço nas
+  // pontas) e viravam DUAS opções no menu, cada uma trazendo metade dos
+  // documentos — o Matheus conferindo "loja por loja" perderia metade sem saber.
+  // A coluna gerada fornecedor_normalizado (migration 017) é a mesma dos dois
+  // lados: menu e filtro.
+  it('duas grafias do MESMO fornecedor viram UMA opção só (fornecedor_normalizado)', async () => {
+    estadoBanco.documentos = [
+      { id: 'doc-1', fazenda_id: FAZENDA_A, fornecedor: 'Solos Soluções',     status: 'processado' },
+      { id: 'doc-2', fazenda_id: FAZENDA_A, fornecedor: 'SOLOS SOLUÇÕES  ',   status: 'processado' },
+      { id: 'doc-3', fazenda_id: FAZENDA_A, fornecedor: 'SOLOS  SOLUÇÕES',    status: 'erro' },
+      { id: 'doc-4', fazenda_id: FAZENDA_A, fornecedor: 'SYAGRI',             status: 'processado' },
+    ]
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A })
+
+    await handler(req, res, next)
+
+    expect(next).not.toHaveBeenCalled()
+    expect(res.body.fornecedores).toEqual(['SOLOS SOLUÇÕES', 'SYAGRI'])
+  })
+
   it('isola por fazenda — não mistura fornecedor de outra fazenda', async () => {
     estadoBanco.documentos = [
       { id: 'doc-1', fazenda_id: FAZENDA_A, fornecedor: 'SOLOS SOLUÇÕES', status: 'processado' },
@@ -398,6 +459,35 @@ describe('GET /controle/documentos', () => {
     expect(res.body.documentos[0].id).toBe('doc-1')
   })
 
+  // ACHADO da revisão final (par do teste de /filtros): o filtro batia em
+  // `fornecedor` cru, então marcar a única opção do menu ("SOLOS SOLUÇÕES")
+  // trazia só os documentos gravados com aquela grafia exata e escondia os
+  // outros do MESMO fornecedor, em silêncio.
+  it('filtra por fornecedor_normalizado — pega TODAS as grafias do mesmo fornecedor', async () => {
+    estadoBanco.documentos = [
+      { id: 'doc-1', fornecedor: 'Solos Soluções',   numero_documento: '1', data_documento: '2026-01-01', valor_total: 10, status: 'processado', erro_mensagem: null, nome_arquivo: 'a.pdf', fazenda_id: FAZENDA_A, created_at: '2026-08-10' },
+      { id: 'doc-2', fornecedor: 'SOLOS SOLUÇÕES  ', numero_documento: '2', data_documento: '2026-01-02', valor_total: 20, status: 'processado', erro_mensagem: null, nome_arquivo: 'b.pdf', fazenda_id: FAZENDA_A, created_at: '2026-08-11' },
+      { id: 'doc-3', fornecedor: 'MOSAIC',           numero_documento: '3', data_documento: '2026-01-03', valor_total: 30, status: 'processado', erro_mensagem: null, nome_arquivo: 'c.pdf', fazenda_id: FAZENDA_A, created_at: '2026-08-12' },
+    ]
+    // Valor exatamente como GET /filtros o entrega ao front (já normalizado).
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A, query: { fornecedor: 'SOLOS SOLUÇÕES' } })
+
+    await handler(req, res, next)
+
+    expect(res.body.documentos.map((d: any) => d.id).sort()).toEqual(['doc-1', 'doc-2'])
+  })
+
+  it('normaliza também o valor que chega na URL — grafia crua no query param acha os mesmos documentos', async () => {
+    estadoBanco.documentos = [
+      { id: 'doc-1', fornecedor: 'SOLOS SOLUÇÕES', numero_documento: '1', data_documento: '2026-01-01', valor_total: 10, status: 'processado', erro_mensagem: null, nome_arquivo: 'a.pdf', fazenda_id: FAZENDA_A, created_at: '2026-08-10' },
+    ]
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A, query: { fornecedor: '  solos  soluções ' } })
+
+    await handler(req, res, next)
+
+    expect(res.body.documentos.map((d: any) => d.id)).toEqual(['doc-1'])
+  })
+
   it('filtra por status combinado com fornecedor — os dois valem ao mesmo tempo', async () => {
     estadoBanco.documentos = [
       { id: 'doc-1', fornecedor: 'SOLOS', numero_documento: '1', data_documento: '2026-01-01', valor_total: 10, status: 'processado', erro_mensagem: null, nome_arquivo: 'a.pdf', fazenda_id: FAZENDA_A, created_at: '2026-08-10' },
@@ -422,6 +512,30 @@ describe('GET /controle/documentos', () => {
 
     expect(res.body.documentos).toHaveLength(1)
     expect(res.body.documentos[0].id).toBe('doc-2')
+  })
+
+  // ACHADO da revisão final: a query de itens não tinha `.order()` nenhum — o
+  // Postgres podia devolver as linhas de um documento em qualquer ordem, e mudar
+  // de ordem entre duas recargas da mesma página. O mock só passou a respeitar
+  // `.order()` por causa deste teste; sem isso a regressão voltaria calada.
+  it('devolve os itens do documento ordenados por ocorrencia_no_documento (e id como desempate estável)', async () => {
+    estadoBanco.documentos = [
+      { id: 'doc-1', fornecedor: 'SOLOS', numero_documento: '57106', data_documento: '2026-07-01', valor_total: 3010, status: 'processado', erro_mensagem: null, nome_arquivo: 'a.pdf', fazenda_id: FAZENDA_A, created_at: '2026-08-10' },
+    ]
+    // Inseridos FORA de ordem de propósito: se a rota não ordenasse, o resultado
+    // sairia nesta mesma ordem embaralhada e o teste falharia.
+    estadoBanco.itens = [
+      { id: 'item-c', descricao: 'ADUBO', quantidade: 1, unidade: 'SC', valor_unitario: 1505, valor_total: 1505, fornecedor: 'SOLOS', numero_documento: '57106', ocorrencia_no_documento: 1, documento_controle_id: 'doc-1', conta_como_compra: false, data_manual: '2026-07-01', insumo_id: null, fazenda_id: FAZENDA_A },
+      { id: 'item-b', descricao: 'KCL',   quantidade: 1, unidade: 'SC', valor_unitario: 500,  valor_total: 500,  fornecedor: 'SOLOS', numero_documento: '57106', ocorrencia_no_documento: 0, documento_controle_id: 'doc-1', conta_como_compra: false, data_manual: '2026-07-01', insumo_id: null, fazenda_id: FAZENDA_A },
+      { id: 'item-a', descricao: 'ADUBO', quantidade: 1, unidade: 'SC', valor_unitario: 1505, valor_total: 1505, fornecedor: 'SOLOS', numero_documento: '57106', ocorrencia_no_documento: 0, documento_controle_id: 'doc-1', conta_como_compra: false, data_manual: '2026-07-01', insumo_id: null, fazenda_id: FAZENDA_A },
+    ]
+
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A })
+    await handler(req, res, next)
+
+    // ocorrencia 0 antes de ocorrencia 1; dentro do empate de ocorrencia 0, o id
+    // decide (item-a antes de item-b) — ordem arbitrária, mas sempre a mesma.
+    expect(res.body.documentos[0].itens.map((i: any) => i.id)).toEqual(['item-a', 'item-b', 'item-c'])
   })
 
   it('parâmetro de paginação inválido: 400', async () => {

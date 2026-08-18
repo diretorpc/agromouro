@@ -22,6 +22,16 @@ function fazendaDe(req: any): string | undefined {
   return req.user?.app_metadata?.fazenda_ativa_id as string | undefined
 }
 
+// Espelha EXATAMENTE a coluna gerada `documentos_controle.fornecedor_normalizado`
+// da migration 017: `upper(btrim(regexp_replace(fornecedor, '\s+', ' ', 'g')))`.
+// Precisa ser a mesma conta dos dois lados — o filtro compara o valor que chega
+// da tela contra o que o Postgres calculou e gravou. Se as duas contas
+// divergirem (ex.: só `toUpperCase().trim()`, sem colapsar espaço duplo), o
+// filtro de "SOLOS  SOLUÇÕES" não acha nada e a tela fica vazia sem explicação.
+function normalizarFornecedor(valor: string): string {
+  return valor.replace(/\s+/g, ' ').trim().toUpperCase()
+}
+
 const uploadSchema = z.object({
   arquivo:     z.string().min(1),
   nomeArquivo: z.string().min(1),
@@ -104,6 +114,12 @@ controleRoutes.post('/', async (req, res, next) => {
 // da fazenda, não só da página carregada — um filtro que só oferece os fornecedores
 // da primeira página seria enganoso. `status` é fixo (mesmo enum do CHECK da
 // migration 017), não precisa consultar o banco.
+//
+// Lê `fornecedor_normalizado`, NUNCA `fornecedor` cru: a mesma loja lida pela IA
+// em dois PDFs diferentes sai grafada diferente ("Solos Soluções" x "SOLOS
+// SOLUÇÕES  ") e viraria duas opções separadas no menu, cada uma trazendo metade
+// dos documentos. O valor normalizado também é o que o GET / usa pra filtrar —
+// os dois lados precisam falar a MESMA língua, senão o filtro não acha nada.
 controleRoutes.get('/filtros', async (req, res, next) => {
   const fazendaId = fazendaDe(req)
   if (!fazendaId) {
@@ -114,13 +130,13 @@ controleRoutes.get('/filtros', async (req, res, next) => {
   try {
     const { data, error } = await supabase
       .from('documentos_controle')
-      .select('fornecedor')
+      .select('fornecedor_normalizado')
       .eq('fazenda_id', fazendaId)
 
     if (error) throw error
 
     const fornecedores = [...new Set(
-      (data ?? []).map(d => d.fornecedor).filter((f): f is string => !!f),
+      (data ?? []).map(d => d.fornecedor_normalizado).filter((f): f is string => !!f),
     )].sort((a, b) => a.localeCompare(b, 'pt-BR'))
 
     res.json({
@@ -169,7 +185,15 @@ controleRoutes.get('/', async (req, res, next) => {
       )
       .eq('fazenda_id', fazendaId)
 
-    if (fornecedor.length > 0) query = query.in('fornecedor', fornecedor)
+    // Filtra pela coluna NORMALIZADA (migration 017), não por `fornecedor` cru:
+    // duas grafias do mesmo fornecedor compartilham um único
+    // fornecedor_normalizado, então marcar essa opção no menu traz os documentos
+    // das duas. Normaliza também o que chega da tela — o front manda o valor que
+    // veio de GET /filtros (já normalizado), mas normalizar de novo é idempotente
+    // e protege contra chamada manual/URL colada à mão com a grafia original.
+    if (fornecedor.length > 0) {
+      query = query.in('fornecedor_normalizado', fornecedor.map(normalizarFornecedor))
+    }
     if (status.length > 0) query = query.in('status', status)
     if (dataInicio) query = query.gte('data_documento', dataInicio)
     if (dataFim) query = query.lte('data_documento', dataFim)
@@ -194,11 +218,24 @@ controleRoutes.get('/', async (req, res, next) => {
     // Filtro por fazenda_id junto com o IN() de documento_controle_id fecha, na
     // mesma query, tanto a mistura entre fazendas quanto o caso (que não deveria
     // acontecer, mas por defesa) de um item apontar pra documento de outra fazenda.
+    //
+    // ORDEM: sem `.order()` o Postgres pode devolver os itens em qualquer ordem
+    // (e a ordem MUDA entre chamadas quando o plano de execução muda), fazendo as
+    // linhas de um mesmo documento dançarem na tela a cada recarga.
+    // `ocorrencia_no_documento` é o critério pedido; como ele só distingue linhas
+    // REPETIDAS (é 0 pra quase todo item — ver gravarDocumentoPdf.ts), sozinho ele
+    // não desempata nada. `id` entra como segundo critério só pra fechar o empate
+    // de forma determinística: arbitrário, mas ESTÁVEL — a mesma página recarregada
+    // devolve sempre a mesma ordem.
+    // ⚠️ Dívida conhecida: a ordem ORIGINAL das linhas do PDF não é guardada em
+    // coluna nenhuma hoje; recuperá-la exigiria migration nova (fora do escopo).
     const { data: itens, error: errItens } = await supabase
       .from('itens_nfe')
       .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, fornecedor, numero_documento, ocorrencia_no_documento, documento_controle_id, conta_como_compra, data_manual, insumo_id')
       .in('documento_controle_id', documentoIds)
       .eq('fazenda_id', fazendaId)
+      .order('ocorrencia_no_documento', { ascending: true })
+      .order('id', { ascending: true })
 
     if (errItens) throw errItens
 
