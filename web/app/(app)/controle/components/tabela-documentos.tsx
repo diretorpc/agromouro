@@ -1,10 +1,12 @@
 'use client'
 
-import { Fragment } from 'react'
-import { FileText } from 'lucide-react'
+import { Fragment, useState } from 'react'
+import { FileText, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableRow } from '@/components/ui/table'
-import { cn } from '@/lib/utils'
+import { cn, plural } from '@/lib/utils'
 import { FiltroColuna } from './filtro-coluna'
 import type { DocumentoControle, FiltrosControle, ItemDocumentoControle } from '@/lib/types'
 import type { FiltrosSelecionados } from '../hooks/use-controle-data'
@@ -26,6 +28,8 @@ type TabelaDocumentosProps = {
   totalPaginas: number
   onPaginaChange: (pagina: number) => void
   onAbrirPdf: (documentoId: string) => void
+  /** Lança em erro — o diálogo de confirmação, aqui dentro, mostra o motivo. */
+  onExcluirDocumento: (documentoId: string) => Promise<void>
   /** Há erro de carregamento na tela? Muda o que a tabela vazia pode afirmar. */
   comErro: boolean
 }
@@ -83,8 +87,41 @@ function CabecalhoColunas({ groupKey }: { groupKey: string }) {
 
 export function TabelaDocumentos({
   documentos, filtrosDisponiveis, filtros, onFiltrosChange,
-  paginaAtual, totalPaginas, onPaginaChange, onAbrirPdf, comErro,
+  paginaAtual, totalPaginas, onPaginaChange, onAbrirPdf, onExcluirDocumento, comErro,
 }: TabelaDocumentosProps) {
+  // Estado do diálogo de exclusão fica AQUI, não no hook nem em page.tsx —
+  // mesmo motivo de FiltroColuna guardar o próprio `aberto`/`busca`: é
+  // detalhe de interação da linha, não dado que outra parte da tela precisa
+  // conhecer. Erro mostrado DENTRO do diálogo (não em `erroAcao`, que é da
+  // página inteira) segue o padrão já usado em operacoes/page.tsx
+  // (`confirmarDeleteOp`): destrutiva, então o usuário precisa ver o motivo
+  // sem perder o contexto de qual documento estava tentando excluir.
+  const [confirmando, setConfirmando] = useState<DocumentoControle | null>(null)
+  const [excluindo, setExcluindo] = useState(false)
+  const [erroExcluir, setErroExcluir] = useState<string | null>(null)
+
+  function fecharConfirmacao() {
+    if (excluindo) return // ação em voo — não fecha embaixo do próprio clique
+    setConfirmando(null)
+    setErroExcluir(null)
+  }
+
+  async function confirmarExclusao() {
+    if (!confirmando) return
+    setExcluindo(true)
+    setErroExcluir(null)
+    try {
+      await onExcluirDocumento(confirmando.id)
+      setConfirmando(null)
+    } catch (err) {
+      // `err.message` já vem em português (web/lib/api.ts repassa o campo
+      // `error` que a API manda) — mesma convenção de abrirPdf/importarDocumento.
+      setErroExcluir(err instanceof Error ? err.message : 'Não foi possível excluir o documento agora.')
+    } finally {
+      setExcluindo(false)
+    }
+  }
+
   const temFiltroAtivo =
     filtros.fornecedores.length > 0 || filtros.status.length > 0 ||
     filtros.dataInicio !== '' || filtros.dataFim !== ''
@@ -195,6 +232,14 @@ export function TabelaDocumentos({
                       >
                         <FileText className="h-4 w-4" aria-hidden="true" />
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => { setConfirmando(doc); setErroExcluir(null) }}
+                        className="text-muted-foreground hover:text-destructive"
+                        aria-label={`Excluir documento de ${doc.fornecedor ?? doc.nome_arquivo}`}
+                      >
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                      </button>
                     </div>
                   </div>
                 </TableCell>
@@ -259,6 +304,33 @@ export function TabelaDocumentos({
           ))}
         </div>
       )}
+
+      <Dialog open={confirmando !== null} onOpenChange={open => { if (!open) fecharConfirmacao() }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Excluir documento?</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Excluir o documento de{' '}
+            <span className="font-medium text-foreground">{confirmando?.fornecedor ?? confirmando?.nome_arquivo}</span>
+            {confirmando && confirmando.itens.length > 0 && (
+              <> e {plural(confirmando.itens.length, 'item vinculado', 'itens vinculados')}</>
+            )}
+            ? O PDF original deixa de ficar acessível. Esta ação não pode ser desfeita.
+          </p>
+          {erroExcluir && (
+            <p aria-live="polite" className="text-sm text-destructive bg-red-50 border border-red-200 rounded px-3 py-2">
+              {erroExcluir}
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={fecharConfirmacao} disabled={excluindo}>
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={confirmarExclusao} disabled={excluindo}>
+              {excluindo ? 'Excluindo…' : 'Excluir'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

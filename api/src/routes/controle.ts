@@ -3,6 +3,7 @@ import { z } from 'zod'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabase } from '../services/supabase'
 import { gravarDocumentoDoPdf } from '../services/controle/gravarDocumentoPdf'
+import { excluirDocumentoControle } from '../services/controle/excluirDocumentoControle'
 import { hojeSaoPauloISO } from '../services/contas/formato'
 
 export const controleRoutes = Router()
@@ -300,6 +301,37 @@ controleRoutes.get('/:id/arquivo', async (req, res, next) => {
     }
 
     res.json({ url: assinado.signedUrl })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// DELETE /controle/documentos/:id — apaga o documento importado e os itens
+// vinculados (e o PDF no Storage, best-effort). Sem a mesma função atômica
+// que /nfe/:id usa (migration 009) — motivo detalhado em
+// excluirDocumentoControle.ts: item de Controle nunca mexe em estoque nem
+// gera lançamento financeiro, então não há o que desfazer numa falha parcial.
+controleRoutes.delete('/:id', async (req, res, next) => {
+  const fazendaId = fazendaDe(req)
+  if (!fazendaId) {
+    res.status(400).json({ error: 'Fazenda não identificada.' })
+    return
+  }
+
+  try {
+    const resultado = await excluirDocumentoControle(req.params.id, fazendaId)
+
+    switch (resultado.status) {
+      case 'excluido':
+        res.status(204).send()
+        return
+      case 'nao_encontrado':
+        res.status(404).json({ error: 'Documento não encontrado.' })
+        return
+      case 'erro':
+        res.status(500).json({ error: 'Erro ao excluir o documento.', detalhe: resultado.mensagem })
+        return
+    }
   } catch (err) {
     next(err)
   }

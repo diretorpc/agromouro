@@ -11,7 +11,7 @@ export default function ControlePage() {
     documentos, paginaAtual, totalPaginas, setPagina,
     filtros, aplicarFiltros, filtrosDisponiveis,
     loading, primeiraCarga, erroCarregamento, erroAcao,
-    importarDocumento, abrirPdf,
+    importarDocumento, abrirPdf, excluirDocumento,
   } = useControleData()
 
   // Atualização (troca de filtro/página) NÃO desmonta a tabela: só o primeiro
@@ -69,6 +69,7 @@ export default function ControlePage() {
             totalPaginas={totalPaginas}
             onPaginaChange={setPagina}
             onAbrirPdf={abrirPdf}
+            onExcluirDocumento={excluirDocumento}
             comErro={erroCarregamento !== null}
           />
         </div>

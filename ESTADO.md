@@ -456,6 +456,63 @@ mockado) sobre a chamada real ao SDK — só a validação pura (`validarDocumen
 todas as revisões anteriores. Vale um teste que force `max_tokens` alto e confirme que
 o código usa `.stream()`, pra não repetir a categoria.
 
+### 18/08/2026 tarde — chamadas repetidas diagnosticadas e corrigidas; botão Excluir construído
+
+**Bug das "dezenas de chamadas repetidas"** (sintoma achado de manhã, sem diagnóstico
+até aqui): causa raiz não era loop de re-render — é `FiltroColuna` (checkboxes de
+fornecedor) e os dois `<input type="date">` disparando uma requisição a cada
+clique/mudança, sem espera nenhuma. Corrigido com debounce de 300ms dentro do
+`useEffect` de `web/app/(app)/controle/hooks/use-controle-data.ts` (mantendo a trava
+`cancelado` que já existia). Testado ao vivo no navegador: mudar o período aplicou o
+filtro certo, sem travar e sem disparo duplo perceptível.
+
+**Botão "Excluir documento" construído** (pedido dele, confirmado nesta sessão):
+`api/src/services/controle/excluirDocumentoControle.ts` (novo, apaga itens_nfe antes
+do documento — FK `ON DELETE RESTRICT` da migration 017 — depois tenta apagar o PDF do
+Storage, best-effort), rota `DELETE /controle/documentos/:id`, botão + diálogo de
+confirmação em `tabela-documentos.tsx`. **Decisão registrada no próprio arquivo:** sem
+função atômica no Postgres (diferente do padrão de `excluir_nota_fiscal`, migration
+009) — Controle nunca mexe em estoque/lançamento (`conta_como_compra` é sempre falso
+aqui), então não há o que desfazer numa falha parcial.
+
+Testado ao vivo: o diálogo abre certo com "Cancelar"/"Excluir". **A exclusão de
+verdade não foi testada** — cancelei de propósito pra não apagar o documento real da
+SYAGRI que está na tela de teste.
+
+**Revisão do Apolo: sem crítico/alto.** 3 achados médios + 5 baixos. Os 3 médios e 2
+baixos rápidos foram corrigidos na mesma sessão (decisão do Matheus: só os
+importantes agora):
+- documento não "mente" mais na tela se o delete falhar no meio (marca erro, igual
+  `marcarDocumentoComErro`); tela recarrega sozinha no erro também, não só no sucesso
+- debounce de 300ms agora só no clique de filtro — montagem/paginação/import/exclusão
+  disparam na hora
+- rota `DELETE /controle/documentos/:id` ganhou teste (400/404/204/500)
+- 2 textos corrigidos ("item vinculado" no singular certo; "PDF deixa de ficar
+  acessível" em vez de prometer remoção garantida)
+
+**3 achados baixos, aceitos como pendência de propósito** (nenhum é dinheiro nem
+vazamento entre fazendas): DELETE sem `count:'exact'` (duas abas excluindo o mesmo
+documento ao mesmo tempo não dá erro, é inofensivo); id fora do formato UUID vira 500
+em vez de 404; sem guarda contra excluir documento no meio do processamento (caminho
+já é limpo mesmo sem a guarda, só não está escrito em lugar nenhum).
+
+**Testado ao vivo depois da correção:** recarreguei `/controle` no navegador, tabela
+carrega normal, cliquei em "Excluir documento" e o texto novo apareceu certo ("e 28
+itens vinculados? O PDF original deixa de ficar acessível."). Cancelei de novo — a
+exclusão de verdade (clicar "Excluir" e confirmar que a linha some) **continua nunca
+testada**.
+
+**✅ Exclusão real testada pelo Matheus, ao vivo — deu certo.** Também confirmou que
+as quantidades (kg, litros) vieram corretas na tela — o fix de unidade do commit
+`87de655` (sessão anterior) está validado na prática.
+
+**Ainda em aberto:**
+- Nada subiu pro GitHub ainda — mesmo estado de antes, só local em
+  `feature/controle-gastos`.
+
+Pra medir de novo em vez de confiar no texto: `cd api && npm test && npx tsc --noEmit`
+(e o mesmo dentro de `web/` para o build).
+
 Servidores rodando nesta sessão (18/08 manhã): API na porta 3001, site na 3000 — caem
 quando a sessão do Claude Code encerra, subir de novo com `cd api && npm run dev` e
 `cd web && npm run dev` (+ `web/.env.local` da worktree precisa existir, copiado do

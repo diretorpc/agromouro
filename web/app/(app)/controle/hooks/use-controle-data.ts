@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/lib/api'
 import type {
   DocumentoControle, FiltrosControle, ListaDocumentosControle, ResultadoGravarDocumento,
@@ -63,6 +63,14 @@ export function useControleData() {
   // Erro de AÇÃO do usuário (hoje só abrir PDF), separado do erro de carregamento
   // da lista: são coisas independentes e uma não deve apagar a outra.
   const [erroAcao, setErroAcao] = useState<string | null>(null)
+  // Só pra saber SE `consulta.filtros` mudou de identidade desde a última vez
+  // que o efeito abaixo rodou — não o valor em si (comparar o array por
+  // dentro não é necessário: `setPagina`/`recarregar`/upload/exclusão sempre
+  // espalham `{ ...atual, campo }` preservando a MESMA referência de
+  // `filtros` quando não é filtro que mudou; só `aplicarFiltros` e o reset
+  // pós-upload criam um objeto novo). Inicializado com o valor do primeiro
+  // render pra não contar a MONTAGEM como "filtro mudou".
+  const filtrosAnteriores = useRef(consulta.filtros)
 
   useEffect(() => {
     // Guarda contra resposta atrasada: clicar dois filtros rápido dispara duas
@@ -77,26 +85,40 @@ export function useControleData() {
     // no topo pra sempre.
     setErroAcao(null)
 
-    api.get<ListaDocumentosControle>(`/controle/documentos?${montarQuery(consulta.pagina, consulta.filtros)}`)
-      .then(resposta => {
-        if (cancelado) return
-        setDocumentos(resposta.documentos)
-        setPaginaAtual(resposta.paginaAtual)
-        setTotalPaginas(resposta.totalPaginas)
-        setTotalDocumentos(resposta.totalDocumentos)
-        setErroCarregamento(null)
-      })
-      .catch(() => {
-        if (cancelado) return
-        setErroCarregamento('Não foi possível carregar os documentos agora. Tente recarregar a página em instantes.')
-      })
-      .finally(() => {
-        if (cancelado) return
-        setJaCarregouUmaVez(true)
-        setLoading(false)
-      })
+    // Achado do Apolo: o debounce abaixo estava se aplicando a QUALQUER
+    // mudança de `consulta` — montagem, clique de página, upload, exclusão —
+    // não só à seleção de filtro que motivou ele. Só clique de checkbox em
+    // sequência (FiltroColuna) ou os campos de data precisam de 300ms de
+    // espera; paginar ou recarregar depois de uma ação já são eventos
+    // isolados (um clique = uma busca), atrasá-los sem motivo só deixa a
+    // tela mais lenta pra abrir a próxima página ou confirmar um upload.
+    const filtrosMudaram = filtrosAnteriores.current !== consulta.filtros
+    filtrosAnteriores.current = consulta.filtros
+    const espera = filtrosMudaram ? 300 : 0
 
-    return () => { cancelado = true }
+    const timer = setTimeout(() => {
+      if (cancelado) return
+      api.get<ListaDocumentosControle>(`/controle/documentos?${montarQuery(consulta.pagina, consulta.filtros)}`)
+        .then(resposta => {
+          if (cancelado) return
+          setDocumentos(resposta.documentos)
+          setPaginaAtual(resposta.paginaAtual)
+          setTotalPaginas(resposta.totalPaginas)
+          setTotalDocumentos(resposta.totalDocumentos)
+          setErroCarregamento(null)
+        })
+        .catch(() => {
+          if (cancelado) return
+          setErroCarregamento('Não foi possível carregar os documentos agora. Tente recarregar a página em instantes.')
+        })
+        .finally(() => {
+          if (cancelado) return
+          setJaCarregouUmaVez(true)
+          setLoading(false)
+        })
+    }, espera)
+
+    return () => { cancelado = true; clearTimeout(timer) }
   }, [consulta])
 
   // Valores de filtro (fornecedores/status) só precisam recarregar depois de um
@@ -188,6 +210,43 @@ export function useControleData() {
     }
   }
 
+  // Lança em vez de devolver um resultado tipado (como `importarDocumento`):
+  // quem chama é o diálogo de confirmação em TabelaDocumentos, que precisa
+  // ficar ABERTO mostrando o motivo se der erro (mesmo padrão do
+  // confirmarDeleteOp de operacoes/page.tsx) — um catch local resolve isso
+  // sem precisar de mais um par de estado aqui no hook.
+  async function excluirDocumento(documentoId: string): Promise<void> {
+    try {
+      await api.del(`/controle/documentos/${documentoId}`)
+    } catch (err) {
+      // Achado do Apolo: falha parcial no servidor pode ter apagado os ITENS
+      // mesmo com o DELETE inteiro devolvendo erro (o documento sobrevive
+      // marcado 'erro' — ver excluirDocumentoControle.ts). Sem recarregar
+      // aqui, a tabela continuaria mostrando itens que já não existem mais no
+      // banco. Recarrega a MESMA página (sem o ajuste de "página ficou
+      // vazia" do caminho de sucesso, abaixo — não se aplica aqui: o
+      // documento não sumiu, só entrou em erro) e relança pro diálogo de
+      // confirmação (TabelaDocumentos) mostrar o motivo.
+      setConsulta(atual => ({ ...atual, recarga: atual.recarga + 1 }))
+      throw err
+    }
+
+    // Página atual pode ter ficado sem nenhum documento (era o último item
+    // dela) — sem este ajuste, recarregar com a mesma página mostraria
+    // "nenhum documento encontrado" de forma enganosa quando na verdade
+    // existem documentos, só não NESTA página. Só recua se não for a
+    // primeira página (a primeira pode legitimamente ficar vazia).
+    setConsulta(atual => ({
+      ...atual,
+      pagina: documentos.length === 1 && atual.pagina > 1 ? atual.pagina - 1 : atual.pagina,
+      recarga: atual.recarga + 1,
+    }))
+    // Documento excluído pode ter sido o ÚLTIMO daquele fornecedor — sem
+    // recarregar os filtros disponíveis, o menu continuaria oferecendo uma
+    // opção que não acha mais nada.
+    await recarregarFiltrosDisponiveis()
+  }
+
   return {
     documentos, paginaAtual, totalPaginas, totalDocumentos,
     pagina: consulta.pagina, setPagina,
@@ -197,6 +256,6 @@ export function useControleData() {
     // texto de carregamento.
     primeiraCarga: loading && !jaCarregouUmaVez,
     erroCarregamento, erroAcao, setErroAcao, recarregar,
-    importarDocumento, abrirPdf,
+    importarDocumento, abrirPdf, excluirDocumento,
   }
 }

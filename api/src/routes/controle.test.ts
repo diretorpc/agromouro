@@ -10,6 +10,16 @@ vi.mock('../services/controle/gravarDocumentoPdf', () => ({
   gravarDocumentoDoPdf: gravarDocumentoDoPdfMock,
 }))
 
+// ─── excluirDocumentoControle mockado ───────────────────────────────────────
+// Mesmo motivo do mock acima: a lógica de exclusão (ordem itens→documento,
+// FK RESTRICT, limpeza do Storage, marcar 'erro' em falha parcial) já tem
+// cobertura própria em excluirDocumentoControle.test.ts — aqui só o
+// mapeamento status→HTTP da rota.
+const excluirDocumentoControleMock = vi.hoisted(() => vi.fn())
+vi.mock('../services/controle/excluirDocumentoControle', () => ({
+  excluirDocumentoControle: excluirDocumentoControleMock,
+}))
+
 // ─── Banco fake com DUAS fazendas ──────────────────────────────────────────
 // Mesmo padrão de estoque.test.ts: o client Supabase da API usa a service
 // key (ignora RLS sempre), então sem o filtro manual de fazenda_id as duas
@@ -147,11 +157,12 @@ beforeEach(() => {
   estadoBanco.documentos = []
   estadoBanco.itens = []
   createSignedUrlMock.mockReset()
+  excluirDocumentoControleMock.mockReset()
 })
 
 // ─── Helpers para invocar a rota Express diretamente ───────────────────────
 // Sem supertest/servidor HTTP — mesmo padrão de estoque.test.ts.
-function pegarHandler(method: 'get' | 'post', path: string) {
+function pegarHandler(method: 'get' | 'post' | 'delete', path: string) {
   const layer = (controleRoutes as any).stack.find(
     (l: any) => l.route?.path === path && l.route?.methods?.[method],
   )
@@ -171,8 +182,13 @@ function criarReqRes(overrides: { fazendaId?: string; body?: any; params?: Recor
   const res: any = {
     statusCode: 200,
     body: undefined as any,
+    // `sent` distingue "204 sem corpo" (DELETE /:id) de "nada foi chamado
+    // ainda" — sem isso, um teste que espera corpo vazio não consegue provar
+    // que a rota chegou a responder de verdade.
+    sent: false,
     status(code: number) { this.statusCode = code; return this },
     json(payload: any) { this.body = payload; return this },
+    send(payload?: any) { this.sent = true; this.body = payload; return this },
   }
   const next = vi.fn()
   return { req, res, next }
@@ -605,5 +621,56 @@ describe('GET /controle/documentos/:id/arquivo', () => {
     await handler(req, res, next)
 
     expect(res.statusCode).toBe(500)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// A lógica de exclusão em si (ordem itens→documento pela FK RESTRICT, marcar
+// 'erro' em falha parcial, limpeza do Storage) tem cobertura própria em
+// excluirDocumentoControle.test.ts — aqui só o mapeamento status→HTTP da
+// rota, mesmo padrão de POST /controle/documentos com gravarDocumentoDoPdf
+// mockado. Isolamento entre fazendas fica a cargo do PRÓPRIO service (que já
+// recebe fazendaId da sessão, nunca do :id) — coberto lá, não repetido aqui.
+describe('DELETE /controle/documentos/:id', () => {
+  const handler = pegarHandler('delete', '/:id')
+
+  it('sem fazenda identificada no token: 400, não chama o service', async () => {
+    const { req, res, next } = criarReqRes({ params: { id: 'doc-1' } })
+    await handler(req, res, next)
+
+    expect(res.statusCode).toBe(400)
+    expect(next).not.toHaveBeenCalled()
+    expect(excluirDocumentoControleMock).not.toHaveBeenCalled()
+  })
+
+  it('service devolve nao_encontrado: 404 com mensagem', async () => {
+    excluirDocumentoControleMock.mockResolvedValue({ status: 'nao_encontrado' })
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A, params: { id: 'doc-x' } })
+    await handler(req, res, next)
+
+    expect(next).not.toHaveBeenCalled()
+    expect(res.statusCode).toBe(404)
+    expect(res.body).toEqual({ error: 'Documento não encontrado.' })
+    expect(excluirDocumentoControleMock).toHaveBeenCalledWith('doc-x', FAZENDA_A)
+  })
+
+  it('sucesso: 204 sem corpo', async () => {
+    excluirDocumentoControleMock.mockResolvedValue({ status: 'excluido' })
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A, params: { id: 'doc-1' } })
+    await handler(req, res, next)
+
+    expect(next).not.toHaveBeenCalled()
+    expect(res.statusCode).toBe(204)
+    expect(res.sent).toBe(true)
+    expect(res.body).toBeUndefined()
+  })
+
+  it('service devolve erro: 500 com detalhe', async () => {
+    excluirDocumentoControleMock.mockResolvedValue({ status: 'erro', mensagem: 'lock timeout' })
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A, params: { id: 'doc-1' } })
+    await handler(req, res, next)
+
+    expect(res.statusCode).toBe(500)
+    expect(res.body).toMatchObject({ detalhe: 'lock timeout' })
   })
 })

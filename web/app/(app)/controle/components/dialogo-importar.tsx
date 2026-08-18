@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 import { Loader2, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { plural } from '@/lib/utils'
 import type { ResultadoGravarDocumento } from '@/lib/types'
 
 type DialogoImportarProps = {
@@ -23,10 +24,6 @@ type Estado =
 // arquivo viram ~13,4 MB de corpo, ainda dentro dos 15 MB. Recusar aqui evita
 // gastar upload e leitura por IA num arquivo que o servidor cortaria depois.
 const TAMANHO_MAXIMO_BYTES = 10 * 1024 * 1024
-
-function plural(n: number, singular: string, pluralForma: string): string {
-  return `${n} ${n === 1 ? singular : pluralForma}`
-}
 
 export function DialogoImportar({ onImportar }: DialogoImportarProps) {
   const [aberto, setAberto] = useState(false)
