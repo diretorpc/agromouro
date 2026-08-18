@@ -410,12 +410,35 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
-## 🟡 Feature "Controle" (defensivos/adubos/sementes) — Epic 2.3 commitado (local) em 17/08/2026
+## 🟡 Feature "Controle" (defensivos/adubos/sementes) — Epic 2.4 (tela) codada, falta teste ao vivo — 17/08/2026
 
-Branch `feature/controle-gastos`, commits `40b8487`..`d4e8ca5` (**só local, não subiu
+Branch `feature/controle-gastos`, commits `40b8487`..`249cd4f` (**só local, não subiu
 pro GitHub ainda**). Cruza a NF-e automática com PDF importado manualmente (extrato de
-fornecedor tipo Solos/Syagri, ou contrato tipo Mosaic) — a TELA ainda não existe, isto é
-o motor de dados + API.
+fornecedor tipo Solos/Syagri, ou contrato tipo Mosaic).
+
+**Epic 2.4 (tela `/controle`) — as 10/10 tarefas do plano de feature prontas.**
+Executada via `superpowers:subagent-driven-development`
+(`docs/superpowers/plans/2026-08-17-controle-tela.md`, ledger em
+`.superpowers/sdd/2026-08-17-controle-tela/progress.md`, dentro desta worktree): 8
+tarefas + revisão de cada uma + **revisão final do branch inteiro**, que achou 7
+problemas "importante" que só apareciam com tudo montado junto (menu de filtro cortado
+pela tabela, filtro fechando a cada seleção, upload sem feedback, reimportação sem
+total visível, filtro usando coluna não-normalizada, erro de PDF mudo, itens sem
+ordem) — todos corrigidos numa rodada só, confirmada por re-revisão, sem quebra nova.
+4 achados "menor" residuais aceitos conscientemente (ordem de item ainda instável em
+certo sentido, um caso de acento/NBSP bem estreito, menu em maiúsculas vs. linha da
+tabela em grafia crua, caixa de sucesso sem nome do arquivo) — nenhum é dinheiro ou
+vazamento entre fazendas.
+
+**⚠️ NUNCA TESTADO NA TELA — nem por mim, nem por ninguém.** A tela fica atrás de
+login e eu não posso digitar a senha do Matheus (regra dura). `tsc`/`build`/testes
+automatizados passam limpos nos dois lados, mas isso não prova que o Popover do
+filtro abre certo, nem que a seleção múltipla funciona, nem nada visual. **Roteiro de
+teste manual está no relatório final do fix**
+(`.superpowers/sdd/2026-08-17-controle-tela/task-final-fix-report.md`, dentro desta
+worktree — não versionado, só existe localmente). Servidores deixados rodando ao
+fim da sessão: API na porta 3001, site na 3000 (pode já ter caído se a sessão
+encerrou — rodar `cd api && npm run dev` e `cd web && npm run dev` de novo).
 
 **✅ Migration 018 aplicada em produção em 17/08/2026** — 3 consultas de verificação
 rodadas pelo Matheus no Supabase, as 3 bateram (índice de item com as 6 colunas e o
