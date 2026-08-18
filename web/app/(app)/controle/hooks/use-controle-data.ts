@@ -16,6 +16,22 @@ export type FiltrosSelecionados = {
 const FILTROS_VAZIOS: FiltrosSelecionados = { fornecedores: [], status: [], dataInicio: '', dataFim: '' }
 const POR_PAGINA = 20
 
+// O que a próxima busca deve pedir. Página e filtros moram JUNTOS num estado só
+// (em vez de dois `useState` separados) porque toda mudança de filtro também zera
+// a página: em dois estados isso são duas atualizações, e o efeito de busca
+// dispararia duas vezes — uma delas com a combinação inválida (filtro novo +
+// página velha). `recarga` é um contador que só existe pra forçar uma busca nova
+// quando página e filtros NÃO mudaram (caso do upload de um documento estando na
+// página 1 sem filtro: sem o contador, nada no estado muda e a lista nunca
+// recarregaria).
+type Consulta = {
+  pagina: number
+  filtros: FiltrosSelecionados
+  recarga: number
+}
+
+const CONSULTA_INICIAL: Consulta = { pagina: 1, filtros: FILTROS_VAZIOS, recarga: 0 }
+
 function montarQuery(pagina: number, filtros: FiltrosSelecionados): string {
   const params = new URLSearchParams()
   params.set('pagina', String(pagina))
@@ -32,29 +48,56 @@ export function useControleData() {
   const [paginaAtual, setPaginaAtual] = useState(1)
   const [totalPaginas, setTotalPaginas] = useState(1)
   const [totalDocumentos, setTotalDocumentos] = useState(0)
-  const [pagina, setPagina] = useState(1)
-  const [filtros, setFiltros] = useState<FiltrosSelecionados>(FILTROS_VAZIOS)
+  const [consulta, setConsulta] = useState<Consulta>(CONSULTA_INICIAL)
   const [filtrosDisponiveis, setFiltrosDisponiveis] = useState<FiltrosControle>({ fornecedores: [], status: [] })
   const [loading, setLoading] = useState(true)
+  // Separado de `loading`: a tela precisa distinguir "ainda não mostrei nada"
+  // (aí um "Carregando..." no lugar da tabela é honesto) de "estou atualizando o
+  // que já está na tela" (aí trocar a tabela por um texto DESMONTA o menu de
+  // filtro aberto e torna a seleção múltipla impossível na prática).
+  // Deliberadamente NÃO derivado de `documentos.length === 0`: um filtro que não
+  // acha nada também deixa a lista vazia, e aí a tabela voltaria a desmontar a
+  // cada clique — exatamente o bug que estamos consertando.
+  const [jaCarregouUmaVez, setJaCarregouUmaVez] = useState(false)
   const [erroCarregamento, setErroCarregamento] = useState<string | null>(null)
+  // Erro de AÇÃO do usuário (hoje só abrir PDF), separado do erro de carregamento
+  // da lista: são coisas independentes e uma não deve apagar a outra.
+  const [erroAcao, setErroAcao] = useState<string | null>(null)
 
-  const recarregar = useCallback(async () => {
+  useEffect(() => {
+    // Guarda contra resposta atrasada: clicar dois filtros rápido dispara duas
+    // buscas, e nada garante que a primeira responda primeiro. Sem esta trava, a
+    // resposta velha chegaria por último e sobrescreveria a nova — a tela
+    // mostraria o resultado de um filtro que o usuário já trocou.
+    let cancelado = false
     setLoading(true)
-    try {
-      const resposta = await api.get<ListaDocumentosControle>(`/controle/documentos?${montarQuery(pagina, filtros)}`)
-      setDocumentos(resposta.documentos)
-      setPaginaAtual(resposta.paginaAtual)
-      setTotalPaginas(resposta.totalPaginas)
-      setTotalDocumentos(resposta.totalDocumentos)
-      setErroCarregamento(null)
-    } catch {
-      setErroCarregamento('Não foi possível carregar os documentos agora. Tente recarregar a página em instantes.')
-    } finally {
-      setLoading(false)
-    }
-  }, [pagina, filtros])
+    // Lista nova = contexto novo. A mensagem de "não deu pra abrir o PDF do
+    // documento X" não faz mais sentido depois que o usuário troca o filtro (o
+    // documento X pode nem estar mais na tela) — sem isto ela ficaria pendurada
+    // no topo pra sempre.
+    setErroAcao(null)
 
-  useEffect(() => { recarregar() }, [recarregar])
+    api.get<ListaDocumentosControle>(`/controle/documentos?${montarQuery(consulta.pagina, consulta.filtros)}`)
+      .then(resposta => {
+        if (cancelado) return
+        setDocumentos(resposta.documentos)
+        setPaginaAtual(resposta.paginaAtual)
+        setTotalPaginas(resposta.totalPaginas)
+        setTotalDocumentos(resposta.totalDocumentos)
+        setErroCarregamento(null)
+      })
+      .catch(() => {
+        if (cancelado) return
+        setErroCarregamento('Não foi possível carregar os documentos agora. Tente recarregar a página em instantes.')
+      })
+      .finally(() => {
+        if (cancelado) return
+        setJaCarregouUmaVez(true)
+        setLoading(false)
+      })
+
+    return () => { cancelado = true }
+  }, [consulta])
 
   // Valores de filtro (fornecedores/status) só precisam recarregar depois de um
   // upload novo — não a cada troca de página/filtro. Busca separada da lista.
@@ -70,12 +113,19 @@ export function useControleData() {
 
   useEffect(() => { recarregarFiltrosDisponiveis() }, [recarregarFiltrosDisponiveis])
 
+  const setPagina = useCallback((novaPagina: number) => {
+    setConsulta(atual => ({ ...atual, pagina: novaPagina }))
+  }, [])
+
   // Ao trocar qualquer filtro, volta pra página 1 — senão o usuário pode ficar
   // numa página que não existe mais dentro do resultado filtrado.
-  function aplicarFiltros(novos: FiltrosSelecionados) {
-    setFiltros(novos)
-    setPagina(1)
-  }
+  const aplicarFiltros = useCallback((novos: FiltrosSelecionados) => {
+    setConsulta(atual => ({ ...atual, filtros: novos, pagina: 1 }))
+  }, [])
+
+  const recarregar = useCallback(() => {
+    setConsulta(atual => ({ ...atual, recarga: atual.recarga + 1 }))
+  }, [])
 
   async function importarDocumento(pdf: File): Promise<ResultadoGravarDocumento> {
     const arquivo = await new Promise<string>((resolve, reject) => {
@@ -96,12 +146,20 @@ export function useControleData() {
     })
 
     if (resultado.status === 'gravado') {
-      await Promise.all([recarregar(), recarregarFiltrosDisponiveis()])
+      // LIMPA os filtros e volta pra página 1 antes de recarregar. Recarregar com
+      // o filtro/página que estavam valendo faria o documento recém-importado não
+      // aparecer em lugar nenhum (fornecedor fora do filtro ativo, ou o mais
+      // recente indo pro topo da página 1 enquanto o usuário está na 3) — o
+      // upload "daria certo" e a tela não mostraria nada, sem aviso. `recarga`
+      // garante a busca nova mesmo quando já estávamos na página 1 sem filtro.
+      setConsulta(atual => ({ pagina: 1, filtros: FILTROS_VAZIOS, recarga: atual.recarga + 1 }))
+      await recarregarFiltrosDisponiveis()
     }
     return resultado
   }
 
   async function abrirPdf(documentoId: string) {
+    setErroAcao(null)
     // window.open PRECISA acontecer de forma síncrona, dentro do gesto de clique —
     // se esperar a signed URL (await) pra só então abrir a aba, o Safari (e outros)
     // trata como pop-up fora de interação do usuário e bloqueia em silêncio, sem
@@ -119,15 +177,26 @@ export function useControleData() {
       const { url } = await api.get<{ url: string }>(`/controle/documentos/${documentoId}/arquivo`)
       if (aba) aba.location.href = url
     } catch (err) {
+      // Fecha a aba em branco e conta o motivo NA TELA. Antes isto relançava o
+      // erro: quem chamava não tratava a Promise, a aba piscava e sumia, e o
+      // usuário ficava sem nenhuma pista (404 de documento apagado, 500 do
+      // Storage, queda de rede — tudo virava "não aconteceu nada").
+      // `err.message` já vem em português: web/lib/api.ts repassa o campo `error`
+      // que a API manda.
       aba?.close()
-      throw err
+      setErroAcao(err instanceof Error ? err.message : 'Não foi possível abrir o PDF agora.')
     }
   }
 
   return {
-    documentos, paginaAtual, totalPaginas, totalDocumentos, pagina, setPagina,
-    filtros, aplicarFiltros, filtrosDisponiveis,
-    loading, erroCarregamento, recarregar,
+    documentos, paginaAtual, totalPaginas, totalDocumentos,
+    pagina: consulta.pagina, setPagina,
+    filtros: consulta.filtros, aplicarFiltros, filtrosDisponiveis,
+    loading,
+    // "Ainda não mostrei nada" — único caso em que vale trocar a tabela por um
+    // texto de carregamento.
+    primeiraCarga: loading && !jaCarregouUmaVez,
+    erroCarregamento, erroAcao, setErroAcao, recarregar,
     importarDocumento, abrirPdf,
   }
 }
