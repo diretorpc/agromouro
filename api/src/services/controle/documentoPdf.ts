@@ -217,7 +217,14 @@ const SCHEMA = {
           },
           unidade: {
             type: ['string', 'null'],
-            description: 'Unidade da quantidade (ex: "KG", "L", "MTN", "SC", "UN"). null se não impressa.',
+            description:
+              'Unidade da quantidade (ex: "KG", "L", "MTN", "SC", "UN"). Procure PRIMEIRO uma coluna própria de ' +
+              'unidade na tabela. Se não houver coluna separada (padrão Syagri), a unidade normalmente vem GRUDADA ' +
+              'no FINAL da descrição do produto, no formato "NÚMERO + SIGLA" (ex.: "DUAL GOLD 960 EC - 20 LT" → ' +
+              '"LT"; "GESAPRIM GRDA - 10 KG" → "KG"; "VANIVA SC - 1 L" → "L"; "FERTILIZANTE CIBRA KCL 60 GR" → ' +
+              '"GR") — nesse caso use a SIGLA encontrada no final da descrição, não invente nem devolva null só ' +
+              'porque não existe coluna separada. null apenas quando genuinamente não houver pista nenhuma (nem ' +
+              'coluna, nem sigla no fim da descrição).',
           },
           valor_unitario: {
             type: ['number', 'null'],
@@ -278,7 +285,10 @@ const INSTRUCAO =
   'duplicata precisa fechar com o valor daquela duplicata — NUNCA repita o valor cheio da duplicata em mais de um ' +
   'item derivado dela (3 produtos com o valor cheio da duplicata cada um triplicaria o gasto). Se a tabela de ' +
   'produtos não trouxer o valor de cada produto individualmente, gere um único item para a duplicata inteira ' +
-  '(a descrição pode listar os produtos juntos), em vez de dividir em vários itens sem saber o valor de cada um.'
+  '(a descrição pode listar os produtos juntos), em vez de dividir em vários itens sem saber o valor de cada um. ' +
+  'Preste atenção especial na UNIDADE de cada item: quando não houver coluna própria de unidade (padrão Syagri), ' +
+  'ela costuma vir grudada no final da descrição do produto, no formato "NÚMERO + SIGLA" (ex.: "- 20 LT", "- 10 KG", ' +
+  '"- 1 L", "60 GR") — extraia essa sigla como unidade em vez de devolver null.'
 
 // O formato bater não prova que a data existe ('2026-02-31' passa no regex e
 // `dataExiste`/`diasEntre` — importados de contas/datas.ts, mesma checagem
