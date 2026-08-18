@@ -4,7 +4,17 @@ import Anthropic from '@anthropic-ai/sdk'
 import { supabase } from '../services/supabase'
 import { gravarDocumentoDoPdf } from '../services/controle/gravarDocumentoPdf'
 import { excluirDocumentoControle } from '../services/controle/excluirDocumentoControle'
+import { normalizarFornecedor } from '../services/controle/normalizarFornecedor'
 import { hojeSaoPauloISO } from '../services/contas/formato'
+
+// Rotas de ITEM (GET/POST /controle/itens, PATCH/DELETE /controle/itens/:id)
+// moraram AQUI até 18/08/2026 — mudaram de arquivo (controleItens.ts) por um
+// bug crítico de mount: este router (`controleRoutes`) é montado em
+// `/controle/documentos` no index.ts, então rotas `/itens` aqui dentro
+// resolviam em `/controle/documentos/itens`, não `/controle/itens` (o
+// caminho que o front sempre chamou). Item não é sub-recurso de documento —
+// item AVULSO existe sem documento nenhum — então ganhou router e mount
+// PRÓPRIOS. Ver controleItens.ts e o comentário do mount em index.ts.
 
 export const controleRoutes = Router()
 
@@ -21,16 +31,6 @@ const BUCKET = 'controle-documentos'
 // fazenda errada.
 function fazendaDe(req: any): string | undefined {
   return req.user?.app_metadata?.fazenda_ativa_id as string | undefined
-}
-
-// Espelha EXATAMENTE a coluna gerada `documentos_controle.fornecedor_normalizado`
-// da migration 017: `upper(btrim(regexp_replace(fornecedor, '\s+', ' ', 'g')))`.
-// Precisa ser a mesma conta dos dois lados — o filtro compara o valor que chega
-// da tela contra o que o Postgres calculou e gravou. Se as duas contas
-// divergirem (ex.: só `toUpperCase().trim()`, sem colapsar espaço duplo), o
-// filtro de "SOLOS  SOLUÇÕES" não acha nada e a tela fica vazia sem explicação.
-function normalizarFornecedor(valor: string): string {
-  return valor.replace(/\s+/g, ' ').trim().toUpperCase()
 }
 
 const uploadSchema = z.object({

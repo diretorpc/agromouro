@@ -39,6 +39,16 @@ const { estado, uploadMock, removeMock } = vi.hoisted(() => {
     // 23505 e o service refaz um a um.
     itensInseridosIndividualmente: [] as any[],
     documentosDeletados: [] as string[],
+    // Migration 019 — o que `marcarDuplicataConfirmada` (gravarDocumentoPdf.ts)
+    // acha ao buscar a linha EXISTENTE que absorveu a duplicata. `null`
+    // (padrão) simula o caso defensivo "23505 confirmado pelo banco, mas a
+    // busca em código não achou" — a maioria dos testes deste arquivo não se
+    // importa com o sinal, só com o comportamento de gravarDocumentoDoPdf em
+    // si, então o padrão precisa ser "não quebra nada".
+    itemDuplicadoExistente: null as null | { id: string; duplicata_confirmada_vezes: number },
+    // Cada UPDATE feito em itens_nfe (fora do INSERT) — usado só pelo teste
+    // dedicado da migration 019, abaixo.
+    itensAtualizados: [] as { id: string; payload: any }[],
     // Cada UPDATE de status='erro' feito em documentos_controle (Achado A —
     // caminho "pelo menos 1 item já gravado", onde a FK RESTRICT impede o
     // DELETE e o service marca erro em vez de apagar).
@@ -127,6 +137,30 @@ vi.mock('../supabase', () => ({
             }
             return Promise.resolve({ data: payload, error: null })
           }),
+          // Migration 019 — `marcarDuplicataConfirmada` busca a linha
+          // existente (.select().eq()...maybeSingle()) e depois grava nela
+          // (.update().eq()). Encadeamento simplificado: qualquer sequência
+          // de `.eq()` devolve o mesmo objeto, só `maybeSingle()` resolve.
+          select: vi.fn(() => {
+            const chain: any = {
+              eq: vi.fn(() => chain),
+              maybeSingle: vi.fn(() => Promise.resolve(
+                estado.itemDuplicadoExistente
+                  ? { data: estado.itemDuplicadoExistente, error: null }
+                  : { data: null, error: null },
+              )),
+            }
+            return chain
+          }),
+          update: vi.fn((payload: any) => {
+            const chain: any = {
+              eq: vi.fn((_col: string, val: string) => {
+                estado.itensAtualizados.push({ id: val, payload })
+                return Promise.resolve({ data: null, error: null })
+              }),
+            }
+            return chain
+          }),
         }
       }
       throw new Error(`tabela não mockada neste teste: ${table}`)
@@ -196,6 +230,8 @@ beforeEach(() => {
   estado.documentosMarcadosErro = []
   estado.ultimaOperacaoDocumento = null
   estado.payloadUpdatePendente = null
+  estado.itemDuplicadoExistente = null
+  estado.itensAtualizados = []
   vi.clearAllMocks()
 })
 
@@ -551,6 +587,68 @@ describe('gravarDocumentoDoPdf — reimportação com item já gravado antes (Ac
     })
     expect(estado.documentosDeletados).toEqual([])
     expect(estado.documentosMarcadosErro).toEqual([])
+  })
+})
+
+// Migration 019 + Tarefa 2 do plano de 2026-08-18 (tabela editável estilo
+// Excel): a trava de dedupe (migration 018) já bloqueava a reimportação —
+// mas nunca deixava rastro na linha EXISTENTE. Estes testes provam que o
+// rastro (duplicata_confirmada_em/vezes) é gravado nela, para a tela pintar.
+describe('gravarDocumentoDoPdf — persiste sinal de duplicata confirmada na linha existente (migration 019)', () => {
+  it('reimportação pega a trava: a linha EXISTENTE ganha duplicata_confirmada_em/vezes atualizados', async () => {
+    estado.lido = {
+      status: 'documento',
+      documento: documento({
+        itens: [item({ numeroDocumento: '57106', descricao: 'ADUBO NPK 04-14-08', valorTotal: 1505 })],
+      }),
+    }
+    estado.erroInsertItens = {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "idx_itens_nfe_dedupe_item"',
+    }
+    estado.chavesDuplicadas = new Set([`${FORNECEDOR}|57106|ADUBO NPK 04-14-08|1505|0`])
+    // A linha existente já tinha sido "reencontrada" 2 vezes antes — esta
+    // reimportação precisa levar para 3, não simplesmente gravar 1.
+    estado.itemDuplicadoExistente = { id: 'item-existente-1', duplicata_confirmada_vezes: 2 }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    expect(r).toEqual({
+      status: 'gravado', documentoId: 'doc-1', itensGravados: 0, itensDescartados: 0, itensDuplicados: 1,
+    })
+
+    expect(estado.itensAtualizados).toHaveLength(1)
+    expect(estado.itensAtualizados[0].id).toBe('item-existente-1')
+    expect(estado.itensAtualizados[0].payload.duplicata_confirmada_vezes).toBe(3)
+    expect(typeof estado.itensAtualizados[0].payload.duplicata_confirmada_em).toBe('string')
+    // Timestamp de verdade, não um valor fixo/placeholder — confirma que o
+    // service calcula `now()` em vez de gravar algo estático.
+    expect(Number.isNaN(Date.parse(estado.itensAtualizados[0].payload.duplicata_confirmada_em))).toBe(false)
+  })
+
+  it('busca da linha existente falha (banco): não derruba a importação, só não marca o sinal', async () => {
+    estado.lido = {
+      status: 'documento',
+      documento: documento({
+        itens: [item({ numeroDocumento: '57106', descricao: 'ADUBO NPK 04-14-08', valorTotal: 1505 })],
+      }),
+    }
+    estado.erroInsertItens = {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "idx_itens_nfe_dedupe_item"',
+    }
+    estado.chavesDuplicadas = new Set([`${FORNECEDOR}|57106|ADUBO NPK 04-14-08|1505|0`])
+    // Sem `itemDuplicadoExistente` configurado (fica null) — simula a busca
+    // não achando nada (defensivo). A importação continua "gravado" mesmo
+    // assim: o sinal extra nunca pode ser motivo de falha da importação.
+    estado.itemDuplicadoExistente = null
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    expect(r).toEqual({
+      status: 'gravado', documentoId: 'doc-1', itensGravados: 0, itensDescartados: 0, itensDuplicados: 1,
+    })
+    expect(estado.itensAtualizados).toEqual([])
   })
 })
 
