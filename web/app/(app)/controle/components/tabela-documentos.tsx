@@ -3,7 +3,7 @@
 import { Fragment } from 'react'
 import { FileText } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Table, TableBody, TableCell, TableHead, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 import { FiltroColuna } from './filtro-coluna'
 import type { DocumentoControle, FiltrosControle, ItemDocumentoControle } from '@/lib/types'
@@ -60,6 +60,25 @@ function formatarNf(item: ItemDocumentoControle | null, doc: DocumentoControle):
 function formatarQuantidade(item: ItemDocumentoControle | null): string {
   if (!item || item.quantidade === null) return '—'
   return `${item.quantidade} ${item.unidade}`
+}
+
+// Rótulos de coluna repetem por documento (referência: prints de extrato real
+// que o Matheus mandou — a faixa do fornecedor vem ANTES dos nomes de coluna,
+// e cada documento tem o seu próprio bloco título+colunas+itens). Extraído
+// numa função em vez de deixar o JSX duplicado a cada `.map`, pra não
+// dessincronizar o texto das colunas entre os grupos.
+function CabecalhoColunas({ groupKey }: { groupKey: string }) {
+  return (
+    <TableRow key={`${groupKey}-cabecalho`}>
+      <TableHead>Data</TableHead>
+      <TableHead>NF</TableHead>
+      <TableHead>Produto</TableHead>
+      <TableHead className="text-right">Quant.</TableHead>
+      <TableHead className="text-right">V.Unit.</TableHead>
+      <TableHead className="text-right">V.Total</TableHead>
+      <TableHead className="text-center">PDF</TableHead>
+    </TableRow>
+  )
 }
 
 export function TabelaDocumentos({
@@ -125,17 +144,6 @@ export function TabelaDocumentos({
       </div>
 
       <Table className="border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
-        <TableHeader>
-          <TableRow>
-            <TableHead>Data</TableHead>
-            <TableHead>NF</TableHead>
-            <TableHead>Produto</TableHead>
-            <TableHead className="text-right">Quant.</TableHead>
-            <TableHead className="text-right">V.Unit.</TableHead>
-            <TableHead className="text-right">V.Total</TableHead>
-            <TableHead className="text-center">PDF</TableHead>
-          </TableRow>
-        </TableHeader>
         <TableBody>
           {documentos.length === 0 && mensagemVazia && (
             <TableRow>
@@ -191,6 +199,11 @@ export function TabelaDocumentos({
                   </div>
                 </TableCell>
               </TableRow>
+
+              {/* Rótulos de coluna vêm LOGO ABAIXO do título do fornecedor —
+                  não mais um <thead> fixo pra tabela inteira, já que agora
+                  cada documento é o seu próprio bloco completo. */}
+              <CabecalhoColunas groupKey={doc.id} />
 
               {doc.itens.length === 0 ? (
                 // Documento sem item algum (reimportação onde tudo já existia
