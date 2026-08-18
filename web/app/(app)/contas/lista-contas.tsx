@@ -2,7 +2,7 @@
 
 import { Fragment, useState } from 'react'
 import {
-  CircleDollarSign, Ban, CheckCircle2, Undo2, ChevronDown, ChevronRight, AlertTriangle,
+  CircleDollarSign, Ban, CheckCircle2, Undo2, ChevronDown, ChevronRight, AlertTriangle, Tag,
 } from 'lucide-react'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -25,6 +25,7 @@ type Props = {
   onDispensar:     (c: ContaAPI) => void
   onDesfazer:      (c: ContaAPI) => void
   onEditarValor:   (c: ContaAPI) => void
+  onEditar:        (c: ContaAPI) => void
   onInformarData:  (c: ContaAPI) => void
   sortColuna:      SortColuna
   sortDirecao:     'asc' | 'desc'
@@ -40,7 +41,7 @@ export function fmtBRL(value: number) {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
-function fmtDate(dateStr: string) {
+export function fmtDate(dateStr: string) {
   const [year, month, day] = dateStr.slice(0, 10).split('-').map(Number)
   return new Date(year, month - 1, day).toLocaleDateString('pt-BR')
 }
@@ -59,7 +60,7 @@ const STATUS_STYLE: Record<Conta['status'], string> = {
   dispensada: 'bg-gray-100 text-gray-600 border-gray-200',
 }
 
-export function ListaContas({ contas, onPagar, onDispensar, onDesfazer, onEditarValor, onInformarData, sortColuna, sortDirecao, onSort }: Props) {
+export function ListaContas({ contas, onPagar, onDispensar, onDesfazer, onEditarValor, onEditar, onInformarData, sortColuna, sortDirecao, onSort }: Props) {
   const [notasExpandidas, setNotasExpandidas] = useState<Set<string>>(new Set())
 
   function toggleNota(chave: string) {
@@ -124,6 +125,15 @@ export function ListaContas({ contas, onPagar, onDispensar, onDesfazer, onEditar
             const semVencimentoAcionavel = !conta.vencimento && podeAgir
 
             const acoes: ActionMenuItem[] = []
+            // Sem gate de status de propósito: conta já paga/dispensada com
+            // dado errado (ex: boleto que chegou do email como "Insumos"
+            // quando era "Combustível") também precisa de conserto — pedido do
+            // Matheus, 18/08/2026.
+            acoes.push({
+              label: 'Editar',
+              icon: <Tag className="h-3.5 w-3.5" aria-hidden="true" />,
+              onClick: () => onEditar(conta),
+            })
             if (podeAgir && conta.valor_estimado) {
               acoes.push({
                 label: 'Registrar valor real',
@@ -216,6 +226,7 @@ export function ListaContas({ contas, onPagar, onDispensar, onDesfazer, onEditar
                       <Button size="sm" onClick={() => onInformarData(conta)}>Informar data</Button>
                       <Button size="sm" variant="outline" onClick={() => onPagar(conta)}>Já foi paga</Button>
                       <Button size="sm" variant="outline" onClick={() => onDispensar(conta)}>Sem boleto</Button>
+                      <Button size="sm" variant="outline" onClick={() => onEditar(conta)}>Editar</Button>
                     </div>
                   ) : (
                     acoes.length > 0 && (

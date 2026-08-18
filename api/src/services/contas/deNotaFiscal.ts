@@ -11,6 +11,13 @@ export type DadosParaConta = {
   formaPagamento: string | null
   duplicatas:     NFeDuplicata[]
   items:          { descricao: string }[]   // xProd de cada item — só o texto, não NCM/CFOP/valor
+  // 'nfe' (produto) ou 'nfse' (serviço) — a mesma distinção de NFeData
+  // (nfeProcessor.ts). Alimenta observacaoDeServicoSemRecorrenciaConferida()
+  // logo abaixo: NFS-e nunca traz vencimento de boleto, e uma conta sem
+  // vencimento nascida de serviço é indistinguível, pro sistema, de uma conta
+  // RECORRENTE já cadastrada pro mesmo fornecedor no mesmo mês. Achado [alto]
+  // do Apolo, 2ª rodada, 17/08/2026.
+  modelo:         'nfe' | 'nfse'
 }
 
 export type ContaDeNota = {
@@ -189,6 +196,43 @@ export function observacaoDoBoletoContraOCodigo(motivoVencido: string | null): s
   if (!motivoVencido) return null
   return `${PREFIXO_CONFERIR} ${motivoVencido}, mas veio com cobrança marcada. ` +
     `Pode já ter sido pago (ou vir na fatura do cartão) — nesse caso, dispense esta conta.`
+}
+
+// A MESMA tarja de cima (mesma coluna `observacao`, mesmo prefixo
+// PREFIXO_CONFERIR), para um risco diferente: NFS-e (nota de serviço) nunca
+// traz vencimento de boleto no XML — nenhum bloco <cobr><dup> no layout
+// nacional (ver o comentário de parseXmlNFSe em nfeProcessor.ts). Toda NFS-e
+// cai, sem exceção, no caminho "sem duplicata" de contasDaNota() (o mesmo
+// caminho do caso ERCAL: uma conta sem vencimento, pelo valor total).
+//
+// Isso torna a conta indistinguível, pro sistema, de uma conta RECORRENTE já
+// cadastrada pro mesmo fornecedor no mesmo mês — o caso real que motivou este
+// aviso: SITRACK (rastreador de frota, R$124/mês), com uma conta recorrente já
+// em `contas_a_pagar` (`recorrente_id` preenchido, `nota_fiscal_id` nulo).
+// Reenviar a NFS-e da SITRACK criaria uma SEGUNDA conta pro mesmo mês/
+// fornecedor/valor — e como a recorrente não tem `nota_fiscal_id`, ela CRIA
+// lançamento financeiro ao ser paga (`precisaCriarLancamento` em
+// contas/pagamento.ts): pagar as duas duplica o GASTO de verdade, não só o
+// boleto. Achado [alto] do Apolo, 2ª rodada, 17/08/2026 — probe em produção
+// confirmou a conta recorrente da SITRACK já existente.
+//
+// Esta função NÃO resolve a duplicidade — o sistema não tem hoje como casar
+// com segurança uma conta recorrente com a NFS-e que acabou de chegar (nome
+// do fornecedor pode divergir entre as duas, e casar só pelo valor é frágil).
+// Só garante que o dono seja avisado ANTES de pagar as duas.
+export function observacaoDeServicoSemRecorrenciaConferida(
+  modelo: 'nfe' | 'nfse',
+  vencimento: string | null,
+): string | null {
+  if (modelo !== 'nfse') return null
+  if (vencimento !== null) return null
+  // Nomeia a AÇÃO CERTA, não só o risco: a tarja irmã (avisoBoleto.ts,
+  // linhaBoletoContraOCodigo) termina com "dispense esta conta" — copiar esse
+  // padrão aprendido faria o dono dispensar a conta NOVA (a da nota, que já
+  // lançou o gasto certo) e manter a RECORRENTE (que cria outro lançamento ao
+  // ser paga, sem nota_fiscal_id). Achado do Apolo, 3ª rodada, 17/08/2026.
+  return `${PREFIXO_CONFERIR} Serviço — o gasto já foi lançado por esta nota. Se você tem conta ` +
+    `recorrente deste fornecedor neste mês, dispense A RECORRENTE (não esta), senão o gasto conta duas vezes.`
 }
 
 // Mês de uma data 'YYYY-MM-DD' (ou ISO completo) como primeiro dia do mês.

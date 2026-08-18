@@ -52,16 +52,24 @@ app.use(helmet({
 }))
 
 // ─── CORS — apenas origens permitidas ────────────────────────────────────────
+const isProd = process.env.NODE_ENV === 'production'
+
 const allowedOrigins = [
   'http://localhost:3000',
   // suporta múltiplas URLs separadas por vírgula: https://a.vercel.app,https://meudominio.com
   ...(process.env.FRONTEND_URL ?? '').split(',').map(s => s.trim()).filter(Boolean),
 ].filter(Boolean) as string[]
 
+// Em dev, várias sessões (worktrees, portas ocupadas) fazem o Next subir em portas
+// diferentes de 3000. Liberar localhost:* só fora de produção evita travar o
+// desenvolvimento sem afrouxar CORS em produção (Railway sempre roda com NODE_ENV=production).
+const localhostDevRegex = /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/
+
 const corsHandler = cors({
   origin: (origin, callback) => {
     // Permitir requests sem origin (ex: Postman em dev, Railway health checks)
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true)
+    if (!isProd && localhostDevRegex.test(origin)) return callback(null, true)
     // Origem não permitida: não setar headers CORS (navegador bloqueia) em vez de
     // lançar Error — lançar vira 500 no errorHandler e vaza config de CORS na resposta.
     console.warn(`CORS bloqueado — origem não permitida: ${origin}`)

@@ -31,6 +31,8 @@ import { SortableTableHead } from '@/components/ui/sortable-table-head'
 import { supabase } from '@/lib/supabase'
 import { useFazenda } from '@/context/fazenda-context'
 import { CATEGORIAS_FINANCEIRAS, normalizarCategoria, categoriaLabel } from '@/lib/centro-custo'
+import { useColumnWidths } from '@/lib/use-column-widths'
+import { ColumnResizeHandle } from '@/components/ui/column-resize-handle'
 
 type ItemFinanceiro = {
   id: string
@@ -74,6 +76,15 @@ const FORM_VAZIO: FormData = {
   valor_unitario: '', centro_custo: 'outro', data: new Date().toISOString().slice(0, 10),
 }
 
+// Edição de lançamento de conta paga: sem quantidade/unidade (lancamentos_financeiros
+// tem só um valor por linha, não item×preço como itens_nfe) — pedido do Matheus,
+// 18/08/2026 (editar TUDO: fornecedor, descrição, categoria, valor, data). Fornecedor
+// vem separado da descrição na tela (ver separarFornecedorDaConta) e os dois voltam a
+// virar um texto só, no mesmo formato "FORNECEDOR — resto", na hora de salvar — ver
+// handleEditarConta.
+type ContaEditForm = { fornecedor: string; descricao: string; categoria: string; valor: string; data: string }
+const CONTA_EDIT_FORM_VAZIO: ContaEditForm = { fornecedor: '', descricao: '', categoria: 'outro', valor: '', data: '' }
+
 const TIPOS = CATEGORIAS_FINANCEIRAS
 
 const CENTRO_CUSTO_STYLE: Record<string, string> = {
@@ -86,6 +97,7 @@ const CENTRO_CUSTO_STYLE: Record<string, string> = {
   fertilizante_p:     'bg-green-100 text-green-700 border-green-200',
   fertilizante_k:     'bg-green-100 text-green-700 border-green-200',
   fertilizante_outro: 'bg-green-100 text-green-700 border-green-200',
+  foliar:             'bg-lime-100 text-lime-700 border-lime-200',
   calcario:           'bg-stone-100 text-stone-700 border-stone-200',
   semente:            'bg-yellow-100 text-yellow-700 border-yellow-200',
   combustivel:        'bg-blue-100 text-blue-700 border-blue-200',
@@ -110,6 +122,7 @@ const CENTRO_CUSTO_COLOR: Record<string, string> = {
   fertilizante_p:     '#4D7C0F',  // lima escuro (lime-700)
   fertilizante_k:     '#B45309',  // âmbar (amber-700)
   fertilizante_outro: '#713F12',  // marrom (amber-900)
+  foliar:             '#65A30D',  // lima (lime-600)
   calcario:           '#57534E',  // pedra (stone-600)
   semente:            '#CA8A04',  // mostarda (yellow-600)
   // ── Operacional ───────────────────────────────────────────
@@ -148,6 +161,50 @@ function fmtDate(dateStr: string) {
   return new Date(year, month - 1, day).toLocaleDateString('pt-BR')
 }
 
+// Lançamento de conta paga (contas_a_pagar) chega aqui com o fornecedor já
+// embutido no texto — "FORNECEDOR — descrição" (ver montarLancamento em
+// api/src/services/contas/pagamento.ts). Separa os dois pra exibir o
+// fornecedor na coluna Origem, igual nota fiscal, em vez de repetir tudo
+// junto em Produto/Serviço. Sem essa separação o texto vem inteiro e a
+// coluna Origem só mostra o crachá genérico "Conta paga".
+//
+// ⚠️ Risco aceito (achado do Apolo, 18/08/2026, decisão do Matheus): isto
+// detecta o SEPARADOR, não o fornecedor de verdade. Uma conta SEM fornecedor
+// cuja descrição digitada à mão contenha " — " é partida errada — um pedaço
+// vira "fornecedor" inventado na coluna Origem. Chance baixa (exige o dono
+// digitar esse traço exato numa conta sem fornecedor). Conserto definitivo
+// exigiria coluna própria de fornecedor em lancamentos_financeiros (migration);
+// decidido não fazer agora.
+//
+// ATUALIZAÇÃO 18/08/2026 (2ª rodada): este campo agora é EDITÁVEL (dialog de
+// "Editar lançamento" no Financeiro) — deixou de ser só apresentação. Sem
+// cuidado, um dono que abre o dialog e limpa um "Fornecedor" que na verdade é
+// pedaço da descrição (mis-split acima) perderia esse texto ao salvar.
+// handleEditarConta detecta esse caso específico (fornecedor vazio + descrição
+// não tocada) e preserva o texto original em vez de descartar — ver ali.
+function separarFornecedorDaConta(descricao: string): { fornecedor: string | null; resto: string } {
+  const separador = ' — '
+  const indice = descricao.indexOf(separador)
+  if (indice === -1) return { fornecedor: null, resto: descricao }
+  const resto = descricao.slice(indice + separador.length).trim()
+  const fornecedor = descricao.slice(0, indice).trim()
+  // Conta com descrição "FORNECEDOR — " (nada depois do separador) ou
+  // " — resto" (nada antes) não pode virar célula muda nem fornecedor em
+  // branco na coluna Origem — cai pro texto completo, igual ao caso "não
+  // achou separador" (achado do Apolo, 18/08/2026, 2ª rodada).
+  if (!resto || !fornecedor) return { fornecedor: null, resto: descricao }
+  return { fornecedor, resto }
+}
+
+// Fonte única do texto exibido em Produto/Serviço — usada tanto na ordenação
+// quanto no JSX. Antes da separação por fornecedor os dois liam o mesmo
+// `item.descricao`; separar só na renderização quebrou a ordenação (a coluna
+// ordenava pelo texto com fornecedor, mas mostrava só o resto) — achado do
+// Apolo, 18/08/2026.
+function textoDescricaoExibido(item: ItemFinanceiro): string {
+  return item.origem === 'conta' ? separarFornecedorDaConta(item.descricao).resto : item.descricao
+}
+
 // Mesma função de web/lib/centro-custo.ts (categoriaLabel) — nome local
 // mantido porque os 9 lugares que chamam já esperam "tipoLabel".
 const tipoLabel = categoriaLabel
@@ -171,7 +228,7 @@ type SortColunaFinanceiro = 'descricao' | 'quantidade' | 'valor_unitario' | 'val
 function compararItensPorColuna(a: ItemFinanceiro, b: ItemFinanceiro, coluna: SortColunaFinanceiro, direcao: 'asc' | 'desc'): number {
   let cmp = 0
   switch (coluna) {
-    case 'descricao':      cmp = a.descricao.localeCompare(b.descricao); break
+    case 'descricao':      cmp = textoDescricaoExibido(a).localeCompare(textoDescricaoExibido(b)); break
     case 'quantidade':     cmp = a.quantidade - b.quantidade; break
     case 'valor_unitario': cmp = a.valor_unitario - b.valor_unitario; break
     case 'valor_total':    cmp = a.valor_total - b.valor_total; break
@@ -259,6 +316,20 @@ function FormFields({ form, setForm }: { form: FormData; setForm: React.Dispatch
 // pro histórico inteiro, e "Todos os meses" não sobrevivia a um F5.
 const MES_PADRAO = new Date().toISOString().slice(0, 7)
 
+// Larguras de partida das colunas redimensionáveis — os mesmos valores que já
+// existiam fixos em `w-[Npx]` antes desta mudança (Task 4 do plano de
+// 2026-08-17). Coluna de ações e de checkbox não entram aqui: não são
+// redimensionáveis (ver design).
+const COLUNAS_FINANCEIRO = [
+  { id: 'origem', padrao: 180 },
+  { id: 'descricao', padrao: 220 },
+  { id: 'quantidade', padrao: 70 },
+  { id: 'valor_unitario', padrao: 110 },
+  { id: 'valor_total', padrao: 120 },
+  { id: 'centro_custo', padrao: 140 },
+  { id: 'data_emissao', padrao: 90 },
+]
+
 export default function FinanceiroPage() {
   const [itens, setItens] = useState<ItemFinanceiro[]>([])
   const [loading, setLoading] = useState(true)
@@ -278,6 +349,7 @@ export default function FinanceiroPage() {
   const [visivelCount, setVisivelCount] = useState(20)
   const [notasExpandidas, setNotasExpandidas] = useState<Set<string>>(new Set())
   const { fazendaAtiva } = useFazenda()
+  const { largura, iniciarArrasto } = useColumnWidths('financeiro', COLUNAS_FINANCEIRO)
 
   function toggleNota(chave: string) {
     setNotasExpandidas(prev => {
@@ -286,6 +358,107 @@ export default function FinanceiroPage() {
       else novo.add(chave)
       return novo
     })
+  }
+
+  // ─── Seleção em massa (trocar centro de custo de vários itens de uma vez) ──
+  // Só itens_nfe têm centro_custo editável nesta tela (mesma regra do lápis de
+  // edição individual, ver handleEdit) — lançamento de cartão/manual/conta não
+  // entra na seleção. Guarda o `id` de itens_nfe, não o objeto inteiro: mais
+  // barato de comparar e sobrevive a um `load()` que troca a referência do item.
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set())
+  const [centroEmMassa, setCentroEmMassa] = useState('')
+  const [aplicandoEmMassa, setAplicandoEmMassa] = useState(false)
+  const [erroEmMassa, setErroEmMassa] = useState<string | null>(null)
+
+  // Conta paga entra na seleção desde 18/08/2026 (pedido do Matheus): seu
+  // centro de custo mora em `lancamentos_financeiros.categoria`, não em
+  // `itens_nfe.centro_custo` — ver aplicarCentroEmMassa, que separa os ids por
+  // tabela na hora de salvar. Cartão/manual continuam de fora: ninguém pediu.
+  function itemSelecionavel(item: ItemFinanceiro): boolean {
+    return item.source_table === 'itens_nfe' || item.origem === 'conta'
+  }
+
+  function toggleSelecionado(id: string) {
+    setSelecionados(prev => {
+      const novo = new Set(prev)
+      if (novo.has(id)) novo.delete(id)
+      else novo.add(id)
+      return novo
+    })
+  }
+
+  // Marca/desmarca TODOS os itens de uma nota agrupada de uma vez — resolve o
+  // caso de pedido: "tem uma nota aqui com vários itens, quero trocar o
+  // centro de custo de todos sem abrir um por um". Todo item de um grupo com
+  // mais de 1 linha é sempre itens_nfe (só quem tem nota_fiscal_id agrupa —
+  // ver `grupos` mais abaixo), então não precisa filtrar por selecionável aqui.
+  function toggleGrupoSelecionado(ids: string[]) {
+    setSelecionados(prev => {
+      const todosMarcados = ids.every(id => prev.has(id))
+      const novo = new Set(prev)
+      if (todosMarcados) ids.forEach(id => novo.delete(id))
+      else ids.forEach(id => novo.add(id))
+      return novo
+    })
+  }
+
+  function limparSelecao() {
+    setSelecionados(new Set())
+    setCentroEmMassa('')
+    setErroEmMassa(null)
+  }
+
+  async function aplicarCentroEmMassa() {
+    if (selecionados.size === 0 || !centroEmMassa) return
+    setAplicandoEmMassa(true)
+    setErroEmMassa(null)
+
+    const idsAlvo = Array.from(selecionados)
+    // Conta paga guarda centro de custo em lancamentos_financeiros.categoria,
+    // não em itens_nfe.centro_custo (ver itemSelecionavel) — separa os ids por
+    // tabela antes de salvar. Ids nunca colidem entre as duas (uuid), então dá
+    // pra decidir só olhando `itens` (fonte de verdade de quem é quem).
+    const idsConta = new Set(itens.filter(i => i.origem === 'conta').map(i => i.id))
+    const idsItensNfe = idsAlvo.filter(id => !idsConta.has(id))
+    const idsLancamentos = idsAlvo.filter(id => idsConta.has(id))
+
+    const [resNfe, resLanc] = await Promise.all([
+      idsItensNfe.length > 0
+        ? supabase.from('itens_nfe').update({ centro_custo: centroEmMassa }).in('id', idsItensNfe).select('id')
+        : Promise.resolve({ data: [] as { id: string }[], error: null }),
+      idsLancamentos.length > 0
+        ? supabase.from('lancamentos_financeiros').update({ categoria: centroEmMassa }).in('id', idsLancamentos).select('id')
+        : Promise.resolve({ data: [] as { id: string }[], error: null }),
+    ])
+
+    setAplicandoEmMassa(false)
+
+    const erro = resNfe.error ?? resLanc.error
+    if (erro) {
+      console.error('[Financeiro] Erro ao trocar centro de custo em massa:', erro)
+      setErroEmMassa(`Erro ao salvar: ${erro.message}`)
+      return
+    }
+
+    // Mesmo padrão de handleEdit (edição de 1 item só, logo acima): um UPDATE
+    // sem erro NÃO garante que toda linha foi gravada — RLS filtra silenciosamente
+    // (ver memória do projeto "rls-escrita-silenciosa"). Sem esta checagem, trocar
+    // o centro de custo de 3 itens e só 2 passarem pela RLS pareceria sucesso total.
+    const idsAtualizados = new Set([...(resNfe.data ?? []), ...(resLanc.data ?? [])].map(r => r.id))
+    const idsFalhos = idsAlvo.filter(id => !idsAtualizados.has(id))
+    if (idsFalhos.length > 0) {
+      console.error('[Financeiro] Trocar centro de custo em massa: update não afetou todas as linhas — possível política RLS.', idsFalhos)
+      setErroEmMassa(
+        idsFalhos.length === idsAlvo.length
+          ? 'Sem permissão para editar estes itens. Verifique as políticas do banco.'
+          : `${idsAtualizados.size} de ${idsAlvo.length} itens foram atualizados — os demais não tinham permissão. Verifique as políticas do banco.`
+      )
+      load()
+      return
+    }
+
+    limparSelecao()
+    load()
   }
 
   function handleSort(coluna: SortColunaFinanceiro) {
@@ -301,6 +474,12 @@ export default function FinanceiroPage() {
   const [addErro, setAddErro] = useState<string | null>(null)
   const [editItem, setEditItem] = useState<ItemFinanceiro | null>(null)
   const [editErro, setEditErro] = useState<string | null>(null)
+  // Conta paga não edita pelo formulário grande (quantidade/valor unitário não
+  // fazem sentido pra um lançamento de valor único) — dialog próprio, com
+  // fornecedor/descrição separados. Pedido do Matheus, 18/08/2026.
+  const [editContaItem, setEditContaItem] = useState<ItemFinanceiro | null>(null)
+  const [editContaForm, setEditContaForm] = useState<ContaEditForm>(CONTA_EDIT_FORM_VAZIO)
+  const [editContaErro, setEditContaErro] = useState<string | null>(null)
   const [deleteItem, setDeleteItem] = useState<ItemFinanceiro | null>(null)
   const [deleteErro, setDeleteErro] = useState<string | null>(null)
   const [salvando, setSalvando] = useState(false)
@@ -517,6 +696,72 @@ export default function FinanceiroPage() {
     load()
   }
 
+  function abrirEditarConta(item: ItemFinanceiro) {
+    const { fornecedor, resto } = separarFornecedorDaConta(item.descricao)
+    setEditContaForm({
+      fornecedor: fornecedor ?? '',
+      descricao:  resto,
+      categoria:  item.centro_custo,
+      valor:      String(item.valor_total),
+      data:       item.data_emissao ? item.data_emissao.slice(0, 10) : new Date().toISOString().slice(0, 10),
+    })
+    setEditContaErro(null)
+    setEditContaItem(item)
+  }
+
+  async function handleEditarConta() {
+    if (!editContaItem) return
+    if (!editContaForm.descricao.trim()) { setEditContaErro('A descrição não pode ficar vazia.'); return }
+    const valorNum = parseFloat(editContaForm.valor)
+    if (isNaN(valorNum) || valorNum < 0) { setEditContaErro('Informe um valor válido.'); return }
+    if (!editContaForm.data) { setEditContaErro('Informe a data.'); return }
+
+    setSalvando(true)
+    setEditContaErro(null)
+
+    // Mesmo formato que o backend grava no pagamento (ver montarLancamento em
+    // api/src/services/contas/pagamento.ts) — precisa continuar assim pra
+    // separarFornecedorDaConta seguir lendo o fornecedor de volta depois.
+    const fornecedor = editContaForm.fornecedor.trim()
+    const original = separarFornecedorDaConta(editContaItem.descricao)
+    // Achado do Apolo, 18/08/2026: o campo Fornecedor pode vir preenchido por um
+    // SPLIT AUTOMÁTICO da descrição (risco aceito, ver separarFornecedorDaConta),
+    // não por um fornecedor de verdade gravado. Se o dono só apaga esse campo sem
+    // tocar na descrição, salvar `descricao` sozinha jogaria fora um pedaço do
+    // texto original pra sempre. Detecta esse caso específico e preserva o texto
+    // original inteiro em vez de descartar.
+    const descricao = (!fornecedor && original.fornecedor && editContaForm.descricao.trim() === original.resto)
+      ? editContaItem.descricao
+      : (fornecedor ? `${fornecedor} — ${editContaForm.descricao.trim()}` : editContaForm.descricao.trim())
+
+    const { data: updated, error } = await supabase
+      .from('lancamentos_financeiros')
+      .update({
+        descricao,
+        valor: valorNum,
+        categoria: editContaForm.categoria,
+        data: editContaForm.data,
+      })
+      .eq('id', editContaItem.id)
+      .select('id')
+
+    setSalvando(false)
+
+    if (error) {
+      console.error('[Financeiro] Erro ao editar lançamento de conta paga:', error)
+      setEditContaErro(`Erro ao salvar: ${error.message}`)
+      return
+    }
+    if (!updated || updated.length === 0) {
+      console.error('[Financeiro] Update não afetou nenhuma linha — possível política RLS')
+      setEditContaErro('Sem permissão para editar este item. Verifique as políticas do banco.')
+      return
+    }
+
+    setEditContaItem(null)
+    load()
+  }
+
   async function handleDelete() {
     if (!deleteItem) return
     setSalvando(true)
@@ -586,6 +831,11 @@ export default function FinanceiroPage() {
   }
 
   const gruposExibidos = grupos.slice(0, visivelCount)
+
+  // Ids selecionáveis visíveis agora (respeita filtro + paginação) — usado só
+  // pelo checkbox "marcar tudo" do cabeçalho da tabela.
+  const idsSelecionaveisVisiveis = gruposExibidos.flatMap(g => g.itens.filter(itemSelecionavel).map(i => i.id))
+  const todosVisiveisSelecionados = idsSelecionaveisVisiveis.length > 0 && idsSelecionaveisVisiveis.every(id => selecionados.has(id))
 
   const totalGeral = itensQueContam.reduce((s, i) => s + i.valor_total, 0)
   const porCategoria = itensQueContam.reduce<Record<string, number>>((acc, i) => {
@@ -769,6 +1019,44 @@ export default function FinanceiroPage() {
               )}
             </CardTitle>
           </div>
+          {selecionados.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
+              <span className="text-sm font-medium">
+                {selecionados.size} {selecionados.size === 1 ? 'selecionado' : 'selecionados'}
+              </span>
+              <Select value={centroEmMassa} onValueChange={v => setCentroEmMassa(v ?? '')}>
+                <SelectTrigger className="w-52 h-9 text-sm bg-background">
+                  <SelectValue placeholder="Trocar centro de custo para…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {TIPOS.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Button
+                size="sm"
+                disabled={!centroEmMassa || aplicandoEmMassa}
+                onClick={aplicarCentroEmMassa}
+              >
+                {aplicandoEmMassa ? 'Aplicando…' : 'Aplicar'}
+              </Button>
+              <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={limparSelecao}>
+                Cancelar seleção
+              </Button>
+              {erroEmMassa && (
+                <span className="text-sm text-red-600">{erroEmMassa}</span>
+              )}
+              {/* Mesmo aviso do dialog de edição individual (achado do Apolo,
+                  18/08/2026) — a troca em massa também grava direto em
+                  lancamentos_financeiros.categoria quando a seleção inclui
+                  conta paga, e "Desfazer pagamento" também apaga isso. */}
+              {itens.some(i => selecionados.has(i.id) && i.origem === 'conta') && (
+                <span className="text-xs text-amber-700 basis-full">
+                  A seleção inclui lançamento de conta paga — a troca não muda a conta
+                  original em Contas a Pagar, e some se aquele pagamento for desfeito.
+                </span>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <Select
               value={filtroOrigem}
@@ -825,23 +1113,68 @@ export default function FinanceiroPage() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <Table className="border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
+          <Table className="border-collapse w-max [&_th]:border [&_th]:border-border [&_th]:overflow-hidden [&_td]:border [&_td]:border-border [&_td]:overflow-hidden" style={{ tableLayout: 'fixed' }}>
             <TableHeader>
               <TableRow>
-                <SortableTableHead className="w-[220px]" ativo={sortColuna === 'descricao'} direcao={sortDirecao} onClick={() => handleSort('descricao')}>Produto / Serviço</SortableTableHead>
-                <SortableTableHead className="w-[70px] text-right" numeric ativo={sortColuna === 'quantidade'} direcao={sortDirecao} onClick={() => handleSort('quantidade')}>Qtd.</SortableTableHead>
-                <SortableTableHead className="w-[110px] text-right" numeric ativo={sortColuna === 'valor_unitario'} direcao={sortDirecao} onClick={() => handleSort('valor_unitario')}>Valor Unit.</SortableTableHead>
-                <SortableTableHead className="w-[120px] text-right" numeric ativo={sortColuna === 'valor_total'} direcao={sortDirecao} onClick={() => handleSort('valor_total')}>Valor Total</SortableTableHead>
-                <SortableTableHead className="w-[140px]" ativo={sortColuna === 'centro_custo'} direcao={sortDirecao} onClick={() => handleSort('centro_custo')}>Centro de Custo</SortableTableHead>
-                <SortableTableHead className="w-[180px]" ativo={sortColuna === 'origem'} direcao={sortDirecao} onClick={() => handleSort('origem')}>Origem</SortableTableHead>
-                <SortableTableHead className="w-[90px]" ativo={sortColuna === 'data_emissao'} direcao={sortDirecao} onClick={() => handleSort('data_emissao')}>Data</SortableTableHead>
+                <SortableTableHead
+                  style={{ width: largura('origem') }}
+                  ativo={sortColuna === 'origem'} direcao={sortDirecao} onClick={() => handleSort('origem')}
+                  resizeHandle={<ColumnResizeHandle onPointerDown={iniciarArrasto('origem', largura('origem'))} />}
+                >Origem</SortableTableHead>
+                <SortableTableHead
+                  style={{ width: largura('descricao') }}
+                  ativo={sortColuna === 'descricao'} direcao={sortDirecao} onClick={() => handleSort('descricao')}
+                  resizeHandle={<ColumnResizeHandle onPointerDown={iniciarArrasto('descricao', largura('descricao'))} />}
+                >Produto / Serviço</SortableTableHead>
+                <SortableTableHead
+                  className="text-right" style={{ width: largura('quantidade') }} numeric
+                  ativo={sortColuna === 'quantidade'} direcao={sortDirecao} onClick={() => handleSort('quantidade')}
+                  resizeHandle={<ColumnResizeHandle onPointerDown={iniciarArrasto('quantidade', largura('quantidade'))} />}
+                >Qtd.</SortableTableHead>
+                <SortableTableHead
+                  className="text-right" style={{ width: largura('valor_unitario') }} numeric
+                  ativo={sortColuna === 'valor_unitario'} direcao={sortDirecao} onClick={() => handleSort('valor_unitario')}
+                  resizeHandle={<ColumnResizeHandle onPointerDown={iniciarArrasto('valor_unitario', largura('valor_unitario'))} />}
+                >Valor Unit.</SortableTableHead>
+                <SortableTableHead
+                  className="text-right" style={{ width: largura('valor_total') }} numeric
+                  ativo={sortColuna === 'valor_total'} direcao={sortDirecao} onClick={() => handleSort('valor_total')}
+                  resizeHandle={<ColumnResizeHandle onPointerDown={iniciarArrasto('valor_total', largura('valor_total'))} />}
+                >Valor Total</SortableTableHead>
+                <SortableTableHead
+                  style={{ width: largura('centro_custo') }}
+                  ativo={sortColuna === 'centro_custo'} direcao={sortDirecao} onClick={() => handleSort('centro_custo')}
+                  resizeHandle={<ColumnResizeHandle onPointerDown={iniciarArrasto('centro_custo', largura('centro_custo'))} />}
+                >Centro de Custo</SortableTableHead>
+                <SortableTableHead
+                  style={{ width: largura('data_emissao') }}
+                  ativo={sortColuna === 'data_emissao'} direcao={sortDirecao} onClick={() => handleSort('data_emissao')}
+                  resizeHandle={<ColumnResizeHandle onPointerDown={iniciarArrasto('data_emissao', largura('data_emissao'))} />}
+                >Data</SortableTableHead>
                 <TableHead className="w-[72px]" />
+                <TableHead className="w-[36px]">
+                  <input
+                    type="checkbox"
+                    aria-label={todosVisiveisSelecionados ? 'Desmarcar todos os itens visíveis' : 'Marcar todos os itens visíveis'}
+                    className="h-4 w-4 rounded border-input accent-primary cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+                    checked={todosVisiveisSelecionados}
+                    disabled={idsSelecionaveisVisiveis.length === 0}
+                    onChange={() => setSelecionados(prev => {
+                      if (todosVisiveisSelecionados) {
+                        const novo = new Set(prev)
+                        idsSelecionaveisVisiveis.forEach(id => novo.delete(id))
+                        return novo
+                      }
+                      return new Set([...prev, ...idsSelecionaveisVisiveis])
+                    })}
+                  />
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {itensFiltrados.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground py-10">
+                  <TableCell colSpan={9} className="text-center text-muted-foreground py-10">
                     <p>Nenhum lançamento encontrado{filtroMes !== 'todos' ? ' neste mês' : ''}.</p>
                     {filtroMes !== 'todos' && (
                       <Button
@@ -860,10 +1193,38 @@ export default function FinanceiroPage() {
 
                 if (!multiplo) {
                   const item = grupo.itens[0]
+                  const fornecedorConta = item.origem === 'conta' ? separarFornecedorDaConta(item.descricao).fornecedor : null
                   return (
                     <TableRow key={item.id}>
+                      <TableCell className="text-sm w-[160px]">
+                        {item.origem === 'cartao' ? (
+                          <Badge variant="secondary" className="text-xs">
+                            {item.cartao_apelido ?? 'Cartão'}
+                          </Badge>
+                        ) : item.origem === 'conta' && fornecedorConta ? (
+                          <div>
+                            <p className="font-medium text-sm whitespace-normal break-words">{fornecedorConta}</p>
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-emerald-50 text-emerald-700 border-emerald-200">
+                              Conta paga
+                            </Badge>
+                          </div>
+                        ) : item.origem === 'conta' ? (
+                          <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
+                            Conta paga
+                          </Badge>
+                        ) : item.origem === 'manual' ? (
+                          <span className="text-xs text-muted-foreground italic">Manual</span>
+                        ) : item.is_manual ? (
+                          <span className="text-xs text-muted-foreground italic">Manual</span>
+                        ) : (
+                          <div>
+                            <p className="font-medium text-sm whitespace-normal break-words">{item.emitente_nome}</p>
+                            <p className="text-xs text-muted-foreground">NF {item.nota_numero}</p>
+                          </div>
+                        )}
+                      </TableCell>
                       <TableCell className="font-medium text-sm whitespace-normal break-words">
-                        {item.descricao}
+                        {textoDescricaoExibido(item)}
                       </TableCell>
                       <TableCell className="text-right text-sm text-muted-foreground">
                         {item.quantidade} {item.unidade}
@@ -898,28 +1259,6 @@ export default function FinanceiroPage() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm w-[160px]">
-                        {item.origem === 'cartao' ? (
-                          <Badge variant="secondary" className="text-xs">
-                            {item.cartao_apelido ?? 'Cartão'}
-                          </Badge>
-                        ) : item.origem === 'conta' ? (
-                          <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
-                            Conta paga
-                          </Badge>
-                        ) : item.origem === 'manual' ? (
-                          <span className="text-xs text-muted-foreground italic">Manual</span>
-                        ) : item.is_manual ? (
-                          <span className="text-xs text-muted-foreground italic">Manual</span>
-                        ) : (
-                          <div>
-                            <p className="font-medium text-xs">NF {item.nota_numero}</p>
-                            <p className="text-xs text-muted-foreground whitespace-normal break-words">
-                              {item.emitente_nome}
-                            </p>
-                          </div>
-                        )}
-                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                         {item.data_emissao ? fmtDate(item.data_emissao) : '—'}
                       </TableCell>
@@ -936,6 +1275,17 @@ export default function FinanceiroPage() {
                               <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                             </Button>
                           )}
+                          {item.origem === 'conta' && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              aria-label="Editar lançamento"
+                              className="hover:bg-blue-50 hover:text-blue-600"
+                              onClick={() => abrirEditarConta(item)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                            </Button>
+                          )}
                           <Button
                             size="sm"
                             variant="ghost"
@@ -947,6 +1297,17 @@ export default function FinanceiroPage() {
                           </Button>
                         </div>
                       </TableCell>
+                      <TableCell>
+                        {itemSelecionavel(item) && (
+                          <input
+                            type="checkbox"
+                            aria-label="Selecionar este lançamento"
+                            className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
+                            checked={selecionados.has(item.id)}
+                            onChange={() => toggleSelecionado(item.id)}
+                          />
+                        )}
+                      </TableCell>
                     </TableRow>
                   )
                 }
@@ -957,9 +1318,18 @@ export default function FinanceiroPage() {
                 const categoriasGrupo = Array.from(new Set(grupo.itens.map(i => i.centro_custo)))
                 const temItemQueNaoConta = grupo.itens.some(i => i.conta_como_compra === false)
 
+                const idsDoGrupo = grupo.itens.map(i => i.id)
+                const grupoTodoSelecionado = idsDoGrupo.every(id => selecionados.has(id))
+
                 return (
                   <Fragment key={grupo.chave}>
-                    <TableRow className="hover:bg-muted/50">
+                    <TableRow className="bg-sky-100/70 has-aria-expanded:bg-sky-100/70 hover:bg-sky-200/70 has-aria-expanded:hover:bg-sky-200/70">
+                      <TableCell className="text-sm w-[180px]">
+                        <div>
+                          <p className="font-medium text-sm whitespace-normal break-words">{primeiro.emitente_nome}</p>
+                          <p className="text-xs text-muted-foreground">NF {primeiro.nota_numero}</p>
+                        </div>
+                      </TableCell>
                       <TableCell className="font-medium text-sm">
                         <button
                           type="button"
@@ -1005,21 +1375,42 @@ export default function FinanceiroPage() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm w-[180px]">
-                        <div>
-                          <p className="font-medium text-xs">NF {primeiro.nota_numero}</p>
-                          <p className="text-xs text-muted-foreground whitespace-normal break-words">
-                            {primeiro.emitente_nome}
-                          </p>
-                        </div>
-                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                         {primeiro.data_emissao ? fmtDate(primeiro.data_emissao) : '—'}
                       </TableCell>
                       <TableCell />
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          aria-label={grupoTodoSelecionado ? 'Desmarcar todos os itens desta nota' : 'Marcar todos os itens desta nota'}
+                          className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
+                          checked={grupoTodoSelecionado}
+                          onChange={() => toggleGrupoSelecionado(idsDoGrupo)}
+                        />
+                      </TableCell>
                     </TableRow>
                     {expandido && grupo.itens.map(item => (
-                      <TableRow key={item.id} className="bg-muted/20">
+                      <TableRow key={item.id} className="bg-sky-100 hover:bg-sky-200/70">
+                        <TableCell className="text-sm w-[160px]">
+                          {item.origem === 'cartao' ? (
+                            <Badge variant="secondary" className="text-xs">
+                              {item.cartao_apelido ?? 'Cartão'}
+                            </Badge>
+                          ) : item.origem === 'conta' ? (
+                            <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
+                              Conta paga
+                            </Badge>
+                          ) : item.origem === 'manual' ? (
+                            <span className="text-xs text-muted-foreground italic">Manual</span>
+                          ) : item.is_manual ? (
+                            <span className="text-xs text-muted-foreground italic">Manual</span>
+                          ) : (
+                            <div>
+                              <p className="font-medium text-sm whitespace-normal break-words">{item.emitente_nome}</p>
+                              <p className="text-xs text-muted-foreground">NF {item.nota_numero}</p>
+                            </div>
+                          )}
+                        </TableCell>
                         <TableCell className="font-medium text-sm whitespace-normal break-words">
                           {item.descricao}
                         </TableCell>
@@ -1056,28 +1447,6 @@ export default function FinanceiroPage() {
                             )}
                           </div>
                         </TableCell>
-                        <TableCell className="text-sm w-[160px]">
-                          {item.origem === 'cartao' ? (
-                            <Badge variant="secondary" className="text-xs">
-                              {item.cartao_apelido ?? 'Cartão'}
-                            </Badge>
-                          ) : item.origem === 'conta' ? (
-                            <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
-                              Conta paga
-                            </Badge>
-                          ) : item.origem === 'manual' ? (
-                            <span className="text-xs text-muted-foreground italic">Manual</span>
-                          ) : item.is_manual ? (
-                            <span className="text-xs text-muted-foreground italic">Manual</span>
-                          ) : (
-                            <div>
-                              <p className="font-medium text-xs">NF {item.nota_numero}</p>
-                              <p className="text-xs text-muted-foreground whitespace-normal break-words">
-                                {item.emitente_nome}
-                              </p>
-                            </div>
-                          )}
-                        </TableCell>
                         <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                           {item.data_emissao ? fmtDate(item.data_emissao) : '—'}
                         </TableCell>
@@ -1105,6 +1474,17 @@ export default function FinanceiroPage() {
                             </Button>
                           </div>
                         </TableCell>
+                        <TableCell>
+                          {itemSelecionavel(item) && (
+                            <input
+                              type="checkbox"
+                              aria-label="Selecionar este item"
+                              className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
+                              checked={selecionados.has(item.id)}
+                              onChange={() => toggleSelecionado(item.id)}
+                            />
+                          )}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </Fragment>
@@ -1118,7 +1498,7 @@ export default function FinanceiroPage() {
                       dinheiro é a soma só dos itens que contam como gasto —
                       contar a lista inteira aqui diria um número que o valor
                       ao lado não sustenta. */}
-                  <TableCell colSpan={3} className="text-right text-sm font-semibold text-muted-foreground py-3">
+                  <TableCell colSpan={4} className="text-right text-sm font-semibold text-muted-foreground py-3">
                     Total ({itensQueContam.length} {itensQueContam.length === 1 ? 'item' : 'itens'})
                   </TableCell>
                   <TableCell className="text-right text-sm font-bold py-3 tabular-nums">
@@ -1173,6 +1553,78 @@ export default function FinanceiroPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditItem(null)}>Cancelar</Button>
             <Button onClick={handleEdit} disabled={salvando || !form.descricao || !form.valor_unitario}>
+              {salvando ? 'Salvando…' : 'Salvar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Conta paga: sem quantidade/unidade aqui (lancamentos_financeiros tem só
+          um valor por linha, não item×preço como itens_nfe) — ver
+          handleEditarConta. Diálogo separado do "Editar Lançamento" de
+          propósito, pra não confundir com campos que não se aplicam. */}
+      <Dialog open={!!editContaItem} onOpenChange={open => { if (!open) { setEditContaItem(null); setEditContaErro(null) } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Editar lançamento (conta paga)</DialogTitle></DialogHeader>
+          <div className="space-y-1.5">
+            <Label>Descrição</Label>
+            <Input
+              value={editContaForm.descricao}
+              onChange={e => setEditContaForm(f => ({ ...f, descricao: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Fornecedor</Label>
+            <Input
+              placeholder="Opcional"
+              value={editContaForm.fornecedor}
+              onChange={e => setEditContaForm(f => ({ ...f, fornecedor: e.target.value }))}
+            />
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-1.5">
+              <Label>Valor (R$)</Label>
+              <Input
+                type="number" min="0" step="0.01" placeholder="0,00"
+                value={editContaForm.valor}
+                onChange={e => setEditContaForm(f => ({ ...f, valor: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Data</Label>
+              <Input
+                type="date"
+                value={editContaForm.data}
+                onChange={e => setEditContaForm(f => ({ ...f, data: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Centro de Custo</Label>
+              <Select value={editContaForm.categoria} onValueChange={v => setEditContaForm(f => ({ ...f, categoria: v ?? 'outro' }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {TIPOS.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          {/* Este lançamento veio de uma conta paga em Contas a Pagar — editar
+              aqui NÃO muda a conta original lá (são gravados separados desde o
+              pagamento). Mesmo aviso, na direção oposta do dialog de Contas. */}
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+            Este gasto veio de uma conta marcada como paga em Contas a Pagar. Editar aqui
+            não muda a conta original por lá — são registros separados. Se depois você
+            usar &quot;Desfazer pagamento&quot; naquela conta, esta correção se perde: o
+            lançamento é apagado e, ao pagar de novo, nasce com os dados de lá.
+          </p>
+          {editContaErro && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              {editContaErro}
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditContaItem(null)}>Cancelar</Button>
+            <Button onClick={handleEditarConta} disabled={salvando || !editContaForm.descricao.trim()}>
               {salvando ? 'Salvando…' : 'Salvar'}
             </Button>
           </DialogFooter>

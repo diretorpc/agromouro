@@ -44,6 +44,14 @@ export interface NFeItem {
   unitTrib:     string   // uTrib — unidade tributável (ex: L, kg)
   ncm:          string   // ← NOVO: código NCM (8 dígitos), ex: "38089329"
   cfop:         string   // código da operação, 4 dígitos. '' quando o item não traz
+  // true SÓ para o item sintético que parseXmlNFSe monta. Sem isto, um item de
+  // NFS-e com cfop/ncm vazios cai na MESMA cascata de uma NF-e com CFOP/NCM
+  // ausente — que assume "compra normal, estocável até prova em contrário" — e
+  // quem decide "prova em contrário" vira só a IA (categorizarItem), sem
+  // nenhuma trava determinística por trás dela. Achado do Apolo em 17/08/2026,
+  // provado rodando processarNFe de verdade: uma NFS-e virou insumo fantasma
+  // e somou estoque. Serviço nunca é estocável — ponto final, não cascata.
+  servico?:     boolean
 }
 
 // Uma parcela do quadro de cobrança da NF-e (bloco <cobr><dup>).
@@ -63,6 +71,13 @@ export interface NFeData {
   items:        NFeItem[]
   duplicatas:     NFeDuplicata[]
   formaPagamento: string | null   // tPag: '15' boleto, '03' cartão crédito, '05' crédito loja...
+  // 'nfe' (produto) ou 'nfse' (serviço). Número de NF-e e de NFS-e são
+  // sequências INDEPENDENTES do mesmo emitente — sem isto na chave de
+  // duplicidade, a NF-e nº 500 e a NFS-e nº 500 do mesmo fornecedor colidem e
+  // a segunda é descartada como "já processada". Achado do Apolo, 17/08/2026
+  // (migração 011_notas_fiscais_modelo.sql). Campo OBRIGATÓRIO de propósito —
+  // ninguém pode esquecer de preencher e cair no default do banco por acaso.
+  modelo: 'nfe' | 'nfse'
 }
 
 // ─── Parser de XML NF-e SEFAZ ────────────────────────────────────────────────
@@ -72,6 +87,14 @@ export function parseXmlNFe(xmlStr: string): NFeData | null {
       ignoreAttributes:    false,
       attributeNamePrefix: '@_',
       parseTagValue:       true,
+      // Sem isto, CNPJ/CPF com zero à esquerda ("04063805000135") é lido como
+      // NÚMERO e perde o zero ("4063805000135") — bug antigo, achado do Apolo
+      // em 17/08/2026 ao revisar o parser irmão (parseXmlNFSe). Dado fiscal
+      // errado gravado, exportado pro contador (exportarXML no front) e busca
+      // por CNPJ na tela não encontrando a nota. Reparo dos dados JÁ salvos
+      // fica em script à parte (não é responsabilidade do parser corrigir o
+      // passado, só parar de piorar o presente).
+      numberParseOptions:  { leadingZeros: false, hex: false },
     })
     const doc = parser.parse(xmlStr)
 
@@ -137,11 +160,123 @@ export function parseXmlNFe(xmlStr: string): NFeData | null {
 
     if (!numero || !emitenteNome || items.length === 0) return null
 
-    return { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items, duplicatas, formaPagamento }
+    return { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items, duplicatas, formaPagamento, modelo: 'nfe' }
   } catch (err) {
     console.error('[NFeProcessor] Erro ao parsear XML:', err instanceof Error ? err.message : err)
     return null
   }
+}
+
+// Lê um campo monetário/numérico com segurança: `??` sozinho NÃO pega tag
+// presente e vazia ("<vLiq></vLiq>" vira string '', não null/undefined), e
+// `parseFloat('')` é NaN — que passaria direto por um `valorTotal <= 0` sem
+// nunca ser pego (NaN não é <= 0 nem > 0). Achado do Apolo em 17/08/2026,
+// provado: fornecedor que manda a tag vazia geraria conta sem valor E sem
+// vencimento, uma cobrança invisível. Devolve null (não 0) para quem chama
+// poder tentar o próximo campo de fallback em vez de aceitar um zero falso.
+function paraNumeroOuNull(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null
+  const n = parseFloat(String(v))
+  return Number.isFinite(n) ? n : null
+}
+
+// ─── Parser de XML NFS-e (nota de serviço, padrão NACIONAL) ──────────────────
+// Estrutura bem diferente da NF-e: raiz <NFSe>, sem <det>/CFOP/NCM (não há
+// mercadoria circulando) e sem <cobr><dup> (nota de serviço não carrega
+// vencimento de boleto — a única exceção do padrão nacional é aluguel de
+// imóvel, campo dVencOrig, fora do escopo daqui). Devolve o MESMO formato
+// NFeData que parseXmlNFe, com um item sintético só (o serviço inteiro) —
+// assim processarNFe() não precisa saber a diferença entre as duas.
+//
+// ESCOPO: só o layout NACIONAL (raiz NFSe/infNFSe). Município que ainda emite
+// no layout antigo ABRASF (CompNfse/Nfse/InfNfse) continua sendo recusado —
+// não é bug, é fronteira não coberta ainda. Amostra até 17/08/2026: 1 nota
+// (SITRACK). Não sabemos que layout os outros prestadores do Matheus usam.
+export function parseXmlNFSe(xmlStr: string): NFeData | null {
+  try {
+    const parser = new XMLParser({
+      ignoreAttributes:    false,
+      attributeNamePrefix: '@_',
+      parseTagValue:       true,
+      // Sem isto, o parser lê CNPJ/CPF com zero à esquerda ("04063805000135")
+      // como NÚMERO e engole o zero ("4063805000135") — medido em 17/08/2026
+      // com a nota real da SITRACK. O CNPJ mutilado não quebra a trava de
+      // duplicata sozinho (grava e lê o mesmo valor errado, consistente) —
+      // dói em três lugares mais sutis: CNPJ fiscal errado exportado pro
+      // contador, busca por CNPJ na tela não encontra a nota, e se o MESMO
+      // fornecedor também mandar NF-e (parser antigo, sem este ajuste), o
+      // CNPJ dele fica gravado de duas formas diferentes no banco.
+      numberParseOptions:  { leadingZeros: false, hex: false },
+    })
+    const doc = parser.parse(xmlStr)
+
+    const inf = doc?.NFSe?.infNFSe
+    if (!inf) return null
+
+    const dps     = inf.DPS?.infDPS ?? {}
+    const emit    = inf.emit ?? {}
+    const valores = inf.valores ?? {}
+
+    const numero       = String(inf.nNFSe ?? '')
+    const dataEmissao  = String(dps.dhEmi ?? inf.dhProc ?? '')
+    const emitenteNome = String(emit.xNome ?? '')
+    const emitenteCnpj = String(emit.CNPJ ?? emit.CPF ?? '')
+    // vLiq (valores do bloco infNFSe) é o valor líquido já com ISS retido
+    // descontado quando houver; vServ (dentro do DPS) é o valor bruto do
+    // serviço declarado pelo prestador — fallback se vLiq faltar OU vier
+    // vazio. LIMITE CONHECIDO: quando existe retenção de ISS de verdade
+    // (tomador substituto tributário), vLiq é o que se PAGA ao prestador,
+    // não o custo total do serviço — usar vLiq como gasto subdimensiona em
+    // silêncio nesse caso. Não é o caso da SITRACK (ISS embutido no preço,
+    // tomador é CPF) nem foi implementado tratamento — registrar para quando
+    // aparecer o primeiro prestador que retém.
+    const valorTotal = paraNumeroOuNull(valores.vLiq) ?? paraNumeroOuNull(dps.valores?.vServPrest?.vServ) ?? 0
+
+    if (!numero || !emitenteNome || !Number.isFinite(valorTotal) || valorTotal <= 0) return null
+
+    // O `|| 'Serviço'` fica DEPOIS do trim, não dentro do `??` — descrição só
+    // com espaços (" ") passa no `??` (não é null/undefined) e viraria uma
+    // string vazia depois do trim. Item sem nome que caísse no caminho
+    // estocável (não deveria mais, com o `servico: true` abaixo, mas é
+    // defesa em profundidade) casaria com QUALQUER insumo existente — o
+    // `.ilike('nome', '%%')` de vincularOuCriarInsumo casa com tudo. Achado
+    // do Apolo em 17/08/2026.
+    const descricao = (String(dps.serv?.cServ?.xDescServ ?? '').trim() || 'Serviço').slice(0, 500)
+
+    // Item único representando o serviço inteiro: quantidade 1, valor
+    // unitário = valor total. cfop e ncm ficam vazios de propósito — não
+    // existe para serviço, e fronteiraPorNCM()/efeitoDoCfop() já tratam
+    // ausência como "cascata para o Haiku" / "compra normal" respectivamente.
+    const item: NFeItem = {
+      description:  descricao,
+      quantity:     1,
+      unit:         'un',
+      unitValue:    valorTotal,
+      totalValue:   valorTotal,
+      quantityTrib: 1,
+      unitTrib:     'un',
+      ncm:          '',
+      cfop:         '',
+      servico:      true,
+    }
+
+    return {
+      numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal,
+      items: [item], duplicatas: [], formaPagamento: null, modelo: 'nfse',
+    }
+  } catch (err) {
+    console.error('[NFeProcessor] Erro ao parsear XML NFS-e:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+// Tenta os dois formatos conhecidos de nota fiscal: NF-e (produto, raiz <NFe>)
+// primeiro, NFS-e (serviço, raiz <NFSe>) como segundo palpite. As duas raízes
+// nunca coexistem no mesmo arquivo — a ordem não troca nota nenhuma, só evita
+// repetir esta tentativa em cada lugar que lê nota fiscal (upload manual,
+// e-mail via Make, e-mail via IMAP direto).
+export function parseXmlNota(xmlStr: string): NFeData | null {
+  return parseXmlNFe(xmlStr) ?? parseXmlNFSe(xmlStr)
 }
 
 // ─── Verificar duplicata ──────────────────────────────────────────────────────
@@ -149,10 +284,16 @@ export function parseXmlNFe(xmlStr: string): NFeData | null {
 // FORNECEDOR — não é único no mundo. Sem o CNPJ, a nota 4516 de um fornecedor
 // faz o sistema descartar em silêncio a nota 4516 de outro: some a compra,
 // some o gasto e, na Fase 2, some o boleto.
+//
+// `modelo` entrou na chave em 17/08/2026 (migração 011): número de NF-e e de
+// NFS-e são sequências INDEPENDENTES do mesmo emitente — sem isto, a NF-e
+// nº 500 e a NFS-e nº 500 do mesmo fornecedor colidiam e a segunda a chegar
+// era descartada como "já processada". Achado do Apolo.
 export async function nfeJaProcessada(
   numero: string,
   emitenteCnpj: string,
   fazenda_id: string,
+  modelo: 'nfe' | 'nfse',
 ): Promise<boolean> {
   const { data, error } = await supabase
     .from('notas_fiscais')
@@ -160,6 +301,7 @@ export async function nfeJaProcessada(
     .eq('numero', numero)
     .eq('emitente_cnpj', emitenteCnpj)
     .eq('fazenda_id', fazenda_id)
+    .eq('modelo', modelo)
     .limit(1)
     .maybeSingle()
 
@@ -196,6 +338,7 @@ export async function idDaNotaQueLancouGasto(
   numero: string,
   emitenteCnpj: string,
   fazenda_id: string,
+  modelo: 'nfe' | 'nfse',
 ): Promise<string | null> {
   const { data: nota, error } = await supabase
     .from('notas_fiscais')
@@ -203,6 +346,7 @@ export async function idDaNotaQueLancouGasto(
     .eq('numero', numero)
     .eq('emitente_cnpj', emitenteCnpj)
     .eq('fazenda_id', fazenda_id)
+    .eq('modelo', modelo)
     .limit(1)
     .maybeSingle()
 
@@ -328,7 +472,7 @@ function linhaCobrancaMaiorQueGasto(contas: ContaDeNota[], valorCompra: number):
 
 // ─── Processador principal ────────────────────────────────────────────────────
 export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' | 'manual' = 'webhook', fazenda_id: string): Promise<void> {
-  const { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items, duplicatas, formaPagamento } = nfe
+  const { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items, duplicatas, formaPagamento, modelo } = nfe
 
   const itensSeguros  = items.slice(0, 200)
   const dataFormatada = dataEmissao?.split('T')[0] || new Date().toISOString().split('T')[0]
@@ -349,6 +493,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' | '
         valor_total:   valorTotal,
         status:        'processando',
         forma_pagamento: formaPagamento,
+        modelo,
         fazenda_id,
       })
       .select('id')
@@ -394,10 +539,14 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' | '
       algumECompra ? efeitosDosItens[n].contaComoCompra : temCobrancaReal
 
     for (const [index, item] of itensSeguros.entries()) {
-      // Cascata: NCM decide a fronteira; o Haiku só desempata quando o NCM é mudo.
+      // item.servico vence a cascata inteira, sem perguntar pro Haiku: serviço
+      // (NFS-e) nunca é estocável, e essa certeza vem do PARSER (soube que leu
+      // <NFSe>, não <NFe>), não de uma classificação por texto que pode errar.
+      // Cascata normal (NF-e): NCM decide a fronteira; o Haiku só desempata
+      // quando o NCM é mudo.
       const vereditoNCM = fronteiraPorNCM(item.ncm)
-      const tipo        = await categorizarItem(item.description)  // ainda alimenta insumos.tipo
-      const estocavel   = vereditoNCM !== null ? vereditoNCM : TIPOS_ESTOCAVEIS.has(tipo)
+      const tipo        = item.servico ? 'servico' : await categorizarItem(item.description)  // ainda alimenta insumos.tipo
+      const estocavel   = item.servico ? false : (vereditoNCM !== null ? vereditoNCM : TIPOS_ESTOCAVEIS.has(tipo))
 
       // O CFOP manda: ele diz se houve circulação física de mercadoria e se a
       // nota é a compra ou só a entrega de algo já faturado. Ver contas/cfop.ts.
@@ -572,7 +721,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' | '
       if (!nfeId) throw new Error('id da nota indisponível para gravar boletos')
       const resultado = await gravarContasDaNota(
         {
-          numero, emitenteNome, dataEmissao, valorTotal, formaPagamento, duplicatas,
+          numero, emitenteNome, dataEmissao, valorTotal, formaPagamento, duplicatas, modelo,
           // itensSeguros (cortado em 200, calculado na seção 1) — não `items` cru:
           // a descrição da conta não pode falar de itens que nem entraram no
           // processamento de estoque/financeiro logo acima.
@@ -684,6 +833,7 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' | '
       erroContas,
       parcelasPerdidas,
       motivoVencidoPelaDuplicata(formaPagamento, temDuplicataReal),
+      modelo,
     )
 
     // Finding 1b (revisão final) — avisa quando o boleto que ACABOU de ser criado

@@ -1,7 +1,7 @@
 import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import Anthropic from '@anthropic-ai/sdk'
-import { parseXmlNFe, nfeJaProcessada, processarNFe, idDaNotaQueLancouGasto } from '../services/nfeProcessor'
+import { parseXmlNota, nfeJaProcessada, processarNFe, idDaNotaQueLancouGasto } from '../services/nfeProcessor'
 import { lerBoletoDoPdf, type BoletoLido } from '../services/contas/boletoPdf'
 import { gravarBoletoDoPdf } from '../services/contas/gravarBoletoPdf'
 import { hojeSaoPauloISO, reais, ddmm, APP_URL } from '../services/contas/formato'
@@ -48,9 +48,15 @@ let rodando = false
 let ciclosFalhandoSeguidos = 0
 const CICLOS_ATE_AVISAR = 3
 
-// ─── Verificar se o XML é uma NF-e válida ────────────────────────────────────
+// ─── Verificar se o XML é uma NF-e (produto) ou NFS-e (serviço) válida ───────
+// Duas raízes diferentes, nunca as duas juntas no mesmo arquivo — checar as
+// duas antes de descartar o anexo, senão nota de serviço (ex.: mensalidade de
+// rastreador) some deste e-mail sem log nenhum, como aconteceu até 17/08/2026.
 function isNFeXml(content: string): boolean {
   return content.includes('<NFe') && content.includes('<infNFe')
+}
+function isNFSeXml(content: string): boolean {
+  return content.includes('<NFSe') && content.includes('<infNFSe')
 }
 
 // Anexos que ficaram de fora do teto POR E-MAIL. Precisa de aviso, não só log:
@@ -243,21 +249,21 @@ async function rodarCiclo(): Promise<{ lidos: number; falhas: number }> {
           for (const anexo of xmlAnexos) {
             const xmlStr = anexo.content.toString('utf-8')
 
-            if (!isNFeXml(xmlStr)) continue
+            if (!isNFeXml(xmlStr) && !isNFSeXml(xmlStr)) continue
 
-            const nfe = parseXmlNFe(xmlStr)
+            const nfe = parseXmlNota(xmlStr)
             if (!nfe) {
               console.warn(`[NFeEmail] XML inválido no e-mail ${uid}: "${anexo.filename}"`)
               continue
             }
 
             // Evitar duplicatas
-            const jaExiste = await nfeJaProcessada(nfe.numero, nfe.emitenteCnpj, fazenda.id)
+            const jaExiste = await nfeJaProcessada(nfe.numero, nfe.emitenteCnpj, fazenda.id, nfe.modelo)
             if (jaExiste) {
               console.log(`[NFeEmail] NF-e ${nfe.numero} já processada — ignorando.`)
               // Registrada mesmo assim: para o boleto em PDF, o que importa é
               // que a nota EXISTE (e já lançou o gasto), não se entrou agora.
-              const id = await idDaNotaQueLancouGasto(nfe.numero, nfe.emitenteCnpj, fazenda.id)
+              const id = await idDaNotaQueLancouGasto(nfe.numero, nfe.emitenteCnpj, fazenda.id, nfe.modelo)
               if (id) notasDoEmail.push(id)
               continue
             }
@@ -266,7 +272,7 @@ async function rodarCiclo(): Promise<{ lidos: number; falhas: number }> {
             await processarNFe(nfe, 'email', fazenda.id)
             console.log(`[NFeEmail] NF-e ${nfe.numero} processada com sucesso.`)
 
-            const id = await idDaNotaQueLancouGasto(nfe.numero, nfe.emitenteCnpj, fazenda.id)
+            const id = await idDaNotaQueLancouGasto(nfe.numero, nfe.emitenteCnpj, fazenda.id, nfe.modelo)
             if (id) notasDoEmail.push(id)
           }
 

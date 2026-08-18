@@ -31,6 +31,7 @@ export const CATEGORIAS_FINANCEIRAS = [
   { value: 'fertilizante_p', label: 'Fertilizante P' },
   { value: 'fertilizante_k', label: 'Fertilizante K' },
   { value: 'fertilizante_outro', label: 'Fertilizante Outro' },
+  { value: 'foliar', label: 'Foliar' },
   { value: 'calcario', label: 'Calcário' },
   { value: 'semente', label: 'Semente' },
   { value: 'combustivel', label: 'Combustível' },

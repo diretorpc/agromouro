@@ -10,6 +10,12 @@ export const contaRoutes = Router()
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/
 
+// Conta paga ou dispensada nunca deve mudar de status por causa de uma edição de
+// cadastro (ver PATCH /:id) — mesma regra que ENCERRADAS em web/app/(app)/contas/tipos.ts
+// e services/contas/resumo.ts, repetida aqui de propósito: são times/arquivos
+// diferentes, e um `import` cruzado front↔back não existe neste projeto.
+const ENCERRADOS_PARA_EDICAO = new Set(['paga', 'dispensada'])
+
 // Schema base separado do .refine(): ZodEffects (o tipo que .refine() devolve)
 // não tem .partial() no zod 3.x — o PATCH abaixo precisa da forma "objeto puro"
 // para aceitar edição parcial.
@@ -53,6 +59,8 @@ const avulsaSchema = z.object({
 })
 
 const edicaoSchema = z.object({
+  descricao:  z.string().min(1).optional(),
+  fornecedor: z.string().nullable().optional(),
   valor:      z.number().nonnegative().optional(),
   vencimento: z.string().regex(ISO).optional(),
   categoria:  z.string().nullable().optional(),
@@ -250,9 +258,36 @@ contaRoutes.patch('/:id', async (req, res, next) => {
 
     const body = edicaoSchema.parse(req.body)
 
-    // Informar o valor confirma a conta: deixa de ser estimativa e passa a 'aberta'.
+    // Busca o estado atual sempre — não só quando `vencimento` muda. O dialog de
+    // edição completa (Matheus, 18/08/2026) reenvia `valor` mesmo quando o dono só
+    // quis corrigir a categoria de uma conta JÁ PAGA (o campo Valor vem pré-preenchido
+    // no form). Sem saber o status atual, a regra de "informar valor confirma a
+    // conta" abaixo reabriria uma conta paga — achado CRÍTICO do Apolo, 18/08/2026:
+    // ela volta a contar como devendo, reentra no aviso de atraso do WhatsApp, e se o
+    // dono "pagar" de novo uma conta sem nota_fiscal_id nasce um SEGUNDO lançamento
+    // no Financeiro (gasto duplicado, sem checagem que impeça).
+    const { data: atual, error: erroAtual } = await supabase
+      .from('contas_a_pagar')
+      .select('nota_fiscal_id, status, valor')
+      .eq('id', req.params.id)
+      .eq('fazenda_id', fazendaId)
+      .maybeSingle()
+
+    if (erroAtual) throw erroAtual
+    if (!atual) return res.status(404).json({ error: 'Conta não encontrada' })
+
     const patch: Record<string, unknown> = { ...body }
-    if (body.valor !== undefined) {
+
+    // Informar o valor confirma a conta: deixa de ser estimativa e passa a 'aberta'
+    // — mas SÓ quando a conta ainda está em aberto/aguardando E o valor de fato
+    // mudou. Conta já paga ou dispensada nunca troca de status por causa de uma
+    // edição de cadastro (descrição, fornecedor, categoria) que por acaso reenviou
+    // o mesmo valor de sempre.
+    if (
+      body.valor !== undefined
+      && !ENCERRADOS_PARA_EDICAO.has(atual.status)
+      && body.valor !== atual.valor
+    ) {
       patch.valor_estimado = false
       patch.status = 'aberta'
     }
@@ -264,21 +299,9 @@ contaRoutes.patch('/:id', async (req, res, next) => {
     // da revisão final da Fase 2). Conta FIXA recorrente (sem nota_fiscal_id)
     // fica de fora de propósito: lá a competência é o mês da REGRA, decidido em
     // sincronizar.ts — não o mês do vencimento informado aqui.
-    if (body.vencimento !== undefined) {
-      const { data: atual, error: erroAtual } = await supabase
-        .from('contas_a_pagar')
-        .select('nota_fiscal_id')
-        .eq('id', req.params.id)
-        .eq('fazenda_id', fazendaId)
-        .maybeSingle()
-
-      if (erroAtual) throw erroAtual
-      if (!atual) return res.status(404).json({ error: 'Conta não encontrada' })
-
-      if (atual.nota_fiscal_id) {
-        const [ano, mes] = body.vencimento.split('-').map(Number)
-        patch.competencia = competenciaDoMes(ano, mes)
-      }
+    if (body.vencimento !== undefined && atual.nota_fiscal_id) {
+      const [ano, mes] = body.vencimento.split('-').map(Number)
+      patch.competencia = competenciaDoMes(ano, mes)
     }
 
     const { data, error } = await supabase
