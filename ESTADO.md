@@ -583,39 +583,162 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
-## Aba "Controle" (gastos defensivos/adubos/sementes) — Epic 2.4 (tela) em execução via SDD — atualizado 17/08/2026
+## Gráficos da aba Controle — backend NO AR, 3 gráficos na tela, 1 decisão travada (19/08/2026)
 
-⚠️ **Este bloco estava desatualizado — reescrito do zero em 17/08 depois de o
-Matheus perguntar "qual a próxima epic?" e a resposta revelar que ninguém tinha
-mantido este arquivo em dia.** O texto anterior dizia "nada commitado ainda"; na
-verdade o trabalho avançou bastante numa worktree separada. **Detalhe completo,
-histórico de revisão do Apolo e comandos pra reconferir vivem no `ESTADO.md` DENTRO
-da worktree** (regra do próprio arquivo: detalhe mora perto do código, aqui só a
-frase-resumo) — não copiado pra cá de propósito, pra não discordar depois:
+Branch `feature/controle-graficos` (worktree `ou-e5b8ce`), **não commitado ainda**.
+Desenho: `docs/superpowers/specs/2026-08-19-controle-graficos-design.md`.
+
+**Migration 020 (`020_controle_agregacoes.sql`) JÁ APLICADA em produção pelo Matheus.**
+Cria `controle_graficos()` + `controle_normalizar_descricao()` + índice parcial
+`idx_itens_nfe_controle_faz_data`. Duas rodadas de revisão do Apolo antes de aplicar.
+Toda a soma acontece no Postgres de propósito — a grade carrega 500 itens por vez, e
+somar no navegador mostraria o pedaço parecendo o todo.
+
+**Entregue:** rota `GET /controle/graficos`, `agregarControle.ts`, hook
+`use-controle-graficos.ts`, `graficos-controle.tsx` e `graficos-dados.ts` (puro,
+testado). Três gráficos na tela: gasto por produto, gasto por mês, preço por unidade
+no tempo. Para conferir a suíte em vez de acreditar neste parágrafo:
+
+```bash
+cd api && npx vitest run   # e depois: cd web && npx vitest run && npx tsc --noEmit
+```
+
+### Gráficos da aba Controle — 4 gráficos na tela (19/08/2026, tarde)
+
+Além dos 3 primeiros, entrou o **gasto por fornecedor** a pedido do Matheus ("mais um
+gráfico, por empresa" — confirmado que "empresa" = a loja que vende, não a fazenda).
+Com um fornecedor só ele nasce com barra única, e a tela diz isso em letras em vez de
+deixar parecer defeito.
+
+**Segunda revisão do Apolo (frontend), 14 achados — 10 corrigidos nesta rodada:**
+balde "Sem produto" saía do ranking e sumia dentro de "Outros" (agora é barra fixa
+laranja); alerta de erro ficava escondido quando os gráficos estavam recolhidos (saiu
+para fora do bloco); faltava sinal de "atualizando" durante a rebusca; gráfico de preço
+descartava item sem quantidade/data sem avisar; frase "mostrando os N produtos" era
+falsa quando zero linhas eram desenhadas; rodapé prometia gráficos que ninguém
+desenhava; `toFixed(1)` imprimia "75.0%" com ponto; mês sem compra era pulado no eixo
+(a linha do tempo parecia contínua); `localStorage` sem try/catch podia derrubar a rota
+inteira (não existe `error.tsx` no app); comentário da paleta prometia estabilidade que
+o código não dá.
+
+**A tela agora CONFERE em vez de AFIRMAR:** ela soma as barras do gráfico de produto e
+compara com o total do período. Batendo, diz que fecha; não batendo, vira aviso âmbar.
+Antes só imprimia a frase "nada foi descartado" e confiava numa invariante que mora
+inteira no SQL.
+
+**6 mutações que sobreviviam aos testes agora morrem** (contagem de itens vs fatias,
+`sort` sem cópia mutando estado do React, limite negativo, fronteira de R$ 1 milhão,
+valor negativo no eixo, mês fora da faixa virando "undefined/26"). Testes do web:
+**56 → 76**.
+
+**Sem revisão do Apolo, por decisão do Matheus (19/08/2026):** o gráfico de fornecedor,
+as 10 correções acima e o `versaoNumeros` em `use-controle-itens.ts` foram entregues sem
+a rodada final de revisão — foi oferecida e dispensada. Não é pendência aberta; é escopo
+fechado assim de propósito. As duas rodadas anteriores (backend e frontend) foram
+revisadas, e todas as correções desta última têm teste, várias provadas por mutação.
+
+⚠️ **DADO DE PRODUÇÃO COM VALOR DE TESTE (Fazenda MG).** Três linhas têm `valor_total`
+que não bate com `quantidade × valor_unitario` e divergem do PDF de origem em
+R$ 113.708,00 no total: NF 44294/3-1 (DUAL GOLD, R$ 50.000 em vez de R$ 8.400),
+NF 44953/3-1 (VERDAVIS 20 LT, R$ 100.000 em vez de R$ 28.800) e NF 45446/3-1 (GESAPRIM,
+R$ 2.000 em vez de R$ 1.092). Provável resíduo do teste de "o gráfico acompanha a
+edição". Conferir contra `Downloads\JACOB DOMINGOS MOURO syagri.pdf` e corrigir na
+grade. Enquanto estiverem lá, o total do Controle (R$ 1.520.623,25) NÃO bate com o
+extrato da SYAGRI (R$ 1.406.915,25).
+
+**✅ RESOLVIDO em 19/08/2026 — decisão "b" do Matheus.** O gráfico não acompanhava
+edição de célula (`versaoDados` só sobe em carga completa; `editarItem` mexe só no
+estado local), então corrigir uma linha deixava o gráfico com o número velho até o F5 —
+as duas metades da mesma tela discordando em dinheiro. Apolo classificou como CRÍTICO.
+
+Conserto: contador **`versaoNumeros`**, novo e SEPARADO, em `use-controle-itens.ts`.
+Sobe só quando o servidor CONFIRMA mudança de dado — editar, criar, excluir item (após
+o `api.del` resolver, nunca durante a janela de 7 s de Desfazer), excluir documento e
+importar documento. Os gráficos observam ele; a grade continua com `versaoDados`.
+
+⚠️ **Duas armadilhas registradas, ambas já pisadas:**
+1. **Não bater `versaoDados`** para isso — `page.tsx` usa `key={versaoDados}` e
+   remontaria a grade, matando a edição em andamento (o bug que o PR #62 consertou).
+2. **Não bater `versaoNumeros` na carga da página 1.** O plano original do Apolo
+   mandava isso; seria a rajada do achado 5 de volta (troca de filtro → o gráfico já
+   dispara pelo filtro, e a carga que a própria troca provocou dispararia de novo).
+   Só mutação confirmada.
+
+Debounce de **1 s** para mutação (300 ms segue valendo para filtro): a grade tem
+autosave, e corrigir uma linha célula a célula confirma vários PATCHes seguidos — sem a
+folga sairia uma agregação por célula, e agregação aqui é `GROUP BY` sobre a fazenda
+inteira.
+
+**Falta conferir ao vivo:** editar uma célula e ver o gráfico redesenhar ~1 s depois.
+Não deu para testar na sessão (o painel do navegador estava oculto e a planilha congela
+o desenho sem ele). Código, tipos e suítes conferidos.
+
+**Fora de escopo por falta de dado, não por esquecimento:** gráfico de gasto por
+fornecedor e comparação de preço entre fornecedores. O SQL dos dois está pronto e
+devolve `[]`; a fazenda MG tem UM fornecedor só. A tela diz isso em voz alta em vez
+de simplesmente não mostrar nada.
+
+**Latente, 0 ocorrências hoje (achado 8 do Apolo):** o gráfico 1 rotula pelo
+`fornecedor` CRU e o menu de filtro oferece o `fornecedor_normalizado`. No dia em que
+o parser gravar "Syagri Agronegócios" e "SYAGRI AGRONEGOCIOS" no mesmo banco, uma loja
+vira duas barras e o filtro continua oferecendo uma opção só.
+
+## Dado do Controle da Fazenda MG foi RECONSTRUÍDO em 19/08/2026 — e a lição
+
+O extrato da SYAGRI (`JACOB DOMINGOS MOURO syagri.pdf`, único documento da aba) estava
+com 23 itens, dos quais 10 defeituosos. **Não era bug do importador** — era o Matheus
+testando a grade editável nova: linhas apagadas, células esvaziadas, `teste`/`aeee`
+digitado por cima. Cheguei a abrir investigação contra o leitor de PDF e fechei quando
+ele contou.
+
+**A linha `teste` / `aeee` de R$ 1.060.000 era uma COMPRA REAL** — duplicata 61968/2-1,
+`0004585-FERTILIZANTE CIBRA KCL 60 GR`, 400 × R$ 2.650. Eu tinha recomendado apagá-la.
+Só descobri porque fui ler o PDF de origem em vez de confiar na tela.
+
+Conserto: documento excluído e reimportado (com o PDF salvo antes — a exclusão apaga o
+arquivo do Storage junto). **O leitor devolveu 28 de 28 itens idênticos ao extrato**,
+inclusive os três documentos de duas linhas, e a soma bate ao centavo com o TOTAL GERAL
+impresso no PDF. Para reconferir a qualquer momento:
+
+```sql
+select count(*), sum(valor_total) from itens_nfe
+ where nota_fiscal_id is null
+   and fazenda_id = (select id from fazendas where nome = 'Fazenda MG');
+```
+
+**Lição que vale além desta feature:** antes de recomendar apagar dado, leia a FONTE
+(o PDF, o XML, o extrato) — não a tela. A tela já tinha sido editada por alguém.
+
+
+## Aba "Controle" (gastos defensivos/adubos/sementes) — NO AR: PRs #61 e #62 mergeados em 18/08/2026
+
+⚠️ **Este bloco já mentiu duas vezes, e a segunda foi consertada em 19/08/2026.** Em
+17/08 dizia *"nada commitado ainda"* quando o trabalho estava numa worktree; até 19/08
+dizia *"Epic 2.4 em execução"* quando os dois PRs já estavam mergeados havia um dia.
+**Não escreva estado de feature aqui sem conferir o GitHub primeiro.**
+
+- **PR #61 — a feature `Controle`.** Cruza a NF-e automática com PDF importado à mão
+  (extrato de fornecedor tipo Solos/Syagri, contrato tipo Mosaic). Squash na `main`,
+  branch `feature/controle-gastos` apagada no remoto. As 10 tarefas do plano da Epic 2.4
+  (tela `/controle`) prontas, via `superpowers:subagent-driven-development`.
+- **PR #62 — a tabela do Controle virou TOTALMENTE EDITÁVEL, estilo Excel.** Nasceu de
+  ele testar a tela entregue no #61 e reprovar. **5 rodadas de revisão do Apolo, ~30
+  achados**, testado ao vivo por ele a cada rodada. De quebra, o `web` **ganhou teste
+  automatizado — não tinha NENHUM antes deste PR**.
+
+**Detalhe completo — os ~30 achados, o histórico de cada rodada e os comandos que
+remedem — vive no `ESTADO.md` DENTRO da worktree**, pela regra do próprio projeto
+(detalhe mora perto do código; aqui só a frase-resumo). Não copiado para cá de
+propósito, para as duas verdades não discordarem depois:
 `C:\Users\Dib\Projetos\pessoal\agromouro-base\.claude\worktrees\ou-e5b8ce\ESTADO.md`
 
-Trabalho inteiro na branch `feature/controle-gastos`, dentro dessa worktree — **a
-checkout principal (aqui) continua limpa, na `main`, sem nada disso**. Ainda não
-subiu pro GitHub.
+⚠️ **Risco conhecido dessa escolha:** aquele arquivo mora dentro de `.claude\worktrees\`.
+**Quem apagar a worktree leva o único registro dos ~30 achados junto**, e nada avisa.
+Antes de remover a worktree, mover o `ESTADO.md` dela para `docs/` neste repositório.
 
-**Prontas e commitadas (Epics 1.1 a 2.3 — migration 017+018, bucket, leitor de PDF,
-gravação com dedupe, rotas da API):** todas revisadas várias vezes pelo Apolo,
-incluindo 2 achados críticos de dinheiro dobrando (já corrigidos) e teste de
-isolamento por fazenda com mutação de código real. Migration 017 **e** 018 já
-aplicadas em produção, confirmadas pelo Matheus rodando as consultas de verificação.
-
-**Em execução agora: Epic 2.4 (a tela `/controle`)**, via
-`superpowers:subagent-driven-development` — 8 tarefas planejadas
-(`docs/superpowers/plans/2026-08-17-controle-tela.md`, dentro da worktree), ledger de
-progresso em `.superpowers/sdd/2026-08-17-controle-tela/progress.md`. Tasks 1-3
-prontas e aprovadas (rota de filtros, paginação/filtro no `GET /controle/documentos`,
-tipos do frontend); Task 4 (hook `use-controle-data.ts`) com 1 achado "importante" em
-correção (possível bloqueio de pop-up ao abrir o PDF — `window.open` depois de um
-`await` perde o gesto de clique em alguns navegadores).
-
-**Próximo passo:** terminar as tasks 4-8 (fix da Task 4, depois componentes de UI —
-filtro por coluna estilo Excel, tabela com células mescladas, diálogo de upload,
-página + item no menu), revisão final do branch, e então push.
+⚠️ **A checkout principal (esta pasta) está ATRÁS da `main` do GitHub.** Medido em
+19/08/2026: o `git log` daqui para em `f7dccd2` (PR #60) — os PRs #61 e #62 não
+aparecem. **Não conclua nada a partir do log local sem um `git fetch` antes.**
 
 ## Leitor de NFS-e (nota de serviço) — codado em 17/08/2026, 5 rodadas de revisão do Apolo feitas
 
