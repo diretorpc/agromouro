@@ -197,8 +197,19 @@ export function GradeItens({
   const teclaDeleteAtivaRef = useRef(false)
   const selecaoAtualRef = useRef<SelecaoComId | null>(null)
 
+  // `!e.repeat` NÃO é detalhe: sem ele, SEGURAR Delete apaga linha após linha
+  // em cascata. A lib não reajusta a seleção quando o array encolhe por fora
+  // (não há clamp em DataSheetGrid.js), então a seleção fica no índice N, que
+  // depois da remoção é a PRÓXIMA linha, cheia de dado. Com a repetição do
+  // Windows (~500 ms e depois 10-30 teclas/s), um segundo segurado apaga
+  // dezenas — e o Desfazer não salva: viram N faixas empilhadas, e ninguém
+  // clica 20 vezes em 7 s. Item avulso apagado assim não volta de jeito
+  // nenhum (não tem PDF pra reimportar). Achado [alto] da 5ª revisão do
+  // Apolo, medido: 8 repetições = 7 linhas apagadas.
+  // Repetição cai no caminho normal (agendarEdicao → PATCH → 400 → reverte e
+  // marca): barulhento, nunca destrutivo.
   function handleKeyDownCapture(e: React.KeyboardEvent) {
-    teclaDeleteAtivaRef.current = e.key === 'Delete' || e.key === 'Backspace'
+    teclaDeleteAtivaRef.current = (e.key === 'Delete' || e.key === 'Backspace') && !e.repeat
   }
 
   // Seed da baseline pra toda linha NOVA que aparecer (carga inicial,

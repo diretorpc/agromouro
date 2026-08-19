@@ -95,6 +95,24 @@ export function useControleItens() {
     return () => window.removeEventListener('beforeunload', avisarAntesDeSair)
   }, [exclusoesPendentes.length])
 
+  // Navegação INTERNA do Next (clicar noutro item do menu) desmonta este hook
+  // sem passar por `beforeunload` — numa SPA o `setTimeout` sobreviveria ao
+  // desmonte e o DELETE sairia depois, contrariando o que o comentário acima
+  // promete. Pior: voltando pra /controle dentro do prazo, a nova instância
+  // busca do servidor, a linha ainda existe e aparece na tela — e então o
+  // timer órfão da instância antiga a apaga no banco. A tela passa a mostrar
+  // linha que não existe mais, e editá-la devolve 404 (que não é erro de
+  // validação, então dispara `recarregar()` e ela some sem explicação).
+  // Limpar no desmonte alinha código e comentário no lado seguro: na dúvida,
+  // NÃO apaga. Achado [médio] da 5ª revisão do Apolo.
+  useEffect(() => {
+    const timers = timersExclusaoRef.current
+    return () => {
+      for (const timerPendente of timers.values()) clearTimeout(timerPendente)
+      timers.clear()
+    }
+  }, [])
+
   const filtrosAnteriores = useRef(filtros)
   const [recarga, setRecarga] = useState(0)
   // Sobe a cada carga NOVA e completa da página 1 (mudança de filtro, ou
