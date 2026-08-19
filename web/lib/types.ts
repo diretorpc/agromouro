@@ -227,6 +227,82 @@ export interface ListaItensControle {
   totalItens: number
 }
 
+// ─── Gráficos da aba Controle (GET /controle/graficos) ─────────────────────
+// Espelha o retorno da função `controle_graficos` (migration 020). A soma
+// acontece TODA no Postgres, de propósito: a grade carrega 500 itens por
+// vez, e somar no navegador em cima do que está carregado mostra o pedaço e
+// parece o todo. Ver docs/superpowers/specs/2026-08-19-controle-graficos-design.md.
+export interface FatiaGrafico { rotulo: string; total: number; itens: number }
+export interface FatiaMesGrafico { mes: string; total: number; itens: number }
+
+export interface PontoPrecoControle {
+  /**
+   * MÊS no formato 'YYYY-MM' — a MESMA grandeza de `FatiaMesGrafico.mes`, com
+   * outro nome (vem de `to_char(data_manual, 'YYYY-MM')` nos dois casos).
+   * NÃO é uma data: `new Date(ponto.data)` ou `.toLocaleDateString()` aqui
+   * produz o bug de fuso que já mordeu o Financeiro (dia 1 virando o dia 31
+   * do mês anterior em horário de Brasília). Use `rotuloMes()`.
+   */
+  data: string
+  precoMedio: number
+  quantidade: number
+  // Mais de uma unidade no mesmo ponto = a média está misturando régua
+  // (ex.: "KG" e "L" no mesmo rótulo de produto). A tela avisa, não escolhe.
+  unidades: string[] | null
+}
+export interface SerieProdutoControle { produto: string; pontos: PontoPrecoControle[] }
+
+export interface BarraFornecedorControle {
+  fornecedor: string
+  precoMedio: number
+  precoMin: number
+  precoMax: number
+  itens: number
+  unidades: string[] | null
+}
+export interface ComparacaoProdutoControle { produto: string; barras: BarraFornecedorControle[] }
+
+// O que ficou de FORA de cada gráfico, em itens E em reais.
+// ⚠️ Os três `valorSem*` NÃO são a mesma coisa — somar como "fora do
+// gráfico" numa legenda é mentira:
+//   valorSemData       → fora do gráfico 3 (mês) e dos 4/5
+//   valorSemQuantidade → fora dos 4/5
+//   valorSemProduto    → DENTRO do gráfico 2, como a barra 'Sem produto';
+//                        só é descarte dos 4/5
+export interface MetaGraficosControle {
+  totalGeral: number
+  totalItens: number
+  itensSemData: number
+  valorSemData: number
+  itensSemProduto: number
+  valorSemProduto: number
+  itensSemQuantidade: number
+  valorSemQuantidade: number
+  fornecedoresDistintos: number
+  // Conta produtos COM NOME (universo dos gráficos 4 e 5). Para contar as
+  // barras do gráfico 2, use `porProduto.length` — ele tem este número + 1
+  // quando existe item sem produto.
+  produtosDistintos: number
+  produtosNoPrecoTempo: number
+  produtosComparaveis: number
+  produtosNoPrecoPorFornecedor: number
+  topAplicado: number
+  mediaPonderadaPor: string
+}
+
+// `...Payload` no nome de propósito: `GraficosControle` já é o COMPONENTE
+// (graficos-controle.tsx). Tipo e componente com o mesmo nome compilam
+// enquanto ninguém importa os dois no mesmo arquivo — e param de compilar
+// exatamente dentro do componente, que é onde os dois precisam conviver.
+export interface GraficosControlePayload {
+  porFornecedor: FatiaGrafico[]
+  porProduto: FatiaGrafico[]
+  porMes: FatiaMesGrafico[]
+  precoNoTempo: SerieProdutoControle[]
+  precoPorFornecedor: ComparacaoProdutoControle[]
+  meta: MetaGraficosControle
+}
+
 // Corpo aceito por PATCH/POST /controle/itens(/:id) — espelha
 // camposItemEditavel de api/src/routes/controle.ts. `conta_como_compra`
 // nunca aparece aqui de propósito (ver spec, "Trava de conta_como_compra").

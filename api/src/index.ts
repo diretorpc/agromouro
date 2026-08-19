@@ -13,6 +13,7 @@ import { contaRoutes }    from './routes/contas'
 import { nfeRoutes }      from './routes/nfe'
 import { controleRoutes } from './routes/controle'
 import { controleItensRoutes } from './routes/controleItens'
+import { controleGraficosRoutes } from './routes/controleGraficos'
 import { whatsappWebhook }   from './webhooks/whatsapp'
 import { nfeWebhook }        from './webhooks/nfe'
 import { nfeEmailWebhook }   from './webhooks/nfeEmailWebhook'
@@ -145,6 +146,9 @@ app.use('/controle/documentos', requireAuth, controleRoutes)
 // que não existia; 404 em silêncio, tela nunca carregava. Ver
 // controleItens.ts e routeMounts.test.ts (o teste que teria pego isso).
 app.use('/controle/itens', requireAuth, controleItensRoutes)
+// Gráficos: prefixo IRMÃO dos dois acima, pelo mesmo motivo. O gráfico
+// resume a fazenda inteira — não é sub-recurso de documento nem de item.
+app.use('/controle/graficos', requireAuth, controleGraficosRoutes)
 
 // ─── Admin — trigger manual de jobs (requer autenticação) ────────────────────
 const adminLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 3, standardHeaders: true, legacyHeaders: false })
