@@ -1,0 +1,42 @@
+/* Pinta linha da grade react-datasheet-grid pela variável CSS que
+   `.dsg-cell` REALMENTE lê pro fundo — achado 5 da revisão do Apolo
+   (18/08/2026): `rowClassName` sozinho, junto de uma classe Tailwind tipo
+   `bg-amber-100`, não pinta NADA visível. Medido ao vivo:
+   `getComputedStyle(document.querySelector('.dsg-cell')).backgroundColor`
+   = `rgb(255, 255, 255)` — branco opaco por cima.
+
+   Causa raiz (lendo node_modules/react-datasheet-grid/dist/style.css e
+   dist/components/Grid.js): cada `.dsg-cell` é FILHA de verdade do
+   `.dsg-row` no DOM (não é portal nem irmão posicionado por conta própria),
+   e `.dsg-cell` tem `background: var(--dsg-cell-background-color)` — a
+   MESMA variável que `.dsg-row` usa pro próprio fundo. `background:
+   bg-amber-100` direto no `.dsg-row` fica sempre por BAIXO das células
+   opacas; sobrescrever a VARIÁVEL, em vez do background, funciona porque
+   variável CSS herda pela árvore do DOM — cada `.dsg-cell` filha lê o novo
+   valor herdado do `.dsg-row` pai automaticamente.
+
+   Usa CSS Module (não Tailwind) de propósito: precisa de um nome de classe
+   ESTÁVEL e literal pra passar pro `rowClassName` da biblioteca — depender
+   do scanner do Tailwind pra sintaxe de propriedade arbitrária
+   (`[--var:valor]`) é um risco extra sem necessidade aqui, e módulo CSS é
+   o caminho recomendado pela própria doc do Next.js (node_modules/next/
+   dist/docs/01-app/01-getting-started/11-css.md, seção "Recommendations")
+   pra estilo específico de componente que o Tailwind não cobre. */
+
+.linhaDuplicada {
+  --dsg-cell-background-color: #fef3c7; /* amber-100 */
+}
+
+.linhaRascunho {
+  --dsg-cell-background-color: #f1f5f9; /* slate-100 */
+}
+
+/* Renomeada de `linhaErroCriacao` pra `linhaErro` (18/08/2026): passou a
+   cobrir os DOIS casos de falha de salvamento — linha NOVA que falha ao
+   criar (POST) e linha JÁ EXISTENTE que falha ao editar (PATCH, ex.: 409 de
+   conflito de duplicidade ao esvaziar a descrição de duas linhas iguais no
+   mesmo documento). Mesmo tratamento visual pros dois: "não salvou, olha
+   aqui". */
+.linhaErro {
+  --dsg-cell-background-color: #fee2e2; /* red-100 */
+}

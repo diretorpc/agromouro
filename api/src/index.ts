@@ -11,6 +11,9 @@ import { alertaRoutes }   from './routes/alertas'
 import { cartaoRoutes }   from './routes/cartoes'
 import { contaRoutes }    from './routes/contas'
 import { nfeRoutes }      from './routes/nfe'
+import { controleRoutes } from './routes/controle'
+import { controleItensRoutes } from './routes/controleItens'
+import { controleGraficosRoutes } from './routes/controleGraficos'
 import { whatsappWebhook }   from './webhooks/whatsapp'
 import { nfeWebhook }        from './webhooks/nfe'
 import { nfeEmailWebhook }   from './webhooks/nfeEmailWebhook'
@@ -112,6 +115,13 @@ app.use('/webhook/nfe-email', express.raw({ type: '*/*', limit: '5mb' }))
 app.use('/webhook', express.json({ limit: '5mb' }))
 // XLSX de extrato bancário chega como base64: 1 MB de arquivo → ~1.37 MB encoded
 app.use('/cartoes/importar-preview', express.json({ limit: '10mb' }))
+// PDF de extrato/contrato de fornecedor chega como base64 (~1.37x o tamanho
+// do arquivo); o bucket "controle-documentos" aceita até ~10 MB de PDF
+// (ver migration 017_controle.sql) — 15mb dá folga pro overhead do base64.
+// NÃO cobre `/controle/itens` (prefixo diferente, de propósito — ver
+// controleItens.ts): corpo de item é texto/número pequeno, cai no limite
+// GLOBAL de 2mb logo abaixo, igual a `/talhoes`, `/estoque` etc.
+app.use('/controle/documentos', express.json({ limit: '15mb' }))
 app.use(express.json({ limit: '2mb' }))
 
 // ─── Health check — público, sem auth ────────────────────────────────────────
@@ -127,6 +137,18 @@ app.use('/alertas',   requireAuth, alertaRoutes)
 app.use('/cartoes',   requireAuth, cartaoRoutes)
 app.use('/contas',    requireAuth, contaRoutes)
 app.use('/nfe',       requireAuth, nfeRoutes)
+app.use('/controle/documentos', requireAuth, controleRoutes)
+// Item de Controle NÃO é sub-recurso de documento (item avulso existe sem
+// nenhum documento de origem) — mount PRÓPRIO, prefixo irmão, não filho, de
+// `/controle/documentos`. BUG CRÍTICO corrigido em 18/08/2026: as rotas de
+// item nasceram dentro de `controleRoutes` e resolviam em
+// `/controle/documentos/itens` — o front sempre chamou `/controle/itens`,
+// que não existia; 404 em silêncio, tela nunca carregava. Ver
+// controleItens.ts e routeMounts.test.ts (o teste que teria pego isso).
+app.use('/controle/itens', requireAuth, controleItensRoutes)
+// Gráficos: prefixo IRMÃO dos dois acima, pelo mesmo motivo. O gráfico
+// resume a fazenda inteira — não é sub-recurso de documento nem de item.
+app.use('/controle/graficos', requireAuth, controleGraficosRoutes)
 
 // ─── Admin — trigger manual de jobs (requer autenticação) ────────────────────
 const adminLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 3, standardHeaders: true, legacyHeaders: false })

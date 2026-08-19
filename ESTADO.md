@@ -583,7 +583,326 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
-## Gráficos da aba Controle — backend NO AR, 3 gráficos na tela, 1 decisão travada (19/08/2026)
+## ✅ Gráficos da aba Controle — PR #63 mergeado em 19/08/2026
+
+https://github.com/diretorpc/agromouro/pull/63 — commit `f48cba8` na `main` (squash),
+branch `feature/controle-graficos` apagada (local e remoto). Railway/Vercel fazem
+deploy automático. **Migration 020 já estava aplicada em produção antes do merge.**
+
+## ✅ Controle: tabela TOTALMENTE EDITÁVEL (estilo Excel) — PR #62, 18/08/2026
+
+https://github.com/diretorpc/agromouro/pull/62 · **5 rodadas de revisão do Apolo,
+~30 achados.** Testado ao vivo pelo Matheus a cada rodada. Suíte: 489 na API + **38 no
+web, que não tinha NENHUM teste antes deste PR**.
+
+**Os 4 achados que só apareceram porque alguém abriu a tela ou leu o fonte da lib** —
+todos invisíveis pra suíte que existia:
+1. **Rota montada no lugar errado.** Front chamava `/controle/itens`, backend respondia
+   em `/controle/documentos/itens`. 404 em tudo, tela vazia, **479 testes verdes** — eles
+   chamavam o handler direto, nunca o `app.use()` real. Fechado com `routeMounts.test.ts`,
+   que cruza o `index.ts` lido como TEXTO com os caminhos literais do hook do front.
+2. **Dinheiro em pt-BR corrompido calado.** `parseFloat("1.234,56")` = 1.234 — R$ 1.234,56
+   virava R$ 1,23 com 200 OK. Valia igual pro colar do Excel, que era o pedido.
+3. **`Ctrl+A` + `Delete` apagava até 500 linhas do banco** numa tecla, sem confirmação.
+   `Ctrl+X` também — a lib desliga o smart-delete no recortar justamente pra isso não
+   acontecer, e a interceptação ignorava.
+4. **Segurar `Delete` apagava linha após linha em cascata** (8 repetições = 7 linhas
+   medidas). A lib não reajusta a seleção quando o array encolhe por fora, então ela fica
+   no índice N — que após a remoção é a próxima linha, cheia de dado.
+
+**Lição que vale além desta feature:** os 4 passariam por qualquer suíte que teste só a
+camada de dentro. O 1 e o 4 exigiram ler o código-fonte compilado da biblioteca; o 3 foi
+achado perguntando "que gesto pode disparar isso sem querer?". Teste de unidade verde não
+é evidência de que a feature funciona.
+
+**Guarda de exclusão** — as 3 condições precisam bater juntas: operação de 1 linha, tecla
+Delete real e não repetida (`onKeyDownCapture` + `!e.repeat`), e seleção cobrindo a linha
+inteira (`min.col===0 && max.col>=7`). Qualquer uma fora cai no caminho seguro
+(PATCH → 400 → reverte e marca): barulhento, nunca destrutivo.
+
+**Desfazer de 7s** (decisão do Matheus): a linha some da tela na hora, o DELETE só sai no
+fim do prazo. Timers são limpos no desmonte do hook — navegação interna do Next não passa
+por `beforeunload`, e sem isso o DELETE saía depois, deixando a tela exibir linha que já
+não existia.
+
+**Pendências aceitas, nenhuma é dinheiro** (item de Controle tem `conta_como_compra`
+sempre `false` — não entra no Financeiro):
+- Recarga da lista dentro dos 7s cancela a exclusão pendente **em silêncio** (troca de
+  filtro, importar PDF, falha de rede noutra linha). Direção segura — nada se perde —
+  mas o Matheus não é avisado de por que a linha voltou. Achado [médio] da 5ª rodada.
+- Editar `valor_total` ou esvaziar a descrição de linha importada desarma a trava de
+  dedupe daquela linha; reimportar o mesmo extrato passa a duplicar. Agora o gesto ficou
+  barato (uma tecla), o que aumenta a chance — risco assumido conscientemente.
+- Desfazer devolve a linha 1 posição adiante quando 2+ saíram na MESMA operação
+  (menu de contexto). Cosmético.
+- Buraco de paginação acima de 500 itens (pré-existente, hoje são ~28).
+- `use-controle-data.ts` e `tabela-documentos.tsx` ficaram como código morto.
+
+**⚠️ Migration 019 aplicada em produção em 18/08** (`duplicata_confirmada_em`,
+`duplicata_confirmada_vezes` em `itens_nfe`) — o código não funciona sem ela
+(`GET /controle/itens` devolve 500 `column ... does not exist`).
+
+<details>
+<summary>Histórico da construção (por que a feature existiu)</summary>
+
+## 🟡 Controle: tabela TOTALMENTE EDITÁVEL (estilo Excel) — codada 18/08/2026, falta o Matheus testar a digitação
+
+Branch `feature/controle-tabela-editavel`, commit `e6fb46b` (**só local, não subiu**).
+Desenho: `docs/superpowers/specs/2026-08-18-controle-tabela-editavel-design.md`.
+
+**Por que existe:** o Matheus testou a tela entregue no PR #61 e disse *"não ficou
+igual eu pedi, eu queria uma tabela totalmente editável como se fosse um Excel"*. O
+"estilo Excel" do plano anterior era só o FILTRO por coluna; editar célula tinha sido
+marcado como "fora de escopo" no papel, **sem ninguém perguntar a ele**. Lição de
+processo: escopo cortado no plano precisa ser confirmado com o dono, não decidido
+pelo executor.
+
+**Decisões dele, travadas antes de codar:** clicar na célula e digitar (Enter salva,
+Tab anda), adicionar/apagar linha, colar do Excel com várias linhas, salvar sozinho
+sem botão. Quando avisado de que editar à mão faria o sistema perder o reconhecimento
+de "já importei isso" e duplicar linha, respondeu que **isso é bom — duplicata deve
+aparecer PINTADA**, e virou feature em vez de risco.
+
+**⚠️ MIGRATION 019 JÁ APLICADA EM PRODUÇÃO em 18/08** (`duplicata_confirmada_em`,
+`duplicata_confirmada_vezes` em `itens_nfe`) — rodada pelo Matheus, verificação
+devolveu as 2 colunas certas. O código NÃO funciona sem ela (`GET /controle/itens`
+devolve 500 `column ... does not exist`).
+
+**Bug crítico achado só porque a tela foi aberta de verdade:** as 4 rotas de item
+nasceram dentro do router montado em `/controle/documentos`, resolvendo em
+`/controle/documentos/itens`, enquanto o front sempre chamou `/controle/itens` — 404
+em tudo, tela vazia. **Os 479 testes passavam**, porque `controle.test.ts` chama os
+handlers direto e nunca passa pelo `app.use()` real. Mesma categoria do bug de
+streaming de hoje cedo (suíte verde, feature 100% morta na vida real). Corrigido com
+router próprio (`controleItens.ts`) + `routeMounts.test.ts`, que cruza o `index.ts`
+lido como TEXTO com os caminhos literais do hook do frontend — e foi provado por
+mutação (reintroduzir o bug faz 2 dos 5 testes falharem).
+
+**Revisão do Apolo: 12 achados, nenhum passou batido.** Os 8 acionáveis corrigidos;
+2 eram CRÍTICOS que corrompiam dado em silêncio:
+- número em pt-BR lido com `parseFloat` cru — `"1.234,56"` virava **1.234** (R$ 1.234,56
+  → R$ 1,23), com 200 OK e sem erro. Valia igual pro colar do Excel, que é o pedido.
+- autosave descartava o patch pendente junto com o timer: editar 2 células da mesma
+  linha em menos de 400 ms persistia só a última, e a primeira sumia da tela quando o
+  servidor respondia.
+Mais: colar data `"01/12/2025"` virava 12 de janeiro; a pintura âmbar ficava atrás do
+fundo branco opaco das células (feature invisível); e o `package-lock.json` tinha
+arrastado **118 pacotes de carona** (incl. `@supabase/supabase-js` e 3 majors) que o
+Vercel instalaria em produção sem ninguém ter pedido — restaurado para 7 adicionados,
+0 trocados.
+
+**REGRESSÃO pega pelo Apolo:** a troca de componentes desligou o botão de excluir
+documento que o PR #61 tinha entregue HORAS antes. Nenhum arquivo vivo chamava
+`DELETE /controle/documentos/:id`. Restaurado.
+
+**✅ Medido por mim no navegador, depois das correções** (não é promessa do executor —
+o subagente não tinha navegador em nenhuma das rodadas):
+- os 28 itens carregam; formato pt-BR certo na tela (`3.956,75`, `44,2`, `25.480`)
+- pintura funciona: `getComputedStyle` da célula devolve `rgb(254,243,199)` com a
+  classe de duplicata contra `rgb(255,255,255)` normal
+- botão "Excluir documento de origem" presente em cada linha
+
+**✅ DIGITAÇÃO TESTADA E APROVADA PELO MATHEUS em 18/08, no navegador dele** — colar
+do Excel e editar duas células seguidas rápido na mesma linha, os dois OK. Eu não
+consegui testar isso: meus cliques não chegam na grade quando o painel do navegador
+não é exibido (`pointer-events: none` no input, nenhuma célula selecionada, foco no
+`body`) — foi limitação da automação, não defeito da tela.
+
+**🐛 Bug que só apareceu no teste dele (commit `bd76cb7`):** apertar Delete numa
+célula de Produto mandava `null` ao servidor → 400 → o `catch` de `editarItem`
+remontava a grade inteira, o valor voltava e **qualquer outra edição em andamento
+sumia junto**. Era o achado 8 do Apolo, corrigido pela metade na rodada anterior (só
+o caminho de linha nova). Consertado em 3 frentes: Produto/Unidade aceitam texto
+vazio (decisão dele — "máxima liberdade, igual Excel", ciente de que linha sem nome
+atrapalha a conferência; sem migration, `''` já satisfaz o `not null`); erro 4xx
+passou a só marcar a linha, e só rede/5xx recarrega; e esvaziar a descrição de 2
+linhas iguais do mesmo documento colide na trava da 018 → 409 em português, não 500.
+**Confirmado funcionando por ele.**
+
+**Achados 9–12 do Apolo, aceitos como pendência de propósito** (nenhum é dinheiro):
+editar `valor_total` de linha importada desarma as duas defesas de duplicidade ao
+mesmo tempo (a chave do "Caso 2" inclui o valor); a varredura de duplicatas não tem
+`.range()`/`.order()` e vira arbitrária acima de 1000 itens (hoje são 28 — latente);
+`marcarDuplicataConfirmada` não filtra `documento_controle_id` e não é atômico no
+contador; e `use-controle-data.ts` + `tabela-documentos.tsx` ficaram no repo como
+código morto.
+
+**Decisões de produto que ele ainda não viu** (o executor tomou sozinho): a tabela
+ficou ACHATADA (sumiu a faixa de fornecedor mesclada), o "Total do PDF" saiu da tela,
+e apagar linha importada libera a trava de dedupe daquele item (reimportar traz de
+volta).
+
+</details>
+
+## ✅ Feature "Controle" (defensivos/adubos/sementes) — PR #61 mergeado em 18/08/2026
+
+https://github.com/diretorpc/agromouro/pull/61 — squash em `main`, branch
+`feature/controle-gastos` apagada no remoto (o worktree local desta sessão continua
+com a branch, não apagada de propósito — é o worktree ativo). Railway/Vercel fazem
+deploy automático no push — **ainda não confirmado de fora** que o ar já serve o
+código novo, mesmo padrão de incerteza de outros itens desta seção. Cruza a NF-e
+automática com PDF importado manualmente (extrato de fornecedor tipo Solos/Syagri, ou
+contrato tipo Mosaic).
+
+**Epic 2.4 (tela `/controle`) — as 10/10 tarefas do plano de feature prontas.**
+Executada via `superpowers:subagent-driven-development`
+(`docs/superpowers/plans/2026-08-17-controle-tela.md`, ledger em
+`.superpowers/sdd/2026-08-17-controle-tela/progress.md`, dentro desta worktree): 8
+tarefas + revisão de cada uma + **revisão final do branch inteiro**, que achou 7
+problemas "importante" que só apareciam com tudo montado junto (menu de filtro cortado
+pela tabela, filtro fechando a cada seleção, upload sem feedback, reimportação sem
+total visível, filtro usando coluna não-normalizada, erro de PDF mudo, itens sem
+ordem) — todos corrigidos numa rodada só, confirmada por re-revisão, sem quebra nova.
+4 achados "menor" residuais aceitos conscientemente (ordem de item ainda instável em
+certo sentido, um caso de acento/NBSP bem estreito, menu em maiúsculas vs. linha da
+tabela em grafia crua, caixa de sucesso sem nome do arquivo) — nenhum é dinheiro ou
+vazamento entre fazendas.
+
+**Teste ao vivo começou em 18/08/2026, pela manhã (sessão seguinte).** Login funcionou
+depois de corrigir `web/.env.local` da worktree (faltava — copiado do checkout
+principal — e apontava pra API de **produção**, corrigido pra local). Verificado no
+navegador (sem PDF ainda): menu "Controle" no lugar certo, Popover do filtro abre sem
+cortar (resolve o achado 1 da revisão final), Esc fecha, diálogo abre/fecha certo.
+
+**🔴 BUG CRÍTICO achado no primeiro upload real — corrigido em 18/08/2026, commit
+`f91d19a`.** `documentoPdf.ts` chamava a API da Anthropic com `max_tokens: 32000` SEM
+streaming; o SDK recusa qualquer chamada não-streaming acima de ~21.333 tokens
+("Streaming is required for operations that may take longer than 10 minutes") — **toda
+importação de PDF, sem exceção, falhava com 503** "leitor indisponível", desde que a
+feature foi escrita. Nenhum teste pegou isso porque a suíte inteira mocka a chamada de
+IA — nunca bateu na API real antes de hoje. Corrigido trocando `.create()` por
+`.stream().finalMessage()` (mesmo shape de retorno, confirmado lendo o código-fonte do
+SDK). `boletoPdf.ts` (leitor irmão, `max_tokens: 1024`) NÃO precisava do mesmo
+conserto — fica bem abaixo do limiar, confirmado pelo cálculo exato do SDK. Revisado
+pelo Apolo, sem achado crítico/importante. **Ainda falta**: testar com um PDF de
+extrato/contrato de verdade (o teste do conserto usou um PDF qualquer só pra confirmar
+que o erro de streaming sumiu, não testou a qualidade da extração).
+
+**Lição registrada:** nem `lerDocumentoPdf` nem `lerBoletoDoPdf` têm teste (nem
+mockado) sobre a chamada real ao SDK — só a validação pura (`validarDocumentoLido`/
+`validarBoletoLido`). Foi esse buraco que deixou o bug do streaming invisível por
+todas as revisões anteriores. Vale um teste que force `max_tokens` alto e confirme que
+o código usa `.stream()`, pra não repetir a categoria.
+
+### 18/08/2026 tarde — chamadas repetidas diagnosticadas e corrigidas; botão Excluir construído
+
+**Bug das "dezenas de chamadas repetidas"** (sintoma achado de manhã, sem diagnóstico
+até aqui): causa raiz não era loop de re-render — é `FiltroColuna` (checkboxes de
+fornecedor) e os dois `<input type="date">` disparando uma requisição a cada
+clique/mudança, sem espera nenhuma. Corrigido com debounce de 300ms dentro do
+`useEffect` de `web/app/(app)/controle/hooks/use-controle-data.ts` (mantendo a trava
+`cancelado` que já existia). Testado ao vivo no navegador: mudar o período aplicou o
+filtro certo, sem travar e sem disparo duplo perceptível.
+
+**Botão "Excluir documento" construído** (pedido dele, confirmado nesta sessão):
+`api/src/services/controle/excluirDocumentoControle.ts` (novo, apaga itens_nfe antes
+do documento — FK `ON DELETE RESTRICT` da migration 017 — depois tenta apagar o PDF do
+Storage, best-effort), rota `DELETE /controle/documentos/:id`, botão + diálogo de
+confirmação em `tabela-documentos.tsx`. **Decisão registrada no próprio arquivo:** sem
+função atômica no Postgres (diferente do padrão de `excluir_nota_fiscal`, migration
+009) — Controle nunca mexe em estoque/lançamento (`conta_como_compra` é sempre falso
+aqui), então não há o que desfazer numa falha parcial.
+
+Testado ao vivo: o diálogo abre certo com "Cancelar"/"Excluir". **A exclusão de
+verdade não foi testada** — cancelei de propósito pra não apagar o documento real da
+SYAGRI que está na tela de teste.
+
+**Revisão do Apolo: sem crítico/alto.** 3 achados médios + 5 baixos. Os 3 médios e 2
+baixos rápidos foram corrigidos na mesma sessão (decisão do Matheus: só os
+importantes agora):
+- documento não "mente" mais na tela se o delete falhar no meio (marca erro, igual
+  `marcarDocumentoComErro`); tela recarrega sozinha no erro também, não só no sucesso
+- debounce de 300ms agora só no clique de filtro — montagem/paginação/import/exclusão
+  disparam na hora
+- rota `DELETE /controle/documentos/:id` ganhou teste (400/404/204/500)
+- 2 textos corrigidos ("item vinculado" no singular certo; "PDF deixa de ficar
+  acessível" em vez de prometer remoção garantida)
+
+**3 achados baixos, aceitos como pendência de propósito** (nenhum é dinheiro nem
+vazamento entre fazendas): DELETE sem `count:'exact'` (duas abas excluindo o mesmo
+documento ao mesmo tempo não dá erro, é inofensivo); id fora do formato UUID vira 500
+em vez de 404; sem guarda contra excluir documento no meio do processamento (caminho
+já é limpo mesmo sem a guarda, só não está escrito em lugar nenhum).
+
+**Testado ao vivo depois da correção:** recarreguei `/controle` no navegador, tabela
+carrega normal, cliquei em "Excluir documento" e o texto novo apareceu certo ("e 28
+itens vinculados? O PDF original deixa de ficar acessível."). Cancelei de novo — a
+exclusão de verdade (clicar "Excluir" e confirmar que a linha some) **continua nunca
+testada**.
+
+**✅ Exclusão real testada pelo Matheus, ao vivo — deu certo.** Também confirmou que
+as quantidades (kg, litros) vieram corretas na tela — o fix de unidade do commit
+`87de655` (sessão anterior) está validado na prática.
+
+**Ainda em aberto:**
+- Confirmar que o deploy (Railway API + Vercel web) já serve o código novo — próxima
+  vez que alguém abrir `/controle` em produção resolve isso.
+
+Pra medir de novo em vez de confiar no texto: `cd api && npm test && npx tsc --noEmit`
+(e o mesmo dentro de `web/` para o build).
+
+Servidores rodando nesta sessão (18/08 manhã): API na porta 3001, site na 3000 — caem
+quando a sessão do Claude Code encerra, subir de novo com `cd api && npm run dev` e
+`cd web && npm run dev` (+ `web/.env.local` da worktree precisa existir, copiado do
+checkout principal com `NEXT_PUBLIC_API_URL` trocado pra `http://localhost:3001`).
+
+**✅ Migration 018 aplicada em produção em 17/08/2026** — 3 consultas de verificação
+rodadas pelo Matheus no Supabase, as 3 bateram (índice de item com as 6 colunas e o
+WHERE certo, índice de documento virou parcial, as 2 colunas novas de `itens_nfe`
+existem). Trava de duplicidade por item está viva no banco.
+
+**5 de 10 tarefas do plano prontas:** migration 017 + bucket + leitor de PDF (sessão
+anterior, `ba68b0e`); `gravarDocumentoPdf.ts` + migration 018 (Epic 2.2, `40b8487`);
+rota da API — `POST /controle/documentos` (upload), `GET /controle/documentos` (lista
+com itens), `GET /controle/documentos/:id/arquivo` (signed URL do PDF original) — Epic
+2.3, `d4e8ca5`.
+
+**Isolamento por fazenda testado com mutação de verdade** (Apolo alterou o código pra
+tirar cada filtro de `fazenda_id` um de cada vez e confirmou que a suíte falha em todos
+os 5 pontos sensíveis, inclusive a rota de signed URL — que NÃO passa pela RLS do
+Postgres, então precisa checar `fazenda_id` no código mesmo).
+
+**Achados médios/baixos aceitos como pendência, não corrigidos de propósito** (decisão
+do Matheus, sessão de 17/08 — nenhum é dinheiro ou vazamento entre fazendas):
+- `GET /controle/documentos` sem `.limit()`/paginação — 4+ documentos cheios de itens
+  podem estourar o teto de linhas do PostgREST (padrão 1000) e truncar em silêncio;
+  ~220 documentos estouram o `IN()` da query por tamanho de URL.
+- Reimportação de documento onde TODOS os itens já existiam (extrato regerado) grava um
+  "documento fantasma" com `valor_total` cheio e `itens: []` no `GET /` — nada no
+  payload distingue isso de "gravação falhou". `itensDuplicados` só existe na resposta
+  do POST (efêmera), não é persistido.
+- `divergenciaTotal` (calculado na leitura do PDF, é a defesa contra a IA repetir linha)
+  é jogado fora — nunca chega no `gravarDocumentoDoPdf()` nem na rota.
+- Sem rate limit próprio na rota de upload e sem checar hash ANTES de chamar a IA —
+  clique duplo no botão paga 2 leituras de Opus (~US$ 1 cada).
+- Bucket `controle-documentos` no painel do Supabase ainda não confirmado se foi
+  ajustado pra `file_size_limit ~10MB` / `allowed_mime_types application/pdf` (hoje
+  "Any / 50 MB" — pendência manual registrada desde a migration 017).
+
+**Histórico resumido de revisão** (Epic 2.2, sessão 17/08 — detalhe completo já não
+cabe aqui de propósito, ver git log das migrations 017/018 e o corpo dos commits
+`40b8487`/`d4e8ca5` se precisar reconstituir):
+- 2 críticos de dinheiro dobrando resolvidos: dedupe por documento não pegava extrato
+  regerado mês a mês (corrigido com dedupe por ITEM, migration 018); `conta_como_compra`
+  virou sempre `false` pra item de PDF (Controle é conferência, gasto de verdade
+  continua vindo só da NF-e).
+- 4 altos de "tela de conferência ficando errada" resolvidos: documento preso pra
+  sempre em erro parcial; linha legítima repetida no mesmo documento sendo descartada;
+  contrato sem número próprio sem proteção; e (Epic 2.3) mensagens de erro genéricas +
+  falha de infra da IA tratada como PDF inválido.
+
+**Limitação aceita, registrada no código (não é dinheiro, é conferência rara):** item de
+extrato SEM número de duplicata legível usa como identidade o código do cliente
+(estável) + descrição + valor. Se o MESMO produto pelo MESMO valor aparecer em dois
+MESES diferentes sem número de duplicata em nenhum dos dois, o segundo é tratado como
+"já existe" e a compra nova some da conferência — silencioso. Estreito (só afeta item
+sem número, que é o caso raro) e não mexe em dinheiro (`conta_como_compra` já é `false`).
+
+**Próximo passo:** a TELA (upload, lista, visualização do PDF, cruzamento com NF-e) —
+ainda não desenhada nem no PLAN.md. Antes de destravar upload de verdade pelo público,
+vale revisitar a lista de pendências acima.
+
+## Financeiro: origem "Conta paga" sem nome de fornecedor — pronto, falta só abrir o PR — 18/08/2026
 
 Branch `feature/controle-graficos` (worktree `ou-e5b8ce`), **não commitado ainda**.
 Desenho: `docs/superpowers/specs/2026-08-19-controle-graficos-design.md`.
@@ -603,7 +922,7 @@ no tempo. Para conferir a suíte em vez de acreditar neste parágrafo:
 cd api && npx vitest run   # e depois: cd web && npx vitest run && npx tsc --noEmit
 ```
 
-### Gráficos da aba Controle — 4 gráficos na tela (19/08/2026, tarde)
+### O que entrou no PR #63 (19/08/2026, tarde)
 
 Além dos 3 primeiros, entrou o **gasto por fornecedor** a pedido do Matheus ("mais um
 gráfico, por empresa" — confirmado que "empresa" = a loja que vende, não a fazenda).
@@ -739,7 +1058,6 @@ Antes de remover a worktree, mover o `ESTADO.md` dela para `docs/` neste reposit
 ⚠️ **A checkout principal (esta pasta) está ATRÁS da `main` do GitHub.** Medido em
 19/08/2026: o `git log` daqui para em `f7dccd2` (PR #60) — os PRs #61 e #62 não
 aparecem. **Não conclua nada a partir do log local sem um `git fetch` antes.**
-
 ## Leitor de NFS-e (nota de serviço) — codado em 17/08/2026, 5 rodadas de revisão do Apolo feitas
 
 **Estado:** Migração 011 JÁ APLICADA em produção e confirmada pela API (17/08, 12h20).
