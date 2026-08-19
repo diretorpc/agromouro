@@ -494,6 +494,62 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
+## ✅ Controle: tabela TOTALMENTE EDITÁVEL (estilo Excel) — PR #62, 18/08/2026
+
+https://github.com/diretorpc/agromouro/pull/62 · **5 rodadas de revisão do Apolo,
+~30 achados.** Testado ao vivo pelo Matheus a cada rodada. Suíte: 489 na API + **38 no
+web, que não tinha NENHUM teste antes deste PR**.
+
+**Os 4 achados que só apareceram porque alguém abriu a tela ou leu o fonte da lib** —
+todos invisíveis pra suíte que existia:
+1. **Rota montada no lugar errado.** Front chamava `/controle/itens`, backend respondia
+   em `/controle/documentos/itens`. 404 em tudo, tela vazia, **479 testes verdes** — eles
+   chamavam o handler direto, nunca o `app.use()` real. Fechado com `routeMounts.test.ts`,
+   que cruza o `index.ts` lido como TEXTO com os caminhos literais do hook do front.
+2. **Dinheiro em pt-BR corrompido calado.** `parseFloat("1.234,56")` = 1.234 — R$ 1.234,56
+   virava R$ 1,23 com 200 OK. Valia igual pro colar do Excel, que era o pedido.
+3. **`Ctrl+A` + `Delete` apagava até 500 linhas do banco** numa tecla, sem confirmação.
+   `Ctrl+X` também — a lib desliga o smart-delete no recortar justamente pra isso não
+   acontecer, e a interceptação ignorava.
+4. **Segurar `Delete` apagava linha após linha em cascata** (8 repetições = 7 linhas
+   medidas). A lib não reajusta a seleção quando o array encolhe por fora, então ela fica
+   no índice N — que após a remoção é a próxima linha, cheia de dado.
+
+**Lição que vale além desta feature:** os 4 passariam por qualquer suíte que teste só a
+camada de dentro. O 1 e o 4 exigiram ler o código-fonte compilado da biblioteca; o 3 foi
+achado perguntando "que gesto pode disparar isso sem querer?". Teste de unidade verde não
+é evidência de que a feature funciona.
+
+**Guarda de exclusão** — as 3 condições precisam bater juntas: operação de 1 linha, tecla
+Delete real e não repetida (`onKeyDownCapture` + `!e.repeat`), e seleção cobrindo a linha
+inteira (`min.col===0 && max.col>=7`). Qualquer uma fora cai no caminho seguro
+(PATCH → 400 → reverte e marca): barulhento, nunca destrutivo.
+
+**Desfazer de 7s** (decisão do Matheus): a linha some da tela na hora, o DELETE só sai no
+fim do prazo. Timers são limpos no desmonte do hook — navegação interna do Next não passa
+por `beforeunload`, e sem isso o DELETE saía depois, deixando a tela exibir linha que já
+não existia.
+
+**Pendências aceitas, nenhuma é dinheiro** (item de Controle tem `conta_como_compra`
+sempre `false` — não entra no Financeiro):
+- Recarga da lista dentro dos 7s cancela a exclusão pendente **em silêncio** (troca de
+  filtro, importar PDF, falha de rede noutra linha). Direção segura — nada se perde —
+  mas o Matheus não é avisado de por que a linha voltou. Achado [médio] da 5ª rodada.
+- Editar `valor_total` ou esvaziar a descrição de linha importada desarma a trava de
+  dedupe daquela linha; reimportar o mesmo extrato passa a duplicar. Agora o gesto ficou
+  barato (uma tecla), o que aumenta a chance — risco assumido conscientemente.
+- Desfazer devolve a linha 1 posição adiante quando 2+ saíram na MESMA operação
+  (menu de contexto). Cosmético.
+- Buraco de paginação acima de 500 itens (pré-existente, hoje são ~28).
+- `use-controle-data.ts` e `tabela-documentos.tsx` ficaram como código morto.
+
+**⚠️ Migration 019 aplicada em produção em 18/08** (`duplicata_confirmada_em`,
+`duplicata_confirmada_vezes` em `itens_nfe`) — o código não funciona sem ela
+(`GET /controle/itens` devolve 500 `column ... does not exist`).
+
+<details>
+<summary>Histórico da construção (por que a feature existiu)</summary>
+
 ## 🟡 Controle: tabela TOTALMENTE EDITÁVEL (estilo Excel) — codada 18/08/2026, falta o Matheus testar a digitação
 
 Branch `feature/controle-tabela-editavel`, commit `e6fb46b` (**só local, não subiu**).
@@ -580,6 +636,8 @@ código morto.
 ficou ACHATADA (sumiu a faixa de fornecedor mesclada), o "Total do PDF" saiu da tela,
 e apagar linha importada libera a trava de dedupe daquele item (reimportar traz de
 volta).
+
+</details>
 
 ## ✅ Feature "Controle" (defensivos/adubos/sementes) — PR #61 mergeado em 18/08/2026
 
