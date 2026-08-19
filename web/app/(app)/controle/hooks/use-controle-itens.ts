@@ -27,6 +27,19 @@ export type FiltrosSelecionados = {
 const FILTROS_VAZIOS: FiltrosSelecionados = { fornecedores: [], status: [], dataInicio: '', dataFim: '' }
 const POR_PAGINA = 500
 
+// Janela de "Desfazer" antes do DELETE de item sair de verdade — decisão do
+// Matheus, 18/08/2026 (achado 4 da revisão do Apolo, 5ª rodada): Delete de
+// linha inteira virou 1 tecla só (ver grade-itens.tsx/deletar-linha.ts) e a
+// biblioteca não tem undo nenhum — sem essa rede, apagar sem querer é
+// definitivo na hora.
+const EXCLUSAO_JANELA_MS = 7000
+
+// Uma exclusão de ITEM ainda dentro da janela de desfazer. `indiceOriginal`
+// existe pra devolver a linha no MESMO lugar se o Matheus clicar
+// "Desfazer" ou se o DELETE falhar depois da janela expirar (achado 6 da
+// mesma revisão — antes a linha reaparecia jogada no rodapé da grade).
+type ExclusaoPendente = { id: string; item: ItemControleFlat; indiceOriginal: number }
+
 function montarQuery(pagina: number, filtros: FiltrosSelecionados): string {
   const params = new URLSearchParams()
   params.set('pagina', String(pagina))
@@ -56,6 +69,32 @@ export function useControleItens() {
   // Erro de AÇÃO (editar/criar/excluir/abrir PDF) — separado do erro de
   // carregamento da lista, mesmo padrão do hook antigo.
   const [erroAcao, setErroAcao] = useState<string | null>(null)
+  // Exclusões de ITEM ainda dentro da janela de desfazer (~7s) — array
+  // (não Map) de propósito: precisa de ORDEM estável pra o banner de
+  // "Desfazer" empilhar de forma previsível quando o Matheus apaga 2+
+  // linhas seguidas (a fila aguenta qualquer quantidade — cada entrada tem
+  // seu próprio timer independente, ver `timersExclusaoRef`).
+  const [exclusoesPendentes, setExclusoesPendentes] = useState<ExclusaoPendente[]>([])
+  const timersExclusaoRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+
+  // Avisa ANTES de sair da página enquanto existe exclusão pendente — o
+  // temporizador do "Desfazer" é só estado do navegador (setTimeout);
+  // fechar a aba/recarregar com o prazo correndo CANCELA a exclusão
+  // (comportamento decidido, ver `excluirItem`) sem apagar nada, mas o
+  // Matheus pode não esperar isso. Só assina o listener enquanto há pelo
+  // menos 1 pendente — barato, e o navegador ignora `beforeunload` sem
+  // gesto de usuário prévio na aba de qualquer forma (comportamento padrão,
+  // nada a fazer aqui).
+  useEffect(() => {
+    if (exclusoesPendentes.length === 0) return
+    function avisarAntesDeSair(e: BeforeUnloadEvent) {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', avisarAntesDeSair)
+    return () => window.removeEventListener('beforeunload', avisarAntesDeSair)
+  }, [exclusoesPendentes.length])
+
   const filtrosAnteriores = useRef(filtros)
   const [recarga, setRecarga] = useState(0)
   // Sobe a cada carga NOVA e completa da página 1 (mudança de filtro, ou
@@ -87,6 +126,18 @@ export function useControleItens() {
       api.get<ListaItensControle>(`/controle/itens?${montarQuery(1, filtros)}`)
         .then(resposta => {
           if (cancelado) return
+          // Cancela qualquer exclusão de ITEM ainda pendente (dentro da
+          // janela de "Desfazer") — um reload COMPLETO como este já traz a
+          // verdade fresca do servidor, que ainda TEM a linha (o DELETE de
+          // verdade só sai quando o temporizador vence, ver `excluirItem`).
+          // Sem isto, o temporizador continuaria correndo sozinho e
+          // apagaria uma linha que acabou de REAPARECER na tela sem o
+          // Matheus ter feito nada — o mesmo raciocínio de "servidor É a
+          // verdade nova" que já vale pra `versaoDados` (achado 2 da
+          // revisão anterior), aplicado à fila de exclusão.
+          for (const timerPendente of timersExclusaoRef.current.values()) clearTimeout(timerPendente)
+          timersExclusaoRef.current.clear()
+          setExclusoesPendentes([])
           setItens(resposta.itens)
           setPaginaCarregada(resposta.paginaAtual)
           setTotalPaginas(resposta.totalPaginas)
@@ -171,6 +222,13 @@ export function useControleItens() {
     try {
       const atualizado = await api.patch<ItemControleFlat>(`/controle/itens/${id}`, patch)
       substituirItem(id, atualizado)
+      // Achado 4 da revisão do Apolo (18/08/2026, 3ª rodada): sem isto, uma
+      // mensagem de erro de uma tentativa ANTERIOR (numa linha diferente ou
+      // na mesma, já corrigida) ficava pendurada no topo da tela pra
+      // sempre — antes o `recarregar()` limpava por tabela (o efeito de
+      // carga zera `erroAcao` no início); agora que ele não dispara mais
+      // pra todo erro, o sucesso precisa limpar por conta própria.
+      setErroAcao(null)
       return atualizado
     } catch (err) {
       setErroAcao(err instanceof Error ? err.message : 'Não foi possível salvar a edição.')
@@ -185,12 +243,16 @@ export function useControleItens() {
       // Correção: só recarrega em falha de REDE ou erro do SERVIDOR (5xx) —
       // aí sim o estado local pode estar mentindo (a grade já mostrou a
       // edição otimista, sem confirmação nenhuma de que o banco recebeu).
-      // Erro de VALIDAÇÃO (4xx — campo inválido, conflito de duplicidade)
-      // é uma resposta CONCLUÍDA do servidor: a linha que falhou fica
-      // marcada (GradeItens cuida disso, achado 7 do mesmo espírito) e as
-      // outras edições em andamento na grade continuam intactas.
-      // `ehErroDeValidacao` é função pura, exportada de lib/api.ts —
-      // testada isolada (ver comando no ESTADO.md/relatório da sessão).
+      // Erro de VALIDAÇÃO — hoje só 400 (corpo recusado pelo zod) e 409
+      // (conflito de duplicidade); `ehErroDeValidacao` restringiu a essa
+      // dupla na revisão seguinte (401/403/404 recarregam, não são "campo
+      // inválido, tente de novo") — é uma resposta CONCLUÍDA do servidor:
+      // `GradeItens` REVERTE a linha que falhou pro último valor
+      // confirmado E marca ela (achado 2 da revisão do Apolo, 18/08/2026,
+      // 4ª rodada — reverter sem marcar deixava a tela sem explicação
+      // nenhuma do que aconteceu) — as outras edições em andamento na
+      // grade continuam intactas. `ehErroDeValidacao` é função pura,
+      // exportada de lib/api.ts, testada em `lib/api.test.ts`.
       if (!ehErroDeValidacao(err)) {
         // `recarregar()` também bate `versaoDados`, que remonta a grade
         // inteira — qualquer timer/patch pendente que ainda existisse é
@@ -295,18 +357,75 @@ export function useControleItens() {
     }
   }
 
+  // Devolve a linha removida na posição ORIGINAL, não no fim da lista —
+  // achado 6 da revisão do Apolo (18/08/2026, 5ª rodada): `[...atual,
+  // backup]` (antes) sempre jogava a linha reaparecida pro RODAPÉ da
+  // grade, fora de ordem. `Math.min(indice, copia.length)` cobre o caso
+  // (raro, mas possível) de a lista ter ficado mais curta que o índice
+  // original enquanto a linha estava fora (outra exclusão no meio) — sem
+  // isso, `splice` num índice além do fim simplesmente anexaria no fim de
+  // qualquer forma, mas o `Math.min` deixa a intenção explícita.
+  function reinserirNaPosicao(item: ItemControleFlat, indiceOriginal: number) {
+    setItens(atual => {
+      const copia = [...atual]
+      copia.splice(Math.min(indiceOriginal, copia.length), 0, item)
+      return copia
+    })
+  }
+
   async function excluirItem(id: string): Promise<void> {
-    const backup = itens.find(i => i.id === id) ?? null
-    substituirItem(id, null) // otimista: some da tela na hora
-    try {
-      await api.del(`/controle/itens/${id}`)
-    } catch (err) {
-      setErroAcao(err instanceof Error ? err.message : 'Não foi possível excluir o item.')
-      // Devolve a linha removida otimisticamente — falha real, o item
-      // continua existindo no banco.
-      if (backup) setItens(atual => [...atual, backup])
-      throw err
-    }
+    const indiceOriginal = itens.findIndex(i => i.id === id)
+    const item = indiceOriginal >= 0 ? itens[indiceOriginal] : undefined
+    if (!item) return
+
+    substituirItem(id, null) // otimista: some da tela na hora, como sempre
+
+    // Achado 4 da revisão do Apolo (18/08/2026, 5ª rodada) — decisão do
+    // Matheus, tomada com o risco na mão: exclusão de ITEM ganha janela de
+    // ~7s pra desfazer. Diferente de antes (DELETE saía na hora), o
+    // `api.del` só é chamado quando o temporizador vence — se o Matheus
+    // clicar "Desfazer" antes disso, a linha volta pro lugar e NENHUM
+    // DELETE chega a sair da rede.
+    //
+    // Comportamento decidido pra "sair da página/recarregar com o prazo
+    // correndo" (pergunta explícita do Apolo): o temporizador é estado só
+    // do NAVEGADOR (setTimeout) — fechar a aba ou dar F5 o mata sem
+    // rodar. Resultado: a exclusão é CANCELADA automaticamente, a linha
+    // sobrevive no banco e REAPARECE no próximo carregamento. É a direção
+    // SEGURA por padrão (falhar fechado — perder o estado do timer nunca
+    // apaga dado, só cancela a exclusão); a alternativa (persistir
+    // "exclusão pendente" em localStorage pra sobreviver a um F5) foi
+    // considerada e descartada por complexidade desproporcional ao risco
+    // — o aviso de `beforeunload` abaixo avisa ANTES de sair, então a
+    // perda de INTENÇÃO (não a perda de DADO) é o único custo, e fica
+    // visível pro usuário antes de acontecer.
+    setExclusoesPendentes(atual => [...atual, { id, item, indiceOriginal }])
+
+    const timer = setTimeout(() => {
+      timersExclusaoRef.current.delete(id)
+      setExclusoesPendentes(atual => atual.filter(p => p.id !== id))
+      api.del(`/controle/itens/${id}`).catch(err => {
+        setErroAcao(err instanceof Error ? err.message : 'Não foi possível excluir o item.')
+        // Falha de rede/servidor DEPOIS da janela expirar — devolve a
+        // linha, mesma posição de origem.
+        reinserirNaPosicao(item, indiceOriginal)
+      })
+    }, EXCLUSAO_JANELA_MS)
+    timersExclusaoRef.current.set(id, timer)
+  }
+
+  // Cancela o DELETE agendado (se ainda não tiver saído) e devolve a linha
+  // pra posição original. Chamado pelo clique em "Desfazer" — ver
+  // `exclusoesPendentes`/o banner em page.tsx.
+  function desfazerExclusao(id: string) {
+    const timer = timersExclusaoRef.current.get(id)
+    if (!timer) return // já expirou (DELETE já saiu) ou já foi desfeita antes
+    clearTimeout(timer)
+    timersExclusaoRef.current.delete(id)
+
+    const pendente = exclusoesPendentes.find(p => p.id === id)
+    setExclusoesPendentes(atual => atual.filter(p => p.id !== id))
+    if (pendente) reinserirNaPosicao(pendente.item, pendente.indiceOriginal)
   }
 
   return {
@@ -317,5 +436,14 @@ export function useControleItens() {
     primeiraCarga: loading && !jaCarregouUmaVez,
     erroCarregamento, erroAcao, setErroAcao, recarregar,
     editarItem, criarItem, excluirItem, excluirDocumento, abrirPdf, importarDocumento,
+    // Exposto pra GradeItens conseguir REVERTER uma linha específica pro
+    // último valor confirmado, sem remontar a grade inteira — achado 1 da
+    // revisão do Apolo (18/08/2026, 3ª rodada). Ver `dispararSalvar` em
+    // grade-itens.tsx.
+    substituirItem,
+    // Janela de "Desfazer" da exclusão de item — achado 4 da revisão do
+    // Apolo (18/08/2026, 5ª rodada). `page.tsx` desenha o banner em cima
+    // disto.
+    exclusoesPendentes, desfazerExclusao,
   }
 }

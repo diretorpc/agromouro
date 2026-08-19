@@ -19,6 +19,8 @@ export default function ControlePage() {
     loading, primeiraCarga, erroCarregamento, erroAcao,
     temMais, carregarMais, carregandoMais,
     editarItem, criarItem, excluirItem, excluirDocumento, abrirPdf, importarDocumento,
+    substituirItem,
+    exclusoesPendentes, desfazerExclusao,
   } = useControleItens()
 
   // Mesmo raciocínio da tela antiga: atualização (troca de filtro) NÃO
@@ -84,7 +86,36 @@ export default function ControlePage() {
             onCriarItem={criarItem}
             onExcluirItem={excluirItem}
             onExcluirDocumento={excluirDocumento}
+            onReverterItem={substituirItem}
           />
+        </div>
+      )}
+
+      {/* Rede de "Desfazer" pra exclusão de item (achado 4 da revisão do
+          Apolo, 18/08/2026, 5ª rodada) — Delete de linha inteira virou 1
+          tecla só e a biblioteca não tem undo nenhum. A fila aguenta
+          quantas exclusões o Matheus fizer em sequência: cada uma tem seu
+          próprio temporizador (`use-controle-itens.ts`), cada uma vira uma
+          faixa própria aqui, empilhadas. */}
+      {exclusoesPendentes.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2" role="status" aria-live="polite">
+          {exclusoesPendentes.map(pendente => (
+            <div
+              key={pendente.id}
+              className="flex items-center gap-3 rounded-md border bg-foreground px-4 py-2 text-sm text-background shadow-lg"
+            >
+              <span>
+                Linha apagada{pendente.item.descricao ? ` — "${pendente.item.descricao}"` : ''}
+              </span>
+              <button
+                type="button"
+                onClick={() => desfazerExclusao(pendente.id)}
+                className="font-medium underline underline-offset-2 hover:no-underline"
+              >
+                Desfazer
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </div>

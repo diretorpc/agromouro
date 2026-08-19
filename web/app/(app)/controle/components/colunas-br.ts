@@ -122,12 +122,28 @@ export function colunaNumeroBR() {
 // `camposItemEditavel.descricao`/`.unidade` (controleItens.ts) tiveram o
 // `.min(1)` removido — continuam exigindo `string`, só não mais "não-vazia".
 export function colunaTextoSemNulo() {
-  return createTextColumn<string>({
-    continuousUpdates: false,
-    deletedValue: '',
-    parseUserInput:   value => value.trim(),
-    parsePastedValue: value => value.replace(/[\n\r]+/g, ' ').trim(),
-  })
+  return {
+    ...createTextColumn<string>({
+      continuousUpdates: false,
+      deletedValue: '',
+      parseUserInput:   value => value.trim(),
+      parsePastedValue: value => value.replace(/[\n\r]+/g, ' ').trim(),
+    }),
+    // Achado 5 da revisão do Apolo (18/08/2026, 3ª rodada): `createTextColumn`
+    // não expõe `isCellEmpty` como opção — é FIXO dentro do pacote como
+    // `rowData === null || rowData === undefined` (dist/columns/textColumn.js).
+    // `DataSheetGrid.js` só apaga a LINHA INTEIRA (tecla Delete com a linha
+    // selecionada) quando TODAS as colunas concordam que a célula está
+    // vazia — como esta coluna nunca devolve `null` (é o propósito dela,
+    // ver comentário acima), `''` nunca batia nesse critério, e o Delete de
+    // linha parou de funcionar (o menu de contexto/botão direito continuava
+    // funcionando, mas o gesto natural do Excel quebrou). Sobrescrever
+    // aqui — mesmo padrão que `isoDateColumn` já usa nativamente
+    // (`isCellEmpty: ({rowData}) => !rowData`) — não muda nada do
+    // `deleteValue`/`parseUserInput`: só ensina a grade a reconhecer ''
+    // como "vazia" pra essa decisão específica.
+    isCellEmpty: ({ rowData }: { rowData: string | null }) => !rowData,
+  }
 }
 
 // ─── Data (data_manual) ─────────────────────────────────────────────────────

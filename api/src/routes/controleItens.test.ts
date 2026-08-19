@@ -159,6 +159,19 @@ describe('POST /controle/itens (router raiz)', () => {
     expect(res.body).toEqual(criado)
   })
 
+  // Achado da revisão do Apolo (18/08/2026, 3ª rodada): a decisão do
+  // Matheus foi sobre EDITAR um item já existente — criar um do zero em
+  // branco continua exigindo descrição. Diferente de PATCH (ver
+  // controleItens.test.ts 'PATCH', "descricao vazia é aceita"): CRIAR com
+  // descrição vazia tem que continuar 400, sem chamar o service.
+  it('descricao vazia ("") no POST continua 400 — CRIAR é diferente de EDITAR', async () => {
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A, body: { ...corpoValido, descricao: '' } })
+    await handler(req, res, next)
+
+    expect(res.statusCode).toBe(400)
+    expect(criarItemControleAvulsoMock).not.toHaveBeenCalled()
+  })
+
   // TRAVA DE DINHEIRO no nível da ROTA: mesmo que o corpo mande
   // conta_como_compra, o schema zod (fora do objeto de campos aceitos) o
   // descarta antes de chegar no service — a segunda camada (o service

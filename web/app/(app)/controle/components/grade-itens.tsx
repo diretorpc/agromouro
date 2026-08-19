@@ -1,17 +1,14 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { FileText, Trash2, AlertTriangle } from 'lucide-react'
-import {
-  DataSheetGrid, keyColumn, createTextColumn, isoDateColumn,
-  type CellComponent, type Column,
-} from 'react-datasheet-grid'
+import { DataSheetGrid } from 'react-datasheet-grid'
 import 'react-datasheet-grid/dist/style.css'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { FiltroColuna } from './filtro-coluna'
-import { colunaNumeroBR, colunaDataBR, colunaTextoSemNulo } from './colunas-br'
+import { construirColunas } from './colunas-controle'
+import { linhaIndoParaOLixo, podeSerDeleteDeLinha } from './deletar-linha'
 import estilos from './grade-itens.module.css'
 import type { ItemControleFlat, FiltrosControle, PatchItemControleFlat } from '@/lib/types'
 import type { FiltrosSelecionados } from '../hooks/use-controle-itens'
@@ -44,6 +41,13 @@ const PREFIXO_TEMP = 'temp-'
 // (react-datasheet-grid/dist/types), que pode mudar sem aviso entre versões
 // menores. Formato confirmado lendo o .d.ts instalado.
 type OperacaoGrade = { type: 'UPDATE' | 'DELETE' | 'CREATE'; fromRowIndex: number; toRowIndex: number }
+
+// `SelectionWithId` é exportada por `dist/types.d.ts`, mas NÃO reexportada
+// pelo pacote (índice público não a lista, diferente de `DataSheetGridRef`/
+// `CellComponent`/`Column`, que são reexportadas de propósito) — mesmo
+// motivo de `OperacaoGrade` acima: replicada aqui em vez de importar de um
+// caminho interno.
+type SelecaoComId = { min: { col: number; row: number }; max: { col: number; row: number } }
 
 // `crypto.randomUUID()` é a Web Crypto API do NAVEGADOR (global, disponível
 // em todo navegador moderno) — diferente de `crypto` do Node.js (módulo
@@ -89,64 +93,6 @@ function diffCampos(anterior: ItemControleFlat, atual: ItemControleFlat): PatchI
   return patch
 }
 
-// Célula de ação "Documento" — não editável. Duas ações quando a linha veio
-// de um PDF importado (documento_controle_id not null): abrir o PDF de
-// origem, e excluir o DOCUMENTO inteiro (achado 3 da revisão do Apolo —
-// regressão: esse botão sumiu da tela nova, deixando o dono sem jeito de
-// tirar um documento importado errado; `idx_doc_controle_dedupe`/
-// `idx_doc_controle_hash` da migration 017 continuam bloqueando reimportar
-// o mesmo extrato até a linha ser apagada). Linha avulsa (sem documento)
-// não mostra nenhum dos dois — não tem origem pra abrir nem documento pra
-// excluir. Ícone de aviso (âmbar) some/aparece conforme `rowData.duplicado`
-// — tooltip nativo do navegador (`title`) explica o motivo (achado 5,
-// segunda parte: o spec prometia esse tooltip e a 1ª versão não entregou).
-function celulaAcoes(
-  onAbrirPdf: (documentoId: string) => void,
-  onPedirExclusao: (documentoId: string, item: ItemControleFlat) => void,
-): CellComponent<ItemControleFlat, unknown> {
-  return function CelulaAcoes({ rowData }) {
-    const docId = rowData.documento_controle_id
-    return (
-      <div className="flex h-full w-full items-center justify-center gap-1.5">
-        {rowData.duplicado && (
-          <span
-            title={
-              rowData.duplicadoMotivo === 'reimportacao'
-                ? `Linha confirmada de novo numa reimportação${rowData.duplicata_confirmada_vezes > 0 ? ` (${rowData.duplicata_confirmada_vezes}x)` : ''}.`
-                : 'Existe outra linha muito parecida (mesmo fornecedor, número e valor) nesta grade.'
-            }
-            className="text-amber-600"
-          >
-            <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-          </span>
-        )}
-        {docId && (
-          <>
-            <button
-              type="button"
-              onClick={() => onAbrirPdf(docId)}
-              className="text-muted-foreground hover:text-foreground"
-              aria-label="Abrir PDF de origem"
-              title="Abrir PDF de origem"
-            >
-              <FileText className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              onClick={() => onPedirExclusao(docId, rowData)}
-              className="text-muted-foreground hover:text-destructive"
-              aria-label="Excluir documento de origem"
-              title="Excluir documento de origem"
-            >
-              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
-          </>
-        )}
-      </div>
-    )
-  }
-}
-
 type GradeItensProps = {
   itens: ItemControleFlat[]
   atualizarLocal: (novos: ItemControleFlat[]) => void
@@ -161,12 +107,21 @@ type GradeItensProps = {
   onCriarItem: (dados: PatchItemControleFlat & { descricao: string; valor_total: number }, idTemporario: string) => Promise<ItemControleFlat>
   onExcluirItem: (id: string) => Promise<void>
   onExcluirDocumento: (documentoId: string) => Promise<void>
+  // Achado 1 da revisão do Apolo (18/08/2026, 3ª rodada) — CRÍTICO: sem
+  // isto, uma edição recusada (400/409) ficava mostrada na tela pra sempre
+  // (a grade nunca sabia que o servidor não aceitou), e como o diff sempre
+  // compara contra a MESMA baseline, o campo recusado voltava em TODO
+  // patch seguinte daquela linha — nada mais salvava nela até um F5
+  // manual. `onReverterItem` é `substituirItem` do hook (exposto de
+  // propósito) — grava de volta o ÚLTIMO VALOR CONFIRMADO pelo servidor,
+  // sem remontar a grade inteira nem mexer nas outras linhas.
+  onReverterItem: (id: string, valorAnterior: ItemControleFlat) => void
 }
 
 export function GradeItens({
   itens, atualizarLocal, filtrosDisponiveis, filtros, onFiltrosChange,
   temMais, carregandoMais, onCarregarMais,
-  onAbrirPdf, onEditarItem, onCriarItem, onExcluirItem, onExcluirDocumento,
+  onAbrirPdf, onEditarItem, onCriarItem, onExcluirItem, onExcluirDocumento, onReverterItem,
 }: GradeItensProps) {
   // ─── Autosave: baseline + patch acumulado (achado 2 da revisão do Apolo) ──
   //
@@ -199,6 +154,52 @@ export function GradeItens({
   // acumulada em `patchesPendentesRef`; o disparo é reagendado pro fim do
   // voo atual, não cancelado.
   const emVooRef = useRef<Set<string>>(new Set())
+
+  // ─── Portão de escopo do "Delete apaga a linha" (achados 1-3 da revisão
+  // do Apolo, 18/08/2026, 5ª rodada) ──────────────────────────────────────
+  //
+  // A 1ª versão de `linhaIndoParaOLixo` só olhava o RESULTADO (todos os 8
+  // campos vazios) — sem saber COMO a linha chegou nesse estado. Isso
+  // acertava o gesto travado pelo Matheus (selecionar 1 linha inteira +
+  // Delete) mas também disparava em 3 cenários que ele NUNCA pediu:
+  //   1. [CRÍTICO] Ctrl+A + Delete: seleciona TODAS as linhas carregadas
+  //      (até 500), `deleteSelection` da lib limpa as 8 colunas de TODAS
+  //      elas num único `UPDATE` — cada uma bate na assinatura de "vazia" e
+  //      seria apagada. N × DELETE físico numa combinação de teclas.
+  //   2. Colar um bloco de 8 colunas em branco do Excel sobre uma linha —
+  //      o caminho de paste da lib não passa pelo pré-teste de "já está
+  //      vazia" que o Delete tem, vai direto pro UPDATE.
+  //   3. `Ctrl+X` (recortar) — a lib desliga o "smart delete" de propósito
+  //      nesse gesto (`deleteSelection(false)`), mas a detecção por
+  //      RESULTADO não sabia disso e apagava a linha assim mesmo.
+  //   4. Delete numa FAIXA PARCIAL de células (ex.: só Produto..V.Total)
+  //      de uma linha "magra" (avulsa, com só Produto+V.Total preenchidos)
+  //      — os outros campos já nascem vazios, e limpar só esses dois já
+  //      fecha a assinatura completa.
+  //
+  // Correção: exigir DUAS condições ALÉM do resultado, as duas medidas
+  // pelo Apolo direto no código real da lib —
+  //   (a) a op do `onChange` cobre EXATAMENTE 1 linha
+  //       (`toRowIndex - fromRowIndex === 1`) — mata o Ctrl+A;
+  //   (b) a SELEÇÃO no momento do gesto cobre a linha INTEIRA
+  //       (`min.col === 0 && max.col >= 7`, via `onSelectionChange` — a
+  //       prop existe nesta versão, `types.d.ts:169`) — mata a faixa
+  //       parcial (achado 3);
+  //   (c) o gesto foi de fato a TECLA Delete/Backspace, não paste nem
+  //       cut — capturado num `onKeyDownCapture` no wrapper (fase de
+  //       CAPTURA, corre ANTES do handler interno da lib, garantindo que o
+  //       `ref` já está `true` quando `handleChange` roda na mesma
+  //       distribuição síncrona do evento) — mata paste-de-vazio (achado 2)
+  //       e Ctrl+X (que nem dispara keydown de Delete/Backspace).
+  // As três precisam bater JUNTAS; qualquer uma fora do lugar cai no
+  // caminho normal (agendarEdicao → PATCH → 400 → reverte+marca, achado 2
+  // da rodada anterior — destino seguro, não destrutivo).
+  const teclaDeleteAtivaRef = useRef(false)
+  const selecaoAtualRef = useRef<SelecaoComId | null>(null)
+
+  function handleKeyDownCapture(e: React.KeyboardEvent) {
+    teclaDeleteAtivaRef.current = e.key === 'Delete' || e.key === 'Backspace'
+  }
 
   // Seed da baseline pra toda linha NOVA que aparecer (carga inicial,
   // "carregar mais", ou linha recém-criada reconciliada com o id real do
@@ -292,12 +293,45 @@ export function GradeItens({
       })
       .catch(() => {
         // Erro já fica em `erroAcao` (hook mostra a mensagem no topo da
-        // página). Marca ESTA linha — não importa se foi erro de validação
-        // (fica assim até o usuário corrigir) ou de rede/5xx (o hook já
-        // chamou `recarregar()`, que remonta a grade inteira e limpa este
-        // estado sozinho junto com tudo mais — marcar aqui não atrapalha
-        // esse caso).
-        setIdsComErroEdicao(atual => new Set(atual).add(id))
+        // página).
+        //
+        // Achado 1 da revisão do Apolo (18/08/2026, 3ª rodada) — CRÍTICO,
+        // regressão da correção anterior: marcar a linha de erro SEM
+        // reverter deixava a tela MENTINDO — mostrando um valor que o
+        // banco RECUSOU (400/409), e como `agendarEdicao` sempre compara
+        // contra a MESMA baseline, o campo recusado reaparecia em TODO
+        // patch seguinte daquela linha: nada mais salvava nela até um F5
+        // manual. Pior que o `recarregar()` de antes, que pelo menos
+        // corrigia a mentira.
+        const pendente = patchesPendentesRef.current.get(id)
+        if (pendente && Object.keys(pendente).length > 0) {
+          // Já existe um patch MAIS NOVO acumulado (o usuário editou de
+          // novo enquanto este PATCH estava em voo) — não reverte: o
+          // `.finally()` logo abaixo já vai disparar esse patch mais novo
+          // na sequência, usando o valor mais recente. Reverter aqui só
+          // criaria um pisca-pisca (volta pro antigo, manda o novo em
+          // seguida) sem ganho nenhum.
+          return
+        }
+        const baseline = ultimoPersistidoRef.current.get(id)
+        if (baseline) {
+          // Achado 2 da revisão do Apolo (18/08/2026, 4ª rodada): reverter
+          // SEM marcar deixava o "pisca e volta" do bug original entrar
+          // pela porta nova — as células ficam em branco na hora
+          // (otimista), 400ms depois voltam pro valor de antes, e SEM
+          // nenhuma marca visual o único sinal era o `erroAcao` no topo,
+          // que some sozinho no próximo autosave bem-sucedido de QUALQUER
+          // outra linha. Reverter E marcar, não um ou outro —
+          // `agendarEdicao` já limpa a marca quando o diff volta a `{}`
+          // (achado 4 da rodada anterior), então ela não fica presa.
+          onReverterItem(id, baseline)
+          setIdsComErroEdicao(atual => new Set(atual).add(id))
+        } else {
+          // Não deveria acontecer (toda linha existente é "seedada" pelo
+          // efeito acima) — sem baseline pra reverter, a única opção
+          // honesta é marcar erro em vez de arriscar mostrar algo errado.
+          setIdsComErroEdicao(atual => new Set(atual).add(id))
+        }
       })
       .finally(() => {
         emVooRef.current.delete(id)
@@ -321,6 +355,17 @@ export function GradeItens({
       // mandar, mesmo que um timer estivesse agendado de uma edição
       // anterior que já tinha sido cancelada.
       patchesPendentesRef.current.delete(id)
+      // Achado 4 da revisão do Apolo (18/08/2026, 3ª rodada): sem isto, uma
+      // linha que ficou marcada de erro (PATCH recusado) continuava
+      // vermelha PRA SEMPRE se o usuário digitasse de volta o valor
+      // original — `diffCampos` dava `{}`, nenhum PATCH saía, e a marca
+      // nunca era limpa (só o `.then()` de sucesso limpava). Digitar de
+      // volta o valor que já está confirmado no servidor é, por definição,
+      // "não há mais erro nenhum" — mesmo sem round-trip de rede.
+      setIdsComErroEdicao(atual => {
+        if (!atual.has(id)) return atual
+        const novo = new Set(atual); novo.delete(id); return novo
+      })
     } else {
       patchesPendentesRef.current.set(id, diff)
     }
@@ -389,13 +434,51 @@ export function GradeItens({
   // mudança — usado só pra resolver DELETE (que remove linhas do array,
   // então o id removido só existe no array ANTIGO). UPDATE não usa mais
   // `itens[i]` como baseline — ver `agendarEdicao`.
+  // Cancela timer/patch pendente e chama `onExcluirItem` pra uma linha JÁ
+  // EXISTENTE (nunca temp-) — extraído porque agora tem DOIS gatilhos: a
+  // operação DELETE nativa da grade (selecionar linha(s) + apagar via menu,
+  // ou 2ª tecla Delete numa linha já vazia — mecanismo "smart delete" da
+  // biblioteca) e a detecção de "linha indo pro lixo" num UPDATE (achado 1
+  // da revisão do Apolo, 18/08/2026, 4ª rodada — ver deletar-linha.ts).
+  function excluirLinhaExistente(id: string) {
+    const timer = timersEdicao.current.get(id)
+    if (timer) { clearTimeout(timer); timersEdicao.current.delete(id) }
+    patchesPendentesRef.current.delete(id)
+    setIdsComErroEdicao(atual => {
+      if (!atual.has(id)) return atual
+      const novo = new Set(atual); novo.delete(id); return novo
+    })
+    onExcluirItem(id).catch(() => { /* erro já fica em erroAcao */ })
+  }
+
   function handleChange(novoValor: ItemControleFlat[], operacoes: OperacaoGrade[]) {
     // Otimista primeiro (decisão nº 4): a grade já mostra a mudança antes de
     // qualquer chamada de rede.
     atualizarLocal(novoValor)
 
+    // "One-shot": só vale pro onChange que está rodando ISTO agora — outro
+    // gesto (paste, cut, outra tecla) já passou pelo `onKeyDownCapture` de
+    // novo antes deste `onChange` disparar, ou nem passou (paste/cut não
+    // emitem keydown de Delete/Backspace), então o valor aqui já reflete o
+    // gesto CERTO. Zera antes do loop pra não vazar pro próximo onChange
+    // caso este handler dispare de novo por outro motivo no meio do
+    // caminho.
+    const foiTeclaDelete = teclaDeleteAtivaRef.current
+    teclaDeleteAtivaRef.current = false
+
     for (const op of operacoes) {
       if (op.type === 'UPDATE') {
+        // Achados 1-3 da revisão do Apolo (18/08/2026, 5ª rodada): só uma
+        // linha (não Ctrl+A) E seleção cobrindo a linha inteira (não faixa
+        // parcial) E veio da tecla Delete/Backspace (não paste/cut) — ver
+        // `podeSerDeleteDeLinha` em deletar-linha.ts (função pura,
+        // testada) e o comentário completo no bloco de refs, acima.
+        const gestoQualificaComoDeleteDeLinha = podeSerDeleteDeLinha({
+          foiTeclaDelete,
+          quantasLinhasNaOperacao: op.toRowIndex - op.fromRowIndex,
+          selecao: selecaoAtualRef.current,
+        })
+
         for (let i = op.fromRowIndex; i < op.toRowIndex; i++) {
           const linha = novoValor[i]
           if (!linha) continue
@@ -405,27 +488,34 @@ export function GradeItens({
             possivelmenteCriar(linha)
             continue
           }
+          // Decisão do Matheus: Delete na linha inteira APAGA a linha —
+          // MAS só quando as 3 condições do portão acima batem juntas.
+          // Sem isso, o autosave mandaria um PATCH com `valor_total: null`,
+          // que o backend SEMPRE recusa (400, campo obrigatório numa linha
+          // já existente) — mas esse destino (reverte+marca) é o CORRETO
+          // pros gestos que não passam no portão (Ctrl+A, paste, cut,
+          // faixa parcial): nenhum deles deveria apagar nada.
+          if (gestoQualificaComoDeleteDeLinha && linhaIndoParaOLixo(linha)) {
+            excluirLinhaExistente(linha.id)
+            continue
+          }
           agendarEdicao(linha)
         }
       } else if (op.type === 'DELETE') {
         for (let i = op.fromRowIndex; i < op.toRowIndex; i++) {
           const linhaRemovida = itens[i]
           if (!linhaRemovida) continue
-          const timer = timersEdicao.current.get(linhaRemovida.id)
-          if (timer) { clearTimeout(timer); timersEdicao.current.delete(linhaRemovida.id) }
-          patchesPendentesRef.current.delete(linhaRemovida.id)
           if (linhaRemovida.id.startsWith(PREFIXO_TEMP)) {
+            const timer = timersEdicao.current.get(linhaRemovida.id)
+            if (timer) { clearTimeout(timer); timersEdicao.current.delete(linhaRemovida.id) }
+            patchesPendentesRef.current.delete(linhaRemovida.id)
             setIdsComErroCriacao(atual => {
               if (!atual.has(linhaRemovida.id)) return atual
               const novo = new Set(atual); novo.delete(linhaRemovida.id); return novo
             })
             continue // nunca existiu no banco
           }
-          setIdsComErroEdicao(atual => {
-            if (!atual.has(linhaRemovida.id)) return atual
-            const novo = new Set(atual); novo.delete(linhaRemovida.id); return novo
-          })
-          onExcluirItem(linhaRemovida.id).catch(() => { /* erro já fica em erroAcao */ })
+          excluirLinhaExistente(linhaRemovida.id)
         }
       }
       // CREATE não precisa de ação aqui: a linha nasce vazia (ver
@@ -435,63 +525,12 @@ export function GradeItens({
     }
   }
 
-  // Tipo explícito no array inteiro (em vez de deixar o TypeScript inferir
-  // cada `keyColumn(...)` isoladamente): sem isso, o compilador não liga os
-  // pontos entre a chave string ('data_manual', 'fornecedor'...) e o tipo
-  // `ItemControleFlat` — cada chamada isolada infere um `T` genérico demais
-  // e a coluna de ações (que usa `ItemControleFlat` explicitamente no seu
-  // `CellComponent`) para de bater com o resto do array.
-  const columns: Partial<Column<ItemControleFlat, any, any>>[] = [
-    {
-      ...keyColumn<ItemControleFlat, 'data_manual'>('data_manual', colunaDataBR()),
-      title: 'Data',
-      minWidth: 110,
-    },
-    {
-      ...keyColumn<ItemControleFlat, 'fornecedor'>('fornecedor', createTextColumn({ continuousUpdates: false })),
-      title: 'Fornecedor',
-      minWidth: 160,
-    },
-    {
-      ...keyColumn<ItemControleFlat, 'numero_documento'>('numero_documento', createTextColumn({ continuousUpdates: false })),
-      title: 'NF',
-      minWidth: 90,
-    },
-    {
-      ...keyColumn<ItemControleFlat, 'descricao'>('descricao', colunaTextoSemNulo()),
-      title: 'Produto',
-      minWidth: 220,
-      grow: 2,
-    },
-    {
-      ...keyColumn<ItemControleFlat, 'quantidade'>('quantidade', colunaNumeroBR()),
-      title: 'Quant.',
-      minWidth: 90,
-    },
-    {
-      ...keyColumn<ItemControleFlat, 'unidade'>('unidade', colunaTextoSemNulo()),
-      title: 'Unidade',
-      minWidth: 80,
-    },
-    {
-      ...keyColumn<ItemControleFlat, 'valor_unitario'>('valor_unitario', colunaNumeroBR()),
-      title: 'V.Unit.',
-      minWidth: 100,
-    },
-    {
-      ...keyColumn<ItemControleFlat, 'valor_total'>('valor_total', colunaNumeroBR()),
-      title: 'V.Total',
-      minWidth: 100,
-    },
-    {
-      id: 'acoes',
-      title: 'Documento',
-      minWidth: 78,
-      maxWidth: 78,
-      disabled: true,
-      component: celulaAcoes(onAbrirPdf, (documentoId, item) => setConfirmandoExclusao({ documentoId, item })),
-    },
-  ]
+  // Extraído pra colunas-controle.tsx (achado 5 da revisão do Apolo,
+  // 18/08/2026, 5ª rodada) — a MESMA função monta a lista aqui e no teste
+  // (`colunas-controle.test.ts`), então uma mutação na fiação real (ex.:
+  // tirar `isCellEmpty` da coluna de ações) derruba o teste, não só o
+  // helper isolado.
+  const columns = construirColunas(onAbrirPdf, (documentoId, item) => setConfirmandoExclusao({ documentoId, item }))
 
   // Prioridade de pintura quando mais de uma se aplicaria: erro (criação OU
   // edição — mais urgente, a linha pode se perder de vez se ignorada) >
@@ -551,18 +590,28 @@ export function GradeItens({
         </div>
       </div>
 
-      <DataSheetGrid<ItemControleFlat>
-        value={itens}
-        onChange={handleChange}
-        columns={columns}
-        // Chave estável por id — sem isto, react-datasheet-grid usaria o
-        // ÍNDICE do array como chave, e trocar o id temporário pelo real
-        // (depois de criarItem resolver) confundiria o foco/seleção ativos.
-        rowKey={({ rowData }) => rowData.id}
-        createRow={novaLinhaVazia}
-        rowClassName={({ rowData }) => classeDaLinha(rowData)}
-        height={560}
-      />
+      {/* `onKeyDownCapture` na fase de CAPTURA — corre ANTES do handler
+          interno da biblioteca, então `teclaDeleteAtivaRef` já está
+          atualizado quando `handleChange` roda (mesma distribuição
+          síncrona do evento). Ver achados 1-3, comentário completo no
+          bloco de refs acima do `handleChange`. */}
+      <div onKeyDownCapture={handleKeyDownCapture}>
+        <DataSheetGrid<ItemControleFlat>
+          value={itens}
+          onChange={handleChange}
+          columns={columns}
+          // Chave estável por id — sem isto, react-datasheet-grid usaria o
+          // ÍNDICE do array como chave, e trocar o id temporário pelo real
+          // (depois de criarItem resolver) confundiria o foco/seleção ativos.
+          rowKey={({ rowData }) => rowData.id}
+          createRow={novaLinhaVazia}
+          rowClassName={({ rowData }) => classeDaLinha(rowData)}
+          height={560}
+          onSelectionChange={({ selection }: { selection: SelecaoComId | null }) => {
+            selecaoAtualRef.current = selection
+          }}
+        />
+      </div>
 
       <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
         <span>{itens.length} {itens.length === 1 ? 'item carregado' : 'itens carregados'}{temMais ? ' — há mais' : ''}</span>

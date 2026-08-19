@@ -90,7 +90,19 @@ const camposItemEditavel = {
 const patchItemSchema = z.object(camposItemEditavel).partial()
   .refine(patch => Object.keys(patch).length > 0, { message: 'Envie ao menos um campo para editar.' })
 
-const criarItemAvulsoSchema = z.object(camposItemEditavel).partial({
+// CRIAR (POST) é diferente de EDITAR (PATCH) — achado da revisão do Apolo
+// (18/08/2026, 3ª rodada): a decisão do Matheus foi sobre esvaziar um item
+// JÁ EXISTENTE, não sobre criar um novo do zero em branco. `.required()`
+// do zod só tira o `optional` de cima do `.partial()` — não devolve o
+// `.min(1)` que `camposItemEditavel.descricao` perdeu. Sem esta
+// sobrescrita, `POST {descricao:'', valor_total:10}` passava calado (só o
+// guard do frontend, `grade-itens.tsx`/`possivelmenteCriar`, segurava —
+// uma chamada direta à API, ou um bug futuro no front, furava). Continua
+// `z.string().min(1)` — descrição em branco NUNCA cria linha.
+const criarItemAvulsoSchema = z.object({
+  ...camposItemEditavel,
+  descricao: z.string().min(1),
+}).partial({
   quantidade: true, unidade: true, valor_unitario: true, data_manual: true, fornecedor: true, numero_documento: true,
 }).required({ descricao: true, valor_total: true })
 
@@ -140,7 +152,13 @@ controleItensRoutes.post('/', async (req, res, next) => {
     const resultado = await criarItemControleAvulso({
       descricao:        parsed.data.descricao,
       quantidade:       parsed.data.quantidade ?? null,
-      unidade:          parsed.data.unidade ?? 'UN',
+      // `|| 'UN'` (não `??`) de propósito: `unidade` continua `z.string()`
+      // sem `.min(1)` neste schema (achado da revisão, 3ª rodada) — uma
+      // chamada direta à API com `unidade: ''` cairia no `??`, que só troca
+      // `null`/`undefined`, e gravaria string vazia. Mesmo padrão que
+      // `grade-itens.tsx` (`linha.unidade || 'UN'`) já usa do lado do
+      // front — os dois lados tratam "vazio" e "ausente" igual aqui.
+      unidade:          parsed.data.unidade || 'UN',
       valor_unitario:   parsed.data.valor_unitario ?? null,
       valor_total:      parsed.data.valor_total,
       data_manual:      parsed.data.data_manual ?? null,

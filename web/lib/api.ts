@@ -19,17 +19,21 @@ export class ApiError extends Error {
   }
 }
 
-// Erro de VALIDAÇÃO/negócio (400-499) — o servidor TERMINOU de processar o
-// pedido e recusou por um motivo concreto (campo inválido, conflito de
-// duplicidade...). Diferente de falha de REDE (fetch nem completou — não é
-// `ApiError`, `err` é o `TypeError` que o `fetch()` lança) ou erro do
-// SERVIDOR (5xx — algo quebrou do lado de lá, sem garantia nenhuma do que
-// o banco recebeu). Só o primeiro caso permite confiar que "nada mudou
-// além do que o pedido tentou mudar" — os outros dois exigem desconfiar do
-// estado local inteiro. Função pura e exportada de propósito: testável sem
-// precisar montar um `fetch` de verdade.
+// Erro de VALIDAÇÃO/negócio de verdade — SÓ 400 (corpo recusado pelo zod)
+// e 409 (conflito de duplicidade, migration 018). Achado da revisão do
+// Apolo (18/08/2026, 3ª rodada): a 1ª versão desta função aceitava
+// QUALQUER 4xx — inclusive 401/403 (`api/src/middleware/auth.ts:38`, token
+// expirado) e 404 (item apagado em outra aba). Tratar esses como "erro de
+// negócio, só marca a linha" é ERRADO: não existe "corrigir o campo e
+// tentar de novo" pra um token vencido ou um item que já não existe — sem
+// recarregar, o usuário fica preso digitando numa linha fantasma pra
+// sempre, sem caminho de recuperação além de um F5 manual que ele não sabe
+// que precisa dar. Só 400/409 são "o servidor terminou de processar e
+// recusou por um motivo que EDITAR A CÉLULA resolve" — todo o resto
+// (401/403/404, rede, 5xx) volta a recarregar, como era antes desta
+// função existir.
 export function ehErroDeValidacao(err: unknown): boolean {
-  return err instanceof ApiError && err.status >= 400 && err.status < 500
+  return err instanceof ApiError && (err.status === 400 || err.status === 409)
 }
 
 async function getAuthHeader(): Promise<Record<string, string>> {
