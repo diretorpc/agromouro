@@ -182,3 +182,61 @@ export type ResultadoGravarDocumento =
   | { status: 'gravado'; documentoId: string; itensGravados: number; itensDescartados: number; itensDuplicados: number }
   | { status: 'duplicada-hash' }
   | { status: 'duplicada-conteudo' }
+
+// Item FLAT da grade editável estilo Excel (GET /controle/itens) — espelha
+// ItemControleComDuplicata de api/src/services/controle/listarItensControle.ts.
+// Diferente de ItemDocumentoControle (que só existe DENTRO de um
+// DocumentoControle, na tela antiga agrupada por documento), este tipo
+// representa uma linha independente — pode ter documento_controle_id (veio
+// de PDF importado) ou não (avulso, digitado direto na grade). Nunca é item
+// de NF-e (nota_fiscal_id sempre null aqui — a rota já filtra isso).
+export interface ItemControleFlat {
+  id: string
+  descricao: string
+  quantidade: number | null
+  unidade: string
+  valor_unitario: number | null
+  // Nullable aqui de propósito, mesmo o banco quase sempre ter valor
+  // (POST /controle/itens exige > 0 pra CRIAR) — a grade permite o usuário
+  // LIMPAR a célula transitoriamente enquanto edita (floatColumn da
+  // biblioteca sempre aceita null), então o estado local pode passar por
+  // null antes de confirmar. Salvar com null vira 400 do backend (zod exige
+  // positivo), tratado como erro de validação — ver grade-itens.tsx.
+  valor_total: number | null
+  fornecedor: string | null
+  numero_documento: string | null
+  ocorrencia_no_documento: number
+  documento_controle_id: string | null
+  conta_como_compra: boolean
+  data_manual: string | null
+  insumo_id: string | null
+  fazenda_id: string
+  duplicata_confirmada_em: string | null
+  duplicata_confirmada_vezes: number
+  // Computados na leitura (não gravados como tal) — ver desenho
+  // "Duplicatas pintadas", docs/superpowers/specs/2026-08-18-controle-
+  // tabela-editavel-design.md.
+  duplicado: boolean
+  duplicadoMotivo: 'reimportacao' | 'linhas_iguais' | null
+}
+
+export interface ListaItensControle {
+  itens: ItemControleFlat[]
+  paginaAtual: number
+  totalPaginas: number
+  totalItens: number
+}
+
+// Corpo aceito por PATCH/POST /controle/itens(/:id) — espelha
+// camposItemEditavel de api/src/routes/controle.ts. `conta_como_compra`
+// nunca aparece aqui de propósito (ver spec, "Trava de conta_como_compra").
+export type PatchItemControleFlat = Partial<{
+  descricao: string
+  quantidade: number | null
+  unidade: string
+  valor_unitario: number | null
+  valor_total: number
+  data_manual: string | null
+  fornecedor: string | null
+  numero_documento: string | null
+}>

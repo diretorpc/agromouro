@@ -2,6 +2,7 @@ import { randomUUID, createHash } from 'crypto'
 import type Anthropic from '@anthropic-ai/sdk'
 import { supabase } from '../supabase'
 import { lerDocumentoPdf, type DocumentoLido, type ItemDocumentoLido } from './documentoPdf'
+import { normalizarFornecedor } from './normalizarFornecedor'
 
 // Grava no banco o que `documentoPdf.ts` já leu — mesmo espírito de
 // gravarBoletoPdf.ts, mas com uma diferença de desenho: a LEITURA acontece
@@ -175,6 +176,70 @@ async function desfazerDocumentoSemItens(documentoId: string, arquivoPath: strin
   await removerDoStorage(arquivoPath)
 }
 
+// Persiste, na linha EXISTENTE que "absorveu" a duplicata, o sinal de
+// "reencontrada numa reimportação" (migration 019, colunas
+// duplicata_confirmada_em/duplicata_confirmada_vezes) — Caso 1 do desenho
+// (docs/superpowers/specs/2026-08-18-controle-tabela-editavel-design.md):
+// a trava de dedupe (idx_itens_nfe_dedupe_item, migration 018) BLOQUEIA a
+// linha nova, mas nunca deixava rastro nenhum na linha antiga até aqui — a
+// tela (GET /controle/itens) usa este sinal para pintar a linha.
+//
+// Busca pelas MESMAS 6 colunas do índice parcial, MENOS
+// documento_controle_id (ele não faz parte da chave do índice — a mesma
+// combinação (fornecedor, número, descrição, valor, ocorrência) só pode
+// existir em UMA linha em toda a fazenda, não importa de qual documento).
+// Falha aqui (busca ou update) é logada, não propagada: o item já foi
+// corretamente tratado como duplicata pelo chamador (não gravado de novo,
+// contado em `duplicados`) — este sinal extra é "nice to have", não pode
+// derrubar a importação por causa dele.
+async function marcarDuplicataConfirmada(item: Record<string, unknown>): Promise<void> {
+  const fornecedor = item.fornecedor
+  if (typeof fornecedor !== 'string') {
+    // Não deveria acontecer: todo item de Controle grava `fornecedor` (ver
+    // `itensParaGravar`, abaixo) — defensivo, sem ele não há como montar
+    // `fornecedor_normalizado` pra buscar a linha existente.
+    console.error('[GravarDocumentoPdf] marcarDuplicataConfirmada: item sem fornecedor, sinal não gravado.')
+    return
+  }
+
+  const { data: existente, error: errBusca } = await supabase
+    .from('itens_nfe')
+    .select('id, duplicata_confirmada_vezes')
+    .eq('fazenda_id', item.fazenda_id as string)
+    .eq('fornecedor_normalizado', normalizarFornecedor(fornecedor))
+    .eq('numero_documento', item.numero_documento as string)
+    .eq('descricao', item.descricao as string)
+    .eq('valor_total', item.valor_total as number)
+    .eq('ocorrencia_no_documento', item.ocorrencia_no_documento as number)
+    .maybeSingle()
+
+  if (errBusca) {
+    console.error('[GravarDocumentoPdf] Falha ao localizar item duplicado para marcar (busca):', errBusca.message)
+    return
+  }
+  if (!existente) {
+    // Bateu no 23505 (a trava do banco confirma que a linha existe), mas
+    // esta busca em código não achou — sinal de que a normalização em
+    // código (normalizarFornecedor) divergiu da coluna gerada do banco, ou
+    // outra corrida rara. Loga para investigar; não é motivo de falhar a
+    // importação (o item já foi corretamente contado como duplicata).
+    console.error('[GravarDocumentoPdf] 23505 confirmado pelo banco, mas item existente não encontrado na busca — sinal de duplicata não gravado.')
+    return
+  }
+
+  const { error: errUpdate } = await supabase
+    .from('itens_nfe')
+    .update({
+      duplicata_confirmada_em: new Date().toISOString(),
+      duplicata_confirmada_vezes: (existente.duplicata_confirmada_vezes ?? 0) + 1,
+    })
+    .eq('id', existente.id)
+
+  if (errUpdate) {
+    console.error('[GravarDocumentoPdf] Falha ao marcar duplicata confirmada:', errUpdate.message)
+  }
+}
+
 // Caminho de fallback quando o INSERT em lote de itens_nfe falha com 23505
 // (achado do Apolo — Achado 1): idx_itens_nfe_dedupe_item (migration 018) é
 // um índice PARCIAL, então NÃO serve de alvo de on-conflict/upsert — a única
@@ -199,6 +264,9 @@ async function inserirItensUmAUm(
         // (idx_itens_nfe_dedupe_item, migration 018) — não há ambiguidade
         // como existe em documentos_controle (que tem dois).
         duplicados++
+        // Migration 019 — persiste o sinal na linha EXISTENTE, para a tela
+        // (GET /controle/itens) poder pintá-la. Ver comentário da função.
+        await marcarDuplicataConfirmada(item)
         continue
       }
       // Erro diferente de duplicidade (conexão, RLS, etc.) — para aqui e

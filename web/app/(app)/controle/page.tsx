@@ -2,25 +2,31 @@
 
 import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useControleData } from './hooks/use-controle-data'
-import { TabelaDocumentos } from './components/tabela-documentos'
+import { useControleItens } from './hooks/use-controle-itens'
+import { GradeItens } from './components/grade-itens'
 import { DialogoImportar } from './components/dialogo-importar'
 
+// Tela "Controle" — grade totalmente editável estilo Excel (pedido do
+// Matheus, 18/08/2026): "pegar uma tabela de Excel e jogar lá dentro da
+// aba". Substitui a tabela agrupada por documento/paginada (PR #61) — ver
+// desenho completo: docs/superpowers/specs/2026-08-18-controle-tabela-
+// editavel-design.md. `tabela-documentos.tsx`/`use-controle-data.ts`
+// (antigos) ficam no repo, sem uso, até decisão explícita de limpar.
 export default function ControlePage() {
   const {
-    documentos, paginaAtual, totalPaginas, setPagina,
+    itens, atualizarLocal, totalItens, versaoDados,
     filtros, aplicarFiltros, filtrosDisponiveis,
     loading, primeiraCarga, erroCarregamento, erroAcao,
-    importarDocumento, abrirPdf, excluirDocumento,
-  } = useControleData()
+    temMais, carregarMais, carregandoMais,
+    editarItem, criarItem, excluirItem, excluirDocumento, abrirPdf, importarDocumento,
+    substituirItem,
+    exclusoesPendentes, desfazerExclusao,
+  } = useControleItens()
 
-  // Atualização (troca de filtro/página) NÃO desmonta a tabela: só o primeiro
-  // carregamento, quando ainda não há nada na tela pra manter. Trocar a tabela
-  // por um texto a cada filtro destruía o estado interno do menu de filtro junto
-  // — fechava o menu no primeiro clique e tornava a seleção múltipla ("SOLOS E
-  // status erro") impossível na prática, que é justamente o motivo de o filtro
-  // ser combinado. Enquanto atualiza, a tabela só esmaece: sem
-  // `pointer-events-none`, porque o clique seguinte no mesmo menu precisa passar.
+  // Mesmo raciocínio da tela antiga: atualização (troca de filtro) NÃO
+  // desmonta a grade — só o primeiro carregamento. Desmontar a grade a cada
+  // filtro perderia célula em edição, seleção ativa e o menu de filtro
+  // aberto, exatamente o "estilo Excel" que a decisão nº 4 pede.
   const atualizando = loading && !primeiraCarga
 
   return (
@@ -32,14 +38,14 @@ export default function ControlePage() {
             {atualizando && (
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" />
             )}
-            {/* Região viva sempre presente (mesmo vazia): leitor de tela só
-                anuncia mudança de conteúdo se o elemento já existia antes. */}
             <span className="sr-only" role="status">
-              {atualizando ? 'Atualizando a lista de documentos.' : ''}
+              {atualizando ? 'Atualizando a lista de itens.' : ''}
             </span>
           </div>
           <p className="text-sm text-muted-foreground">
-            Extratos e contratos de fornecedor importados manualmente.
+            Extratos e contratos de fornecedor — clique numa célula para editar, Tab/Enter confirma,
+            cole do Excel, adicione ou apague linhas. Tudo salva sozinho.
+            {totalItens > 0 && ` ${totalItens} ${totalItens === 1 ? 'item' : 'itens'} ao todo.`}
           </p>
         </div>
         <DialogoImportar onImportar={importarDocumento} />
@@ -49,29 +55,67 @@ export default function ControlePage() {
         <p className="text-sm text-destructive">{erroCarregamento}</p>
       )}
 
-      {/* Erro de ação (abrir PDF) no MESMO lugar e estilo do erro de
-          carregamento — antes o abrirPdf rejeitava sem ninguém tratar: a aba
-          abria em branco, fechava, e nada era dito. */}
       {erroAcao && (
-        <p className="text-sm text-destructive">{erroAcao}</p>
+        <p aria-live="polite" className="text-sm text-destructive">{erroAcao}</p>
       )}
 
       {primeiraCarga ? (
         <p className="text-sm text-muted-foreground">Carregando...</p>
       ) : (
         <div className={cn('transition-opacity', atualizando && 'opacity-60')}>
-          <TabelaDocumentos
-            documentos={documentos}
+          <GradeItens
+            // `key={versaoDados}` REMONTA a grade inteira toda vez que o hook
+            // carrega uma página 1 fresca do servidor (troca de filtro,
+            // `recarregar()` forçada por erro, ou upload de PDF) — descarta de
+            // propósito timer de autosave, patch acumulado e baseline de diff
+            // que a grade tivesse em voo, porque nesse momento o servidor É a
+            // verdade nova (achado 2 da revisão do Apolo, 18/08/2026). NÃO
+            // muda em "carregar mais" (só acrescenta linhas, sem invalidar
+            // edição em andamento).
+            key={versaoDados}
+            itens={itens}
+            atualizarLocal={atualizarLocal}
             filtrosDisponiveis={filtrosDisponiveis}
             filtros={filtros}
             onFiltrosChange={aplicarFiltros}
-            paginaAtual={paginaAtual}
-            totalPaginas={totalPaginas}
-            onPaginaChange={setPagina}
+            temMais={temMais}
+            carregandoMais={carregandoMais}
+            onCarregarMais={carregarMais}
             onAbrirPdf={abrirPdf}
+            onEditarItem={editarItem}
+            onCriarItem={criarItem}
+            onExcluirItem={excluirItem}
             onExcluirDocumento={excluirDocumento}
-            comErro={erroCarregamento !== null}
+            onReverterItem={substituirItem}
           />
+        </div>
+      )}
+
+      {/* Rede de "Desfazer" pra exclusão de item (achado 4 da revisão do
+          Apolo, 18/08/2026, 5ª rodada) — Delete de linha inteira virou 1
+          tecla só e a biblioteca não tem undo nenhum. A fila aguenta
+          quantas exclusões o Matheus fizer em sequência: cada uma tem seu
+          próprio temporizador (`use-controle-itens.ts`), cada uma vira uma
+          faixa própria aqui, empilhadas. */}
+      {exclusoesPendentes.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2" role="status" aria-live="polite">
+          {exclusoesPendentes.map(pendente => (
+            <div
+              key={pendente.id}
+              className="flex items-center gap-3 rounded-md border bg-foreground px-4 py-2 text-sm text-background shadow-lg"
+            >
+              <span>
+                Linha apagada{pendente.item.descricao ? ` — "${pendente.item.descricao}"` : ''}
+              </span>
+              <button
+                type="button"
+                onClick={() => desfazerExclusao(pendente.id)}
+                className="font-medium underline underline-offset-2 hover:no-underline"
+              >
+                Desfazer
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </div>

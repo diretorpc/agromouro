@@ -494,6 +494,151 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
+## ✅ Controle: tabela TOTALMENTE EDITÁVEL (estilo Excel) — PR #62, 18/08/2026
+
+https://github.com/diretorpc/agromouro/pull/62 · **5 rodadas de revisão do Apolo,
+~30 achados.** Testado ao vivo pelo Matheus a cada rodada. Suíte: 489 na API + **38 no
+web, que não tinha NENHUM teste antes deste PR**.
+
+**Os 4 achados que só apareceram porque alguém abriu a tela ou leu o fonte da lib** —
+todos invisíveis pra suíte que existia:
+1. **Rota montada no lugar errado.** Front chamava `/controle/itens`, backend respondia
+   em `/controle/documentos/itens`. 404 em tudo, tela vazia, **479 testes verdes** — eles
+   chamavam o handler direto, nunca o `app.use()` real. Fechado com `routeMounts.test.ts`,
+   que cruza o `index.ts` lido como TEXTO com os caminhos literais do hook do front.
+2. **Dinheiro em pt-BR corrompido calado.** `parseFloat("1.234,56")` = 1.234 — R$ 1.234,56
+   virava R$ 1,23 com 200 OK. Valia igual pro colar do Excel, que era o pedido.
+3. **`Ctrl+A` + `Delete` apagava até 500 linhas do banco** numa tecla, sem confirmação.
+   `Ctrl+X` também — a lib desliga o smart-delete no recortar justamente pra isso não
+   acontecer, e a interceptação ignorava.
+4. **Segurar `Delete` apagava linha após linha em cascata** (8 repetições = 7 linhas
+   medidas). A lib não reajusta a seleção quando o array encolhe por fora, então ela fica
+   no índice N — que após a remoção é a próxima linha, cheia de dado.
+
+**Lição que vale além desta feature:** os 4 passariam por qualquer suíte que teste só a
+camada de dentro. O 1 e o 4 exigiram ler o código-fonte compilado da biblioteca; o 3 foi
+achado perguntando "que gesto pode disparar isso sem querer?". Teste de unidade verde não
+é evidência de que a feature funciona.
+
+**Guarda de exclusão** — as 3 condições precisam bater juntas: operação de 1 linha, tecla
+Delete real e não repetida (`onKeyDownCapture` + `!e.repeat`), e seleção cobrindo a linha
+inteira (`min.col===0 && max.col>=7`). Qualquer uma fora cai no caminho seguro
+(PATCH → 400 → reverte e marca): barulhento, nunca destrutivo.
+
+**Desfazer de 7s** (decisão do Matheus): a linha some da tela na hora, o DELETE só sai no
+fim do prazo. Timers são limpos no desmonte do hook — navegação interna do Next não passa
+por `beforeunload`, e sem isso o DELETE saía depois, deixando a tela exibir linha que já
+não existia.
+
+**Pendências aceitas, nenhuma é dinheiro** (item de Controle tem `conta_como_compra`
+sempre `false` — não entra no Financeiro):
+- Recarga da lista dentro dos 7s cancela a exclusão pendente **em silêncio** (troca de
+  filtro, importar PDF, falha de rede noutra linha). Direção segura — nada se perde —
+  mas o Matheus não é avisado de por que a linha voltou. Achado [médio] da 5ª rodada.
+- Editar `valor_total` ou esvaziar a descrição de linha importada desarma a trava de
+  dedupe daquela linha; reimportar o mesmo extrato passa a duplicar. Agora o gesto ficou
+  barato (uma tecla), o que aumenta a chance — risco assumido conscientemente.
+- Desfazer devolve a linha 1 posição adiante quando 2+ saíram na MESMA operação
+  (menu de contexto). Cosmético.
+- Buraco de paginação acima de 500 itens (pré-existente, hoje são ~28).
+- `use-controle-data.ts` e `tabela-documentos.tsx` ficaram como código morto.
+
+**⚠️ Migration 019 aplicada em produção em 18/08** (`duplicata_confirmada_em`,
+`duplicata_confirmada_vezes` em `itens_nfe`) — o código não funciona sem ela
+(`GET /controle/itens` devolve 500 `column ... does not exist`).
+
+<details>
+<summary>Histórico da construção (por que a feature existiu)</summary>
+
+## 🟡 Controle: tabela TOTALMENTE EDITÁVEL (estilo Excel) — codada 18/08/2026, falta o Matheus testar a digitação
+
+Branch `feature/controle-tabela-editavel`, commit `e6fb46b` (**só local, não subiu**).
+Desenho: `docs/superpowers/specs/2026-08-18-controle-tabela-editavel-design.md`.
+
+**Por que existe:** o Matheus testou a tela entregue no PR #61 e disse *"não ficou
+igual eu pedi, eu queria uma tabela totalmente editável como se fosse um Excel"*. O
+"estilo Excel" do plano anterior era só o FILTRO por coluna; editar célula tinha sido
+marcado como "fora de escopo" no papel, **sem ninguém perguntar a ele**. Lição de
+processo: escopo cortado no plano precisa ser confirmado com o dono, não decidido
+pelo executor.
+
+**Decisões dele, travadas antes de codar:** clicar na célula e digitar (Enter salva,
+Tab anda), adicionar/apagar linha, colar do Excel com várias linhas, salvar sozinho
+sem botão. Quando avisado de que editar à mão faria o sistema perder o reconhecimento
+de "já importei isso" e duplicar linha, respondeu que **isso é bom — duplicata deve
+aparecer PINTADA**, e virou feature em vez de risco.
+
+**⚠️ MIGRATION 019 JÁ APLICADA EM PRODUÇÃO em 18/08** (`duplicata_confirmada_em`,
+`duplicata_confirmada_vezes` em `itens_nfe`) — rodada pelo Matheus, verificação
+devolveu as 2 colunas certas. O código NÃO funciona sem ela (`GET /controle/itens`
+devolve 500 `column ... does not exist`).
+
+**Bug crítico achado só porque a tela foi aberta de verdade:** as 4 rotas de item
+nasceram dentro do router montado em `/controle/documentos`, resolvendo em
+`/controle/documentos/itens`, enquanto o front sempre chamou `/controle/itens` — 404
+em tudo, tela vazia. **Os 479 testes passavam**, porque `controle.test.ts` chama os
+handlers direto e nunca passa pelo `app.use()` real. Mesma categoria do bug de
+streaming de hoje cedo (suíte verde, feature 100% morta na vida real). Corrigido com
+router próprio (`controleItens.ts`) + `routeMounts.test.ts`, que cruza o `index.ts`
+lido como TEXTO com os caminhos literais do hook do frontend — e foi provado por
+mutação (reintroduzir o bug faz 2 dos 5 testes falharem).
+
+**Revisão do Apolo: 12 achados, nenhum passou batido.** Os 8 acionáveis corrigidos;
+2 eram CRÍTICOS que corrompiam dado em silêncio:
+- número em pt-BR lido com `parseFloat` cru — `"1.234,56"` virava **1.234** (R$ 1.234,56
+  → R$ 1,23), com 200 OK e sem erro. Valia igual pro colar do Excel, que é o pedido.
+- autosave descartava o patch pendente junto com o timer: editar 2 células da mesma
+  linha em menos de 400 ms persistia só a última, e a primeira sumia da tela quando o
+  servidor respondia.
+Mais: colar data `"01/12/2025"` virava 12 de janeiro; a pintura âmbar ficava atrás do
+fundo branco opaco das células (feature invisível); e o `package-lock.json` tinha
+arrastado **118 pacotes de carona** (incl. `@supabase/supabase-js` e 3 majors) que o
+Vercel instalaria em produção sem ninguém ter pedido — restaurado para 7 adicionados,
+0 trocados.
+
+**REGRESSÃO pega pelo Apolo:** a troca de componentes desligou o botão de excluir
+documento que o PR #61 tinha entregue HORAS antes. Nenhum arquivo vivo chamava
+`DELETE /controle/documentos/:id`. Restaurado.
+
+**✅ Medido por mim no navegador, depois das correções** (não é promessa do executor —
+o subagente não tinha navegador em nenhuma das rodadas):
+- os 28 itens carregam; formato pt-BR certo na tela (`3.956,75`, `44,2`, `25.480`)
+- pintura funciona: `getComputedStyle` da célula devolve `rgb(254,243,199)` com a
+  classe de duplicata contra `rgb(255,255,255)` normal
+- botão "Excluir documento de origem" presente em cada linha
+
+**✅ DIGITAÇÃO TESTADA E APROVADA PELO MATHEUS em 18/08, no navegador dele** — colar
+do Excel e editar duas células seguidas rápido na mesma linha, os dois OK. Eu não
+consegui testar isso: meus cliques não chegam na grade quando o painel do navegador
+não é exibido (`pointer-events: none` no input, nenhuma célula selecionada, foco no
+`body`) — foi limitação da automação, não defeito da tela.
+
+**🐛 Bug que só apareceu no teste dele (commit `bd76cb7`):** apertar Delete numa
+célula de Produto mandava `null` ao servidor → 400 → o `catch` de `editarItem`
+remontava a grade inteira, o valor voltava e **qualquer outra edição em andamento
+sumia junto**. Era o achado 8 do Apolo, corrigido pela metade na rodada anterior (só
+o caminho de linha nova). Consertado em 3 frentes: Produto/Unidade aceitam texto
+vazio (decisão dele — "máxima liberdade, igual Excel", ciente de que linha sem nome
+atrapalha a conferência; sem migration, `''` já satisfaz o `not null`); erro 4xx
+passou a só marcar a linha, e só rede/5xx recarrega; e esvaziar a descrição de 2
+linhas iguais do mesmo documento colide na trava da 018 → 409 em português, não 500.
+**Confirmado funcionando por ele.**
+
+**Achados 9–12 do Apolo, aceitos como pendência de propósito** (nenhum é dinheiro):
+editar `valor_total` de linha importada desarma as duas defesas de duplicidade ao
+mesmo tempo (a chave do "Caso 2" inclui o valor); a varredura de duplicatas não tem
+`.range()`/`.order()` e vira arbitrária acima de 1000 itens (hoje são 28 — latente);
+`marcarDuplicataConfirmada` não filtra `documento_controle_id` e não é atômico no
+contador; e `use-controle-data.ts` + `tabela-documentos.tsx` ficaram no repo como
+código morto.
+
+**Decisões de produto que ele ainda não viu** (o executor tomou sozinho): a tabela
+ficou ACHATADA (sumiu a faixa de fornecedor mesclada), o "Total do PDF" saiu da tela,
+e apagar linha importada libera a trava de dedupe daquele item (reimportar traz de
+volta).
+
+</details>
+
 ## ✅ Feature "Controle" (defensivos/adubos/sementes) — PR #61 mergeado em 18/08/2026
 
 https://github.com/diretorpc/agromouro/pull/61 — squash em `main`, branch
