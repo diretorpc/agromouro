@@ -3,7 +3,9 @@
 import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useControleItens } from './hooks/use-controle-itens'
+import { useControleGraficos } from './hooks/use-controle-graficos'
 import { GradeItens } from './components/grade-itens'
+import { GraficosControle } from './components/graficos-controle'
 import { DialogoImportar } from './components/dialogo-importar'
 
 // Tela "Controle" — grade totalmente editável estilo Excel (pedido do
@@ -14,7 +16,7 @@ import { DialogoImportar } from './components/dialogo-importar'
 // (antigos) ficam no repo, sem uso, até decisão explícita de limpar.
 export default function ControlePage() {
   const {
-    itens, atualizarLocal, totalItens, versaoDados,
+    itens, atualizarLocal, totalItens, versaoDados, versaoNumeros,
     filtros, aplicarFiltros, filtrosDisponiveis,
     loading, primeiraCarga, erroCarregamento, erroAcao,
     temMais, carregarMais, carregandoMais,
@@ -22,6 +24,19 @@ export default function ControlePage() {
     substituirItem,
     exclusoesPendentes, desfazerExclusao,
   } = useControleItens()
+
+  // Os gráficos leem os MESMOS filtros da grade — o hook recebe o objeto,
+  // não guarda cópia. Sem isso, gráfico e tabela na mesma tela poderiam
+  // mostrar números diferentes e ninguém saberia qual está certo.
+  //
+  // ⚠️ O segundo argumento é `versaoNumeros`, NÃO `versaoDados`: aquele
+  // remonta a grade (`key={versaoDados}` abaixo) e não sobe em edição de
+  // célula; este sobe só em mutação confirmada pelo servidor e não remonta
+  // nada. Ver o comentário na declaração dos dois, em use-controle-itens.ts.
+  const {
+    dados: dadosGraficos, loading: carregandoGraficos, erro: erroGraficos,
+    desatualizado: graficosDesatualizados,
+  } = useControleGraficos(filtros, versaoNumeros)
 
   // Mesmo raciocínio da tela antiga: atualização (troca de filtro) NÃO
   // desmonta a grade — só o primeiro carregamento. Desmontar a grade a cada
@@ -58,6 +73,16 @@ export default function ControlePage() {
       {erroAcao && (
         <p aria-live="polite" className="text-sm text-destructive">{erroAcao}</p>
       )}
+
+      {/* Gráficos ACIMA da grade e recolhíveis (decisão nº 5 do desenho): a
+          grade continua sendo o centro da tela; gráfico é apoio, não
+          protagonista. O estado aberto/fechado fica no localStorage. */}
+      <GraficosControle
+        dados={dadosGraficos}
+        loading={carregandoGraficos}
+        erro={erroGraficos}
+        desatualizado={graficosDesatualizados}
+      />
 
       {primeiraCarga ? (
         <p className="text-sm text-muted-foreground">Carregando...</p>

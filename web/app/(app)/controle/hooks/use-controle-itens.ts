@@ -115,6 +115,26 @@ export function useControleItens() {
 
   const filtrosAnteriores = useRef(filtros)
   const [recarga, setRecarga] = useState(0)
+
+  // ─── Contador dos GRÁFICOS, separado de `versaoDados` ─────────────────────
+  // Decisão do Matheus (19/08/2026, opção "b"), depois de o Apolo classificar
+  // como CRÍTICO: sem isto, corrigir uma célula mudava a tabela e NÃO mudava o
+  // gráfico logo acima dela — as duas metades da mesma tela discordando em
+  // dinheiro, indefinidamente, sem erro nenhum.
+  //
+  // ⚠️ POR QUE NÃO REUSAR `versaoDados`: `page.tsx` faz `key={versaoDados}` na
+  // grade. Bater aquele contador a cada célula salva REMONTARIA a grade
+  // inteira e mataria o que estivesse sendo digitado — o bug que o PR #62
+  // consertou. Este aqui não remonta nada; só os gráficos o observam.
+  //
+  // ⚠️ POR QUE NÃO BATER TAMBÉM NA CARGA DA PÁGINA 1: seria a rajada do
+  // achado 5 de volta. Numa troca de filtro, o gráfico já dispara sozinho
+  // (o objeto de filtros mudou de identidade); se a carga que ESSA MESMA
+  // troca provocou também batesse este contador, sairiam duas agregações e a
+  // primeira seria descartada. Aqui sobe SÓ em mutação confirmada pelo
+  // servidor.
+  const [versaoNumeros, setVersaoNumeros] = useState(0)
+  const numerosMudaram = useCallback(() => { setVersaoNumeros(v => v + 1) }, [])
   // Sobe a cada carga NOVA e completa da página 1 (mudança de filtro, ou
   // `recarga` forçada) — nunca em "carregar mais" (que só ACRESCENTA linhas,
   // sem descartar edição local em andamento). `GradeItens` usa isto como
@@ -240,6 +260,10 @@ export function useControleItens() {
     try {
       const atualizado = await api.patch<ItemControleFlat>(`/controle/itens/${id}`, patch)
       substituirItem(id, atualizado)
+      // O servidor confirmou a edição: os gráficos precisam refazer as somas.
+      // Só aqui, no caminho de sucesso — edição recusada (400/409) não muda
+      // número nenhum no banco, e reagir a ela redesenharia o gráfico igual.
+      numerosMudaram()
       // Achado 4 da revisão do Apolo (18/08/2026, 3ª rodada): sem isto, uma
       // mensagem de erro de uma tentativa ANTERIOR (numa linha diferente ou
       // na mesma, já corrigida) ficava pendurada no topo da tela pra
@@ -289,6 +313,7 @@ export function useControleItens() {
     try {
       const criado = await api.post<ItemControleFlat>('/controle/itens', dados)
       substituirItem(idTemporario, criado)
+      numerosMudaram()
       return criado
     } catch (err) {
       setErroAcao(err instanceof Error ? err.message : 'Não foi possível criar a linha.')
@@ -323,6 +348,10 @@ export function useControleItens() {
       throw err
     }
     recarregar()
+    // Documento inteiro apagado: todos os itens dele saíram do banco.
+    // `recarregar()` sozinho não basta — ele bate `versaoDados`, que os
+    // gráficos não observam mais (ver o comentário de `versaoNumeros`).
+    numerosMudaram()
     // Documento excluído pode ter sido o ÚLTIMO daquele fornecedor/status —
     // sem recarregar os filtros disponíveis, o menu continuaria oferecendo
     // uma opção que não acha mais nada.
@@ -351,6 +380,11 @@ export function useControleItens() {
     if (resultado.status === 'gravado') {
       setFiltros(FILTROS_VAZIOS)
       setRecarga(r => r + 1)
+      // Itens novos no banco. Não dá pra confiar no `setFiltros` acima para
+      // acordar os gráficos: `FILTROS_VAZIOS` é uma constante de módulo, então
+      // quando o filtro JÁ estava vazio a identidade do objeto não muda e o
+      // efeito dos gráficos não roda. Bater o contador é o que garante.
+      numerosMudaram()
       await recarregarFiltrosDisponiveis()
     }
     return resultado
@@ -422,12 +456,18 @@ export function useControleItens() {
     const timer = setTimeout(() => {
       timersExclusaoRef.current.delete(id)
       setExclusoesPendentes(atual => atual.filter(p => p.id !== id))
-      api.del(`/controle/itens/${id}`).catch(err => {
-        setErroAcao(err instanceof Error ? err.message : 'Não foi possível excluir o item.')
-        // Falha de rede/servidor DEPOIS da janela expirar — devolve a
-        // linha, mesma posição de origem.
-        reinserirNaPosicao(item, indiceOriginal)
-      })
+      api.del(`/controle/itens/${id}`)
+        // Só DEPOIS de o DELETE resolver — a janela de 7 s pode ser desfeita,
+        // e nesse caso `api.del` nem chega a ser chamado. Bater o contador
+        // antes faria o gráfico descontar uma linha que continua no banco.
+        .then(() => { numerosMudaram() })
+        .catch(err => {
+          setErroAcao(err instanceof Error ? err.message : 'Não foi possível excluir o item.')
+          // Falha de rede/servidor DEPOIS da janela expirar — devolve a
+          // linha, mesma posição de origem. Nada mudou no banco, então o
+          // contador NÃO sobe.
+          reinserirNaPosicao(item, indiceOriginal)
+        })
     }, EXCLUSAO_JANELA_MS)
     timersExclusaoRef.current.set(id, timer)
   }
@@ -448,6 +488,8 @@ export function useControleItens() {
 
   return {
     itens, atualizarLocal, versaoDados,
+    // Só os gráficos observam este — ver o comentário na declaração.
+    versaoNumeros,
     totalItens, temMais: paginaCarregada < totalPaginas, carregarMais, carregandoMais,
     filtros, aplicarFiltros, filtrosDisponiveis,
     loading,
