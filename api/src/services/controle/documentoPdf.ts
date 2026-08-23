@@ -117,6 +117,10 @@ export type DocumentoLido = {
   // quando `numeroDocumento` é não-nulo, `codigoCliente` também é (os dois
   // nascem juntos em `montarNumeroDocumento`).
   codigoCliente:       string | null
+  // 'extrato' | 'contrato' — decide se os itens deste documento contam como
+  // gasto no Financeiro (ver gravarDocumentoPdf.ts). NUNCA é nulo aqui:
+  // `tipoDeDocumento` já resolveu a indefinição para o lado seguro.
+  tipoDocumento:       'extrato' | 'contrato'
   valorTotalDocumento: number | null
   // somaDosItens - valorTotalDocumento, só quando valorTotalDocumento não é
   // null. Não recusa nada — é a defesa determinística contra item duplicado
@@ -173,6 +177,15 @@ const SCHEMA = {
         'nem toda duplicata nomeia produto explicitamente. ' +
         'Boleto bancário avulso, nota fiscal (DANFE), comprovante de pagamento, propaganda, ' +
         'ou documento sem nenhuma linha de cobrança com valor legível = false.',
+    },
+    tipoDocumento: {
+      type: ['string', 'null'],
+      enum: ['extrato', 'contrato', null],
+      description:
+        'Qual dos dois formatos é este documento. "extrato" = relatório de "Contas a Receber" que uma ' +
+        'revenda agrícola emite listando duplicatas/notas em aberto do cliente. "contrato" = contrato de ' +
+        'compra e venda de mercadoria, com Quadro Resumo, VENDEDORA/COMPRADOR e número de contrato ' +
+        '(ex: Mosaic). null se não der para decidir com segurança — não chute.',
     },
     fornecedor: {
       type: ['string', 'null'],
@@ -259,7 +272,7 @@ const SCHEMA = {
       },
     },
   },
-  required: ['ehDocumentoValido', 'fornecedor', 'dataDocumento', 'codigoCliente', 'valorTotalDocumento', 'itens'],
+  required: ['ehDocumentoValido', 'tipoDocumento', 'fornecedor', 'dataDocumento', 'codigoCliente', 'valorTotalDocumento', 'itens'],
   additionalProperties: false,
 } as const
 
@@ -306,6 +319,19 @@ function texto(v: unknown): string | null {
   return typeof v === 'string' && v.trim() ? v.trim() : null
 }
 
+// O default MAIS BARATO, não o mais provável — e a assimetria é de propósito.
+// Um contrato lido como "extrato" só deixa de somar um valor, e o dono
+// conserta na tela quando estranhar o total. Um extrato lido como "contrato"
+// grava conta_como_compra=true numa compra cuja NF-e o Make ainda vai
+// derrubar, e o Financeiro passa a somar o mesmo dinheiro duas vezes SEM
+// avisar ninguém. Por isso: só a string exata 'contrato' vira contrato.
+// Nada de trim/lowercase — se a IA devolveu ' CONTRATO ', a resposta não
+// obedeceu ao enum do schema, e resposta fora do contrato não merece
+// interpretação generosa.
+export function tipoDeDocumento(v: unknown): 'extrato' | 'contrato' {
+  return v === 'contrato' ? 'contrato' : 'extrato'
+}
+
 function numero(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
@@ -345,6 +371,7 @@ export function validarDocumentoLido(bruto: any, hojeISO: string): ResultadoVali
   const dataDocumento   = dataSanitizada(bruto.dataDocumento, hojeISO)
   const codigoCliente   = texto(bruto.codigoCliente)
   const numeroDocumento = montarNumeroDocumento(codigoCliente, dataDocumento)
+  const tipoDocumento   = tipoDeDocumento(bruto.tipoDocumento)
 
   const valorTotalDocumentoBruto = numero(bruto.valorTotalDocumento)
   // Arredonda ANTES de aplicar o teto, mesma ordem que os itens já seguem —
@@ -490,6 +517,7 @@ export function validarDocumentoLido(bruto: any, hojeISO: string): ResultadoVali
       dataDocumento,
       numeroDocumento,
       codigoCliente,
+      tipoDocumento,
       valorTotalDocumento,
       // Defesa determinística contra item duplicado/perdido na leitura, ou
       // separador decimal lido errado — só existe quando o documento trouxe

@@ -381,3 +381,37 @@ describe('validarDocumentoLido — limite de itens', () => {
     expect(d.itensDescartados).toBe(5)
   })
 })
+
+describe('validarDocumentoLido — tipo do documento', () => {
+  it('contrato explícito vira tipoDocumento "contrato"', () => {
+    const r = validarDocumentoLido(bruto({ tipoDocumento: 'contrato' }), HOJE)
+    expect(r.status).toBe('documento')
+    if (r.status !== 'documento') return
+    expect(r.documento.tipoDocumento).toBe('contrato')
+  })
+
+  it('extrato explícito vira tipoDocumento "extrato"', () => {
+    const r = validarDocumentoLido(bruto({ tipoDocumento: 'extrato' }), HOJE)
+    expect(r.status).toBe('documento')
+    if (r.status !== 'documento') return
+    expect(r.documento.tipoDocumento).toBe('extrato')
+  })
+
+  // A TRAVA MAIS IMPORTANTE DESTE ARQUIVO. Errar para "contrato" dobra
+  // dinheiro em silêncio; errar para "extrato" só deixa um valor sem somar,
+  // e o dono corrige na tela. Todo valor que não seja exatamente 'contrato'
+  // cai no lado barato.
+  it.each([
+    ['ausente',    undefined],
+    ['nulo',       null],
+    ['vazio',      ''],
+    ['desconhecido', 'nota'],
+    ['número',     42],
+    ['maiúsculo com espaço', ' CONTRATO '],
+  ])('tipoDocumento %s cai em "extrato"', (_nome, valor) => {
+    const r = validarDocumentoLido(bruto({ tipoDocumento: valor }), HOJE)
+    expect(r.status).toBe('documento')
+    if (r.status !== 'documento') return
+    expect(r.documento.tipoDocumento).toBe('extrato')
+  })
+})
