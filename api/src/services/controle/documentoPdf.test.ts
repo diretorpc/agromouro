@@ -382,6 +382,73 @@ describe('validarDocumentoLido — limite de itens', () => {
   })
 })
 
+describe('validarDocumentoLido — pagamentos do contrato', () => {
+  const contrato = (pagamentos: unknown) => ({
+    ...bruto(),
+    tipoDocumento: 'contrato',
+    pagamentos,
+  })
+
+  it('lê data e valor do Quadro Resumo', () => {
+    const r = validarDocumentoLido(
+      contrato([{ data: '2026-08-28', valor: 647986.35 }]),
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([{ data: '2026-08-28', valor: 647986.35 }])
+  })
+
+  it('pagamento sem valor entra com valor null (quem monta a conta resolve)', () => {
+    const r = validarDocumentoLido(contrato([{ data: '2026-08-28' }]), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([{ data: '2026-08-28', valor: null }])
+  })
+
+  // Nunca corrige data — descarta. Um '2126-08-28' é dígito mal lido, e
+  // adivinhar o século criaria uma dívida numa data inventada.
+  it('data fora da janela de sanidade é descartada, documento sobrevive', () => {
+    const r = validarDocumentoLido(
+      contrato([{ data: '2126-08-28', valor: 100 }, { data: '2026-09-10', valor: 200 }]),
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([{ data: '2026-09-10', valor: 200 }])
+    expect(r.documento.itens).toHaveLength(1)   // o documento NÃO foi derrubado
+  })
+
+  it('valor de pagamento acima do teto do documento vira null, mantém a data', () => {
+    const r = validarDocumentoLido(
+      contrato([{ data: '2026-08-28', valor: 99_000_000 }]),
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([{ data: '2026-08-28', valor: null }])
+  })
+
+  it.each([
+    ['ausente',   undefined],
+    ['nulo',      null],
+    ['não-array', { data: '2026-08-28' }],
+    ['vazio',     []],
+  ])('pagamentos %s vira lista vazia', (_nome, valor) => {
+    const r = validarDocumentoLido(contrato(valor), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([])
+  })
+
+  // Extrato tem DUPLICATA, não contrato de pagamento. Cada duplicata já vira
+  // ITEM, e o boleto dela chega por e-mail pelo Make. Criar conta a pagar
+  // aqui duplicaria o que o boleto já faz.
+  it('extrato ignora pagamentos mesmo se a IA devolver', () => {
+    const r = validarDocumentoLido(
+      { ...bruto(), tipoDocumento: 'extrato', pagamentos: [{ data: '2026-08-28', valor: 500 }] },
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([])
+  })
+})
+
 describe('validarDocumentoLido — tipo do documento', () => {
   it('contrato explícito vira tipoDocumento "contrato"', () => {
     const r = validarDocumentoLido(bruto({ tipoDocumento: 'contrato' }), HOJE)

@@ -70,6 +70,10 @@ const DIAS_FUTURO_MAX  = 3 * 365
 // e loga, em vez de gravar centenas de itens sem ninguém perceber o excesso.
 const MAX_ITENS = 300
 
+// Um contrato de insumo não tem cem parcelas. Acima disto é leitura repetindo
+// linha — corta e loga, em vez de criar dezenas de contas a pagar fantasma.
+const MAX_PAGAMENTOS = 24
+
 export type ItemDocumentoLido = {
   descricao:      string
   // NULLABLE de propósito: a coluna itens_nfe.quantidade é NULLABLE, e um
@@ -87,6 +91,16 @@ export type ItemDocumentoLido = {
   // 'YYYY-MM-DD'. Herda de `dataDocumento` quando o item não tem data
   // própria — nunca vira "hoje": ver `validarDocumentoLido`.
   data: string | null
+}
+
+// Uma data de pagamento do Quadro Resumo do contrato. `data` NUNCA é nula
+// aqui (pagamento sem data válida é descartado inteiro — uma dívida sem
+// vencimento não é conta a pagar, é palpite). `valor` pode ser nulo: muito
+// contrato imprime a data sem repetir o valor ao lado, e quem monta a conta
+// sabe resolver (ver deContrato.ts).
+export type PagamentoLido = {
+  data:  string
+  valor: number | null
 }
 
 export type DocumentoLido = {
@@ -132,6 +146,9 @@ export type DocumentoLido = {
   // outros). Quem grava usa isto para decidir se avisa o dono que a leitura
   // ficou incompleta.
   itensDescartados:    number
+  // Datas de pagamento do contrato (vazio para extrato) — viram conta a pagar
+  // em gravarContasDoContrato.ts.
+  pagamentos:          PagamentoLido[]
 }
 
 // Retorno de `validarDocumentoLido` — separado de `ResultadoLeituraDocumento`
@@ -214,6 +231,26 @@ const SCHEMA = {
         'Total declarado no documento ("Total Geral" ou "Total A Vencer" no extrato; soma dos preços totais no contrato). ' +
         'Use ponto decimal. null se não houver total impresso.',
     },
+    pagamentos: {
+      type: 'array',
+      description:
+        'SOMENTE para contrato: as datas de pagamento do Quadro Resumo (campo "Data de pagamento"). ' +
+        'Uma entrada por parcela — a maioria dos contratos tem uma só. NÃO confunda com a "Data de ' +
+        'Início"/"Data Fim" (prazo de retirada da mercadoria, que é o dataDocumento). Lista VAZIA para ' +
+        'extrato: as duplicatas de um extrato já viram itens, não pagamentos.',
+      items: {
+        type: 'object',
+        properties: {
+          data:  { type: 'string', description: 'Data de pagamento, formato AAAA-MM-DD.' },
+          valor: {
+            type: ['number', 'null'],
+            description: 'Valor desta parcela, se impresso ao lado da data. Use ponto decimal. null se não houver.',
+          },
+        },
+        required: ['data', 'valor'],
+        additionalProperties: false,
+      },
+    },
     itens: {
       type: 'array',
       description: 'Todos os produtos do documento, um item por produto — mesmo repetido em duplicatas diferentes.',
@@ -272,7 +309,7 @@ const SCHEMA = {
       },
     },
   },
-  required: ['ehDocumentoValido', 'tipoDocumento', 'fornecedor', 'dataDocumento', 'codigoCliente', 'valorTotalDocumento', 'itens'],
+  required: ['ehDocumentoValido', 'tipoDocumento', 'fornecedor', 'dataDocumento', 'codigoCliente', 'valorTotalDocumento', 'pagamentos', 'itens'],
   additionalProperties: false,
 } as const
 
@@ -301,7 +338,11 @@ const INSTRUCAO =
   '(a descrição pode listar os produtos juntos), em vez de dividir em vários itens sem saber o valor de cada um. ' +
   'Preste atenção especial na UNIDADE de cada item: quando não houver coluna própria de unidade (padrão Syagri), ' +
   'ela costuma vir grudada no final da descrição do produto, no formato "NÚMERO + SIGLA" (ex.: "- 20 LT", "- 10 KG", ' +
-  '"- 1 L", "60 GR") — extraia essa sigla como unidade em vez de devolver null.'
+  '"- 1 L", "60 GR") — extraia essa sigla como unidade em vez de devolver null. ' +
+  'No CONTRATO, além dos produtos, leia a DATA DE PAGAMENTO do Quadro Resumo (campo "Data de pagamento", ' +
+  'às vezes junto de "Forma de pagamento") e devolva em `pagamentos` — é o compromisso financeiro, e é ' +
+  'DIFERENTE da "Data de Início" (que é o prazo de retirada da mercadoria e vai em dataDocumento). ' +
+  'Havendo mais de uma parcela, uma entrada por parcela. No EXTRATO, `pagamentos` é sempre lista vazia.'
 
 // O formato bater não prova que a data existe ('2026-02-31' passa no regex e
 // `dataExiste`/`diasEntre` — importados de contas/datas.ts, mesma checagem
@@ -362,6 +403,51 @@ function montarNumeroDocumento(codigoCliente: string | null, dataDocumento: stri
 // Exportada só para teste: é a única parte desta leitura que dá para provar
 // sem gastar uma chamada de IA, e é onde mora a decisão de aceitar ou
 // recusar cada linha.
+// Exportada só para teste, mesmo motivo de `validarDocumentoLido`.
+export function validarPagamentos(
+  bruto: unknown,
+  tipoDocumento: 'extrato' | 'contrato',
+  hojeISO: string,
+): PagamentoLido[] {
+  // Extrato nunca tem pagamento: cada duplicata dele já vira ITEM, e o boleto
+  // correspondente chega por e-mail pelo Make (nfeEmail.ts → gravarBoletoDoPdf).
+  // Criar conta a pagar aqui duplicaria a mesma cobrança em dois lugares.
+  if (tipoDocumento !== 'contrato') return []
+  if (!Array.isArray(bruto)) return []
+
+  const pagamentos: PagamentoLido[] = []
+
+  for (const cru of bruto) {
+    if (pagamentos.length >= MAX_PAGAMENTOS) {
+      console.warn(`[DocumentoPDF] pagamentos acima de ${MAX_PAGAMENTOS} — resto ignorado.`)
+      break
+    }
+
+    const p = cru as Record<string, unknown>
+    const data = dataSanitizada(p?.data, hojeISO)
+    // Sem data válida não há conta a pagar possível. Descarta o pagamento
+    // (não o documento) e loga — o documento e o gasto continuam valendo.
+    if (!data) {
+      console.warn(`[DocumentoPDF] pagamento sem data utilizável, descartado: ${JSON.stringify(p?.data)}`)
+      continue
+    }
+
+    // Mesma ordem do resto do arquivo: arredonda ANTES de comparar com o
+    // teto, senão sobra de ponto flutuante decide a recusa.
+    const bruto2 = numero(p?.valor)
+    const arredondado = bruto2 !== null ? Math.round(bruto2 * 100) / 100 : null
+    // Fora da faixa vira null (não descarta o pagamento): a data continua
+    // valendo e quem monta a conta preenche o valor a partir do total.
+    const valor = arredondado !== null && arredondado > 0 && arredondado <= VALOR_MAX_DOCUMENTO
+      ? arredondado
+      : null
+
+    pagamentos.push({ data, valor })
+  }
+
+  return pagamentos
+}
+
 export function validarDocumentoLido(bruto: any, hojeISO: string): ResultadoValidacaoDocumento {
   // `=== true`, não frouxo: a string 'false' é truthy em JavaScript e
   // aceitaria como válido um documento que o modelo acabou de recusar.
@@ -372,6 +458,7 @@ export function validarDocumentoLido(bruto: any, hojeISO: string): ResultadoVali
   const codigoCliente   = texto(bruto.codigoCliente)
   const numeroDocumento = montarNumeroDocumento(codigoCliente, dataDocumento)
   const tipoDocumento   = tipoDeDocumento(bruto.tipoDocumento)
+  const pagamentos      = validarPagamentos(bruto.pagamentos, tipoDocumento, hojeISO)
 
   const valorTotalDocumentoBruto = numero(bruto.valorTotalDocumento)
   // Arredonda ANTES de aplicar o teto, mesma ordem que os itens já seguem —
@@ -528,6 +615,7 @@ export function validarDocumentoLido(bruto: any, hojeISO: string): ResultadoVali
         : null,
       itens,
       itensDescartados,
+      pagamentos,
     },
   }
 }
