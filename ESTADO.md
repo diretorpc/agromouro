@@ -583,6 +583,50 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
+## 🟡 Contrato de adubo → conta a pagar + gasto no Financeiro — SPEC APROVADA, nada codado — 23/08/2026
+
+Branch `feature/contrato-adubo-contas-a-pagar`, commit `6b6bacd`. Desenho em
+`docs/superpowers/specs/2026-08-23-contrato-adubo-contas-a-pagar-design.md`.
+**Próximo passo: escrever o plano de implementação (skill writing-plans).**
+
+Pedido do Matheus: *"quero essa função de ler o contrato e cadastrar a data de pagamento
+na ABA do contas a pagar! Cada um no seu quadrado. Também quero que joga o valor,
+produto, quantidade e fornecedor na aba financeiro"*.
+
+**O que foi MEDIDO nesta sessão (não é lembrança):**
+
+- O leitor atual (`documentoPdf.ts`) **já acerta 100%** de um contrato Mosaic real
+  (280451, 12 páginas, Docusign): fornecedor, código, produto, 165 MTN, R$ 3.927,19
+  unitário, R$ 647.986,35 total, `divergenciaTotal: 0`. Leitura NÃO é o problema.
+- O leitor **joga fora** a linha `Data de pagamento` do Quadro Resumo — não há campo no
+  schema. Foi isso que originou o pedido.
+- **Zero NF-e de fornecedor de adubo no banco** (mosaic/fertiliz/cibra/yara = 0). Isso
+  derrubou a premissa da decisão de 17/08 (`conta_como_compra: false` sempre): ela
+  nasceu pensando em extrato de revenda, onde a NF-e chega mesmo.
+
+**Eixo do desenho:** o **tipo do documento** decide, não a aba. Contrato de fabricante
+(NF-e nunca chega) conta como gasto; extrato de revenda (NF-e chega pelo Make) continua
+não contando. Tipo ausente/ilegível cai em **extrato** de propósito — errar pro lado que
+não soma é barato, errar pro lado que soma dobra dinheiro calado.
+
+**Decisões fechadas com ele:** gasto no Financeiro na data do contrato; conta a pagar na
+data de vencimento; aparece nos três lugares (Controle, Contas a Pagar, Financeiro); um
+leitor só com dois destinos (leitor separado duplicaria ~600 linhas).
+
+⚠️ **Trava de regressão nº 1:** os 3 extratos já importados (Syagri R$ 1.406.915,25,
+Solos R$ 676.773,19, Protec R$ 685.054,96) **precisam continuar com
+`conta_como_compra: false`**. Ligar "PDF conta como gasto" de forma global dobraria esse
+dinheiro quando as NF-e dessas revendas chegarem.
+
+⚠️ **Buraco achado na auto-revisão da spec:** a regra ingênua "pagamento sem valor herda
+o total do documento" dobra a dívida quando o contrato tem 2 parcelas. Corrigido na
+spec: N pagamentos com algum valor nulo **rateiam** o total e marcam
+`valor_estimado: true`, reusando `montarParcelas()` de `parcelamento.ts`.
+
+**Fora de escopo, dito em voz alta:** cruzamento PDF↔NF-e (4ª vez adiado — se a Mosaic
+um dia mandar NF-e, dobra), estoque (as 165 t não entram), contrato cancelado/
+renegociado.
+
 ## ✅ Gráficos da aba Controle — PR #63 mergeado em 19/08/2026
 
 https://github.com/diretorpc/agromouro/pull/63 — commit `f48cba8` na `main` (squash),
