@@ -10,17 +10,45 @@ export type ResultadoExclusaoDocumento =
 
 // Diferente de excluir_nota_fiscal (migration 009_excluir_nota_fiscal.sql),
 // este documento NÃO tem função atômica própria no Postgres — de propósito,
-// não por descuido. Item importado de PDF de Controle nunca mexe em estoque
-// nem gera lançamento financeiro: `conta_como_compra` é sempre `false` pra
-// linha vinda daqui (Controle é conferência; o gasto de verdade continua
-// vindo só da NF-e — ver comentário da migration 017). Não existe nada pra
-// "desfazer" se a segunda escrita falhar depois da primeira ter sido
-// confirmada: o pior cenário de uma falha no meio destas duas é um
-// documento sem item nenhum — e esse caso JÁ é aceito e mostrado na tela
-// (`GET /controle/documentos`, "nenhum item novo — documento já importado
-// antes"), não é dado financeiro incoerente. Criar uma função nova só pra
-// isto custaria um passo de deploy manual (colar SQL no Supabase) sem
-// reduzir nenhum risco real — ver CLAUDE.md, "caminho mais simples primeiro".
+// não por descuido.
+//
+// ⚠️ REESCRITO EM 23/08/2026 (Important 6 da revisão final da branch do
+// contrato de adubo). O texto anterior justificava a ausência da função
+// atômica com um fato que MORREU nesta branch: dizia que item de PDF de
+// Controle "nunca gera lançamento financeiro, `conta_como_compra` é sempre
+// false". Não é mais verdade — documento tipo 'contrato' (Mosaic) grava
+// `conta_como_compra: true` porque é a única fonte daquele gasto (zero NF-e
+// de adubo no banco, medido em 23/08/2026), e ainda gera conta a pagar.
+//
+// O que sustenta a decisão HOJE, com o fato certo:
+//
+//  1. Item de PDF continua sem mexer em ESTOQUE — isso não mudou. Nenhuma
+//     linha vinda daqui entra em movimentacoes_estoque.
+//  2. Item de PDF continua sem gerar LANÇAMENTO financeiro próprio: o gasto
+//     do contrato aparece porque a tela do Financeiro soma `itens_nfe` com
+//     `conta_como_compra: true` — não existe linha em
+//     lancamentos_financeiros para desfazer. Apagar o item já tira o gasto
+//     da soma, sem escrita compensatória nenhuma.
+//  3. A conta a pagar SOBREVIVE de propósito (`on delete set null` da
+//     migration 012 — apagar um documento não pode apagar uma conta que
+//     talvez já esteja paga). Ela fica órfã e o dono a dispensa à mão; isso
+//     é decisão travada do Matheus, não efeito colateral a compensar.
+//  4. O pior cenário de uma falha no meio das duas escritas continua sendo
+//     um documento sem item nenhum — caso JÁ aceito e mostrado na tela
+//     (`GET /controle/documentos`), e agora também marcado com status
+//     'erro' (ver o bloco de `errDocumento` abaixo). Não é dado financeiro
+//     incoerente.
+//
+// O buraco de verdade que a branch abriu era OUTRO, e foi fechado em outro
+// lugar: apagar só UM ITEM do contrato (excluirItemControle.ts) deixava a
+// dívida invisível. Lá a correção foi RECUSAR a exclusão enquanto houver
+// conta a pagar em aberto — ver o comentário de trava daquele arquivo.
+// Aqui, apagar o documento inteiro continua sendo a saída legítima e
+// explícita, e é ela que a mensagem de recusa de lá indica ao dono.
+//
+// Criar uma função atômica só para isto custaria um passo de deploy manual
+// (colar SQL no Supabase) sem reduzir nenhum risco real — ver CLAUDE.md,
+// "caminho mais simples primeiro".
 export async function excluirDocumentoControle(
   documentoId: string,
   fazendaId: string,
