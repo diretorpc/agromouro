@@ -157,10 +157,13 @@ Grava também `tipo` em `documentos_controle`.
 Depois de gravar documento e itens, chama `criarContasDoContrato()` — só quando
 `tipoDocumento === 'contrato'`.
 
-### 3. `api/src/services/contas/deContrato.ts` — NOVO
+### 3. `api/src/services/contas/deContrato.ts` + `gravarContasDoContrato.ts` — NOVOS
 
-Espelha `deNotaFiscal.ts`. Uma função pura de montagem + uma de gravação, para a
-montagem ser testável sem banco.
+**Dois arquivos, não um** (ajuste de 23/08, ao escrever o plano): `deContrato.ts` é
+**puro** — entra documento lido, sai lista de linhas, nenhum acesso a banco, toda regra
+de dinheiro provável sem mock. `gravarContasDoContrato.ts` toca Supabase. É o mesmo par
+que `deNotaFiscal.ts` (puro) e `gravarDeNota.ts` (banco) já formam neste projeto. Juntar
+os dois obrigaria todo teste de rateio a montar um mock de banco.
 
 Uma conta por pagamento lido:
 
@@ -188,8 +191,15 @@ R$ 647.986,35 cada viram R$ 1,29 mi devidos. Regra correta:
 | N pagamentos, algum valor nulo | rateia `valorTotalDocumento` em partes iguais e marca **`valor_estimado: true`** nas N contas |
 | Valor nulo e `valorTotalDocumento` nulo | cria a conta **sem valor**, `valor_estimado: true` — a tela já sabe pedir o valor real |
 
-A coluna `valor_estimado` existe exatamente para isso, e o `montarParcelas()` de
-`parcelamento.ts` já sabe ratear valor entre parcelas — **reusar, não reescrever**.
+A coluna `valor_estimado` existe exatamente para isso.
+
+⚠️ **Correção de 23/08, depois de ler o código:** eu tinha escrito aqui que
+`montarParcelas()` de `parcelamento.ts` "já sabe ratear" e era só reusar. **Não sabe.**
+O comentário dele é explícito: *"mesmo valor em todas (não divide, decisão do
+Matheus)"* — parcelamento de conta avulsa repete o valor cheio em cada parcela de
+propósito. Reusar ali daria exatamente o bug que esta seção existe para evitar. O rateio
+é código novo em `deContrato.ts`, com a sobra de centavo indo para a **última** parcela
+(647.986,35 ÷ 2 = 323.993,18 + 323.993,17).
 
 **Falha ao criar a conta NÃO derruba o documento já gravado** — loga, devolve o aviso e
 segue. Perder o documento inteiro por causa da conta seria trocar um problema pequeno
@@ -256,8 +266,17 @@ lido, nunca pela aba de origem.
   vencimento em 28/08/2026."*
 - Contrato sem data de pagamento legível: *"Contrato importado, mas não achei a data de
   pagamento — cadastre a conta à mão."*
-- Extrato solto ali: recusa com *"Isto é um extrato de revenda, não um contrato —
-  importe pela aba Controle."*
+- Extrato solto ali: **importa normalmente e avisa** — *"Isto é um extrato de revenda,
+  não um contrato — os itens entraram na aba Controle e nenhuma conta a pagar foi criada
+  (o boleto do extrato chega por e-mail)."*
+
+  ⚠️ **Correção de 23/08, ao escrever o plano:** esta seção dizia *"recusa"*. Recusar é
+  errado por dois motivos. Primeiro, quando a mensagem apareceria, a IA **já leu** o PDF
+  — a chamada já foi paga e o documento já é válido; recusar joga fora trabalho bom e
+  obriga a subir o mesmo arquivo noutra aba. Segundo, e mais grave: seria uma regra de
+  negócio decidida pela **aba de origem**, e é exatamente assim que dois caminhos para o
+  mesmo arquivo passam a divergir e uma trava de dedupe deixa de valer de um dos lados.
+  O servidor decide pelo **tipo lido**, sempre.
 
 O botão do Controle continua aceitando os dois tipos.
 
