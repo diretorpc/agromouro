@@ -583,9 +583,9 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
-## 🟢 Contrato de adubo → conta a pagar + gasto no Financeiro — PROVADO AO VIVO, falta so' o PR — 23/08/2026
+## ✅ Contrato de adubo → conta a pagar + gasto no Financeiro — NO AR (PR #64 mergeado) — 23/08/2026
 
-Branch `feature/contrato-adubo-contas-a-pagar`, 25 commits. Desenho em
+PR #64 mergeado (squash, `88e3c30`), branch apagada nos dois lados. Desenho em
 `docs/superpowers/specs/2026-08-23-contrato-adubo-contas-a-pagar-design.md`, plano em
 `docs/superpowers/plans/2026-08-23-contrato-adubo-contas-a-pagar.md`.
 
@@ -593,9 +593,20 @@ Branch `feature/contrato-adubo-contas-a-pagar`, 25 commits. Desenho em
 ✅ **Conferido ao vivo com o contrato 280451 real**, ponta a ponta — o contrato ESTÁ no
 sistema (documento `ff3de1fa`, conta a pagar de R$ 647.986,35 vencendo 28/08/2026).
 
-✅ **PR aberto: https://github.com/diretorpc/agromouro/pull/64** (23/08). O contrato
-280451 já está no sistema de verdade — a conferência ao vivo rodou contra a API local
-com o banco de produção. **Não mergeado ainda.**
+✅ **PR #64 MERGEADO na main em 23/08** — https://github.com/diretorpc/agromouro/pull/64
+Railway e Vercel fazem deploy automático. A migration 012 já estava aplicada ANTES do
+merge; era o portão e foi respeitado.
+
+Conferido na main **por conteúdo, não por nome de branch** (squash troca o hash): os 3
+arquivos novos existem e as 3 travas de dinheiro estão lá — `conta_como_compra`
+ramificado por tipo, trava do lançamento duplo em `pagamento.ts`, e o C1 preservando o
+gasto ao editar célula. Comando que reconfere:
+`grep -c "documento_controle_id == null" api/src/services/contas/pagamento.ts`
+
+⚠️ **O gasto aparece em JULHO no Financeiro** (data do contrato) enquanto a dívida vence
+em AGOSTO — decisão consciente do Matheus, regime de competência. Quem abrir o Financeiro
+no mês corrente NÃO vê a compra; tem que trocar o filtro de mês. Ele estranhou isso na
+prática em 23/08, foi avisado das três saídas possíveis e escolheu deixar como está.
 
 **Dois defeitos de TELA achados só na conferência visual** — a conferência por banco não
 pegaria nenhum dos dois: (1) a coluna Origem do Financeiro mostrava "Manual" em vez do
