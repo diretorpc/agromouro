@@ -583,6 +583,109 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
+## 🟢 Contrato de adubo → conta a pagar + gasto no Financeiro — PROVADO AO VIVO, falta so' o PR — 23/08/2026
+
+Branch `feature/contrato-adubo-contas-a-pagar`, 25 commits. Desenho em
+`docs/superpowers/specs/2026-08-23-contrato-adubo-contas-a-pagar-design.md`, plano em
+`docs/superpowers/plans/2026-08-23-contrato-adubo-contas-a-pagar.md`.
+
+✅ **Migration 012 aplicada em produção em 23/08** (3 linhas confirmadas pelo Matheus).
+✅ **Conferido ao vivo com o contrato 280451 real**, ponta a ponta — o contrato ESTÁ no
+sistema (documento `ff3de1fa`, conta a pagar de R$ 647.986,35 vencendo 28/08/2026).
+
+✅ **PR aberto: https://github.com/diretorpc/agromouro/pull/64** (23/08). O contrato
+280451 já está no sistema de verdade — a conferência ao vivo rodou contra a API local
+com o banco de produção. **Não mergeado ainda.**
+
+**Dois defeitos de TELA achados só na conferência visual** — a conferência por banco não
+pegaria nenhum dos dois: (1) a coluna Origem do Financeiro mostrava "Manual" em vez do
+fornecedor, porque a cadeia de ternários checava `is_manual` antes do fornecedor e a
+correção que preenchia o campo virou **código morto** — um quarto do pedido original não
+estava entregue; (2) a categoria aparecia crua (`fertilizante_outro`) na tela de Contas,
+com `categoriaLabel()` já existindo e não sendo usado.
+**Lição: revisar a consulta e o fallback não prova que a célula DESENHA o dado.**
+
+⚠️ **O bug mais caro da feature só apareceu na conferência ao vivo, com a suíte 100%
+verde.** A API da Anthropic RECUSA a requisição inteira (HTTP 400) quando uma propriedade
+do schema combina `enum` com `type` em união (`['string','null']`). `POST
+/controle/documentos` devolvia 503 para QUALQUER PDF — contrato e extrato. Os 593 testes
+ficavam verdes porque **todos mockam `anthropic.messages.stream`**: nenhum manda o schema
+para a API de verdade. Corrigido em `b7d74f2`, com teste de invariante que percorre o
+SCHEMA atrás da mesma combinação. **Lição que vale além deste projeto: suíte que mocka o
+fornecedor externo não prova que o contrato com ele está certo. Conferência ao vivo não é
+formalidade — foi ela que pegou.**
+
+Contagem de teste NÃO se escreve aqui — mede-se: `cd api && npm test`
+
+Pedido do Matheus: *"quero essa função de ler o contrato e cadastrar a data de pagamento
+na ABA do contas a pagar! Cada um no seu quadrado. Também quero que joga o valor,
+produto, quantidade e fornecedor na aba financeiro"*.
+
+**O que foi MEDIDO nesta sessão (não é lembrança):**
+
+- O leitor atual (`documentoPdf.ts`) **já acerta 100%** de um contrato Mosaic real
+  (280451, 12 páginas, Docusign): fornecedor, código, produto, 165 MTN, R$ 3.927,19
+  unitário, R$ 647.986,35 total, `divergenciaTotal: 0`. Leitura NÃO é o problema.
+- O leitor **joga fora** a linha `Data de pagamento` do Quadro Resumo — não há campo no
+  schema. Foi isso que originou o pedido.
+- **Zero NF-e de fornecedor de adubo no banco** (mosaic/fertiliz/cibra/yara = 0). Isso
+  derrubou a premissa da decisão de 17/08 (`conta_como_compra: false` sempre): ela
+  nasceu pensando em extrato de revenda, onde a NF-e chega mesmo.
+
+**Eixo do desenho:** o **tipo do documento** decide, não a aba. Contrato de fabricante
+(NF-e nunca chega) conta como gasto; extrato de revenda (NF-e chega pelo Make) continua
+não contando. Tipo ausente/ilegível cai em **extrato** de propósito — errar pro lado que
+não soma é barato, errar pro lado que soma dobra dinheiro calado.
+
+**Decisões fechadas com ele:** gasto no Financeiro na data do contrato; conta a pagar na
+data de vencimento; aparece nos três lugares (Controle, Contas a Pagar, Financeiro); um
+leitor só com dois destinos (leitor separado duplicaria ~600 linhas).
+
+⚠️ **Trava de regressão nº 1:** os 3 extratos já importados (Syagri R$ 1.406.915,25,
+Solos R$ 676.773,19, Protec R$ 685.054,96) **precisam continuar com
+`conta_como_compra: false`**. Ligar "PDF conta como gasto" de forma global dobraria esse
+dinheiro quando as NF-e dessas revendas chegarem.
+
+⚠️ **Buraco achado na auto-revisão da spec:** a regra ingênua "pagamento sem valor herda
+o total do documento" dobra a dívida quando o contrato tem 2 parcelas. Corrigido na
+spec: N pagamentos com algum valor nulo **rateiam** o total e marcam
+`valor_estimado: true`, reusando `montarParcelas()` de `parcelamento.ts`.
+
+**Fora de escopo, dito em voz alta:** cruzamento PDF↔NF-e (4ª vez adiado — se a Mosaic
+um dia mandar NF-e, dobra), estoque (as 165 t não entram), contrato cancelado/
+renegociado.
+
+**O que a revisão final (Apolo) achou depois de tudo codado — 3 Critical, 6 Important,
+todos corrigidos.** Nenhum deles seria pego por revisão de task isolada:
+
+- **C1** — `editarItemControle.ts` cravava `conta_como_compra: false` em todo PATCH. Essa
+  trava nasceu em 18/08 sob a premissa *"item de Controle nunca conta como gasto"*, e
+  esta branch quebrou a premissa. Editar qualquer célula do contrato na grade zerava os
+  R$ 647.986,35 no Financeiro, em silêncio — e como a conta a pagar continua vinculada,
+  pagá-la também não lançava: o dinheiro sumia das três telas de uma vez. **Lição: trava
+  cravada carrega a premissa da época; mudar a premissa sem recalibrar a trava é como
+  nasce bug caro.**
+- **C2** — o aviso *"cadastre a conta à mão"* (que a spec §7 desenhou) levava a conta
+  avulsa SEM vínculo → pagá-la criava lançamento → R$ 1,29 mi para uma compra de R$ 648
+  mil. Agora contrato sem data legível cria conta **sem vencimento**, e o caminho manual
+  deixou de existir.
+- **C3** — deploy antes da migration quebra toda importação (ver bloqueio 1 acima).
+- **I1** parcela com data ilegível descartada em silêncio fazia a sobrevivente herdar o
+  total como valor confirmado · **I2** duas datas iguais escondiam metade da dívida ·
+  **I3** apagar o item fazia a dívida virar invisível · **I4** a trava dos R$ 2,77 mi
+  virou julgamento da IA · **I5** aviso âmbar viraria ruído no Controle · **I6**
+  comentário sustentava decisão com fato morto.
+
+**O "cinto de segurança" da classificação foi calibrado com MEDIÇÃO, não palpite.** O
+limiar original contava itens numerados; a consulta ao banco mostrou que todo item de
+todo documento tem número (28/28, 49/49, 32/32) — a regra não discriminava nada. O que
+separa as populações é a quantidade de números **DISTINTOS**: extrato tem 25–30 (uma por
+duplicata), contrato tem sempre 1 (todos os itens carregam o número do contrato),
+independente de quantas mercadorias. Um re-revisor provou por sonda que o critério
+antigo rebaixava um contrato Mosaic de 6 mercadorias a extrato e sumia com a dívida
+inteira, sem alerta. Comando que remede: contar `numero_documento` distintos por
+`documento_controle_id` em `itens_nfe`.
+
 ## ✅ Gráficos da aba Controle — PR #63 mergeado em 19/08/2026
 
 https://github.com/diretorpc/agromouro/pull/63 — commit `f48cba8` na `main` (squash),

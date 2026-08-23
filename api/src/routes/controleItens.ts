@@ -237,6 +237,17 @@ controleItensRoutes.delete('/:id', async (req, res, next) => {
       case 'nao_encontrado':
         res.status(404).json({ error: 'Item não encontrado.' })
         return
+      // Important 3 (23/08/2026): 409, não 500 — não é falha, é uma recusa
+      // com motivo. A mensagem precisa dizer as duas saídas, senão o dono
+      // fica preso achando que a linha "não deixa apagar" sem explicação.
+      case 'divida_em_aberto':
+        res.status(409).json({
+          error:
+            'Esta linha veio de um documento que ainda tem conta a pagar em aberto. ' +
+            'Apagar só a linha faria o gasto sumir do Financeiro e a dívida ficar invisível. ' +
+            'Primeiro pague ou dispense a conta em Contas a Pagar — ou apague o documento inteiro na aba Controle.',
+        })
+        return
       case 'erro':
         res.status(500).json({ error: 'Erro ao excluir o item.', detalhe: resultado.mensagem })
         return

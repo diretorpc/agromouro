@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { validarDocumentoLido } from './documentoPdf'
+import { validarDocumentoLido, SCHEMA } from './documentoPdf'
 
 // A leitura em si (a chamada de IA) não dá para testar de mesa. O que dá — e
 // o que decide se um documento vira gasto de verdade ou é recusado — é a
@@ -379,5 +379,320 @@ describe('validarDocumentoLido — limite de itens', () => {
     const d = documento(bruto({ itens: muitos }))
     expect(d.itens).toHaveLength(300)
     expect(d.itensDescartados).toBe(5)
+  })
+})
+
+describe('validarDocumentoLido — pagamentos do contrato', () => {
+  const contrato = (pagamentos: unknown) => ({
+    ...bruto(),
+    tipoDocumento: 'contrato',
+    pagamentos,
+  })
+
+  it('lê data e valor do Quadro Resumo', () => {
+    const r = validarDocumentoLido(
+      contrato([{ data: '2026-08-28', valor: 647986.35 }]),
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([{ data: '2026-08-28', valor: 647986.35 }])
+  })
+
+  it('pagamento sem valor entra com valor null (quem monta a conta resolve)', () => {
+    const r = validarDocumentoLido(contrato([{ data: '2026-08-28' }]), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([{ data: '2026-08-28', valor: null }])
+  })
+
+  // Nunca corrige data — descarta. Um '2126-08-28' é dígito mal lido, e
+  // adivinhar o século criaria uma dívida numa data inventada.
+  it('data fora da janela de sanidade é descartada, documento sobrevive', () => {
+    const r = validarDocumentoLido(
+      contrato([{ data: '2126-08-28', valor: 100 }, { data: '2026-09-10', valor: 200 }]),
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([{ data: '2026-09-10', valor: 200 }])
+    expect(r.documento.itens).toHaveLength(1)   // o documento NÃO foi derrubado
+  })
+
+  // Important 1 da revisão final (23/08/2026): descartar em silêncio era o
+  // começo do bug caro. Quem monta a conta PRECISA saber que uma parcela se
+  // perdeu, senão a sobrevivente herda o total do contrato inteiro e vira
+  // uma dívida de R$ 647.986,35 marcada como valor CONFIRMADO.
+  it('pagamento descartado é CONTADO — a perda não pode ser silenciosa', () => {
+    const r = validarDocumentoLido(
+      contrato([{ data: '2126-08-28', valor: null }, { data: '2026-09-10', valor: null }]),
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toHaveLength(1)
+    expect(r.documento.pagamentosDescartados).toBe(1)
+  })
+
+  it('nenhum pagamento descartado: contador fica em 0', () => {
+    const r = validarDocumentoLido(contrato([{ data: '2026-08-28', valor: 100 }]), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentosDescartados).toBe(0)
+  })
+
+  // Important 2 da revisão final: sem deduplicar, a 2ª conta batia no índice
+  // único (fazenda_id, documento_controle_id, vencimento) da migration 012 e
+  // virava "duplicada" — o dono via "1 conta criada" com METADE da dívida e
+  // nada explicando. Mesma data = mesma parcela lida duas vezes.
+  it('duas datas de pagamento IGUAIS viram uma só parcela', () => {
+    const r = validarDocumentoLido(
+      contrato([{ data: '2026-08-28', valor: 323993.18 }, { data: '2026-08-28', valor: 323993.18 }]),
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([{ data: '2026-08-28', valor: 323993.18 }])
+  })
+
+  // Repetição não é perda: a parcela continua lá, só foi lida duas vezes.
+  // Contar como descartada faria a regra do valor (Important 1) travar sem
+  // motivo e a conta nasceria sem valor à toa.
+  it('data repetida NÃO conta como pagamento descartado', () => {
+    const r = validarDocumentoLido(
+      contrato([{ data: '2026-08-28', valor: 100 }, { data: '2026-08-28', valor: 100 }]),
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentosDescartados).toBe(0)
+  })
+
+  it('data repetida: a primeira sem valor adota o valor da repetida', () => {
+    const r = validarDocumentoLido(
+      contrato([{ data: '2026-08-28', valor: null }, { data: '2026-08-28', valor: 500 }]),
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([{ data: '2026-08-28', valor: 500 }])
+  })
+
+  // Minor da revisão final: MAX_PAGAMENTOS limitava os ACEITOS, não as
+  // iterações — uma resposta com 5.000 entradas era percorrida inteira. E o
+  // excedente cortado é perda de parcela como qualquer outra: entra no
+  // contador, senão a sobrevivente herdaria o total do contrato.
+  it('acima de MAX_PAGAMENTOS (24): corta a ENTRADA e conta o excedente como descartado', () => {
+    const muitos = Array.from({ length: 30 }, (_, i) => ({
+      data: `2026-09-${String((i % 28) + 1).padStart(2, '0')}`,
+      valor: 10,
+    }))
+    const r = validarDocumentoLido(contrato(muitos), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toHaveLength(24)
+    expect(r.documento.pagamentosDescartados).toBe(6)
+  })
+
+  it('extrato nunca tem pagamento descartado (nem pagamento)', () => {
+    const r = validarDocumentoLido(
+      { ...bruto(), tipoDocumento: 'extrato', pagamentos: [{ data: '2126-08-28', valor: 500 }] },
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([])
+    expect(r.documento.pagamentosDescartados).toBe(0)
+  })
+
+  it('valor de pagamento acima do teto do documento vira null, mantém a data', () => {
+    const r = validarDocumentoLido(
+      contrato([{ data: '2026-08-28', valor: 99_000_000 }]),
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([{ data: '2026-08-28', valor: null }])
+  })
+
+  it.each([
+    ['ausente',   undefined],
+    ['nulo',      null],
+    ['não-array', { data: '2026-08-28' }],
+    ['vazio',     []],
+  ])('pagamentos %s vira lista vazia', (_nome, valor) => {
+    const r = validarDocumentoLido(contrato(valor), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([])
+  })
+
+  // Extrato tem DUPLICATA, não contrato de pagamento. Cada duplicata já vira
+  // ITEM, e o boleto dela chega por e-mail pelo Make. Criar conta a pagar
+  // aqui duplicaria o que o boleto já faz.
+  it('extrato ignora pagamentos mesmo se a IA devolver', () => {
+    const r = validarDocumentoLido(
+      { ...bruto(), tipoDocumento: 'extrato', pagamentos: [{ data: '2026-08-28', valor: 500 }] },
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([])
+  })
+})
+
+describe('validarDocumentoLido — tipo do documento', () => {
+  it('contrato explícito vira tipoDocumento "contrato"', () => {
+    const r = validarDocumentoLido(bruto({ tipoDocumento: 'contrato' }), HOJE)
+    expect(r.status).toBe('documento')
+    if (r.status !== 'documento') return
+    expect(r.documento.tipoDocumento).toBe('contrato')
+  })
+
+  it('extrato explícito vira tipoDocumento "extrato"', () => {
+    const r = validarDocumentoLido(bruto({ tipoDocumento: 'extrato' }), HOJE)
+    expect(r.status).toBe('documento')
+    if (r.status !== 'documento') return
+    expect(r.documento.tipoDocumento).toBe('extrato')
+  })
+
+  // A TRAVA MAIS IMPORTANTE DESTE ARQUIVO. Errar para "contrato" dobra
+  // dinheiro em silêncio; errar para "extrato" só deixa um valor sem somar,
+  // e o dono corrige na tela. Todo valor que não seja exatamente 'contrato'
+  // cai no lado barato.
+  it.each([
+    ['ausente',    undefined],
+    ['nulo',       null],
+    ['vazio',      ''],
+    ['desconhecido', 'nota'],
+    ['número',     42],
+    ['maiúsculo com espaço', ' CONTRATO '],
+  ])('tipoDocumento %s cai em "extrato"', (_nome, valor) => {
+    const r = validarDocumentoLido(bruto({ tipoDocumento: valor }), HOJE)
+    expect(r.status).toBe('documento')
+    if (r.status !== 'documento') return
+    expect(r.documento.tipoDocumento).toBe('extrato')
+  })
+})
+
+// Important 4 da revisão final (23/08/2026): a trava dos R$ 2,77 milhões
+// tinha virado JULGAMENTO DA IA — o prompt descrevia os dois formatos, mas
+// nada em CÓDIGO conferia a resposta. Uma classificação errada para
+// 'contrato' liga `conta_como_compra: true` num extrato cuja NF-e o Make
+// ainda vai derrubar, e o Financeiro passa a somar o mesmo dinheiro duas
+// vezes, calado.
+//
+// O cinto de segurança é determinístico e só aperta para UM LADO: pode
+// forçar 'extrato', NUNCA 'contrato'. A forma dos dois documentos é
+// diferente de verdade — extrato lista muitas duplicatas, cada uma com o
+// seu próprio número; contrato tem poucas linhas de mercadoria e nenhuma
+// numeração por linha (o número que existe é o do contrato inteiro).
+describe('validarDocumentoLido — cinto determinístico do tipo (Important 4)', () => {
+  const numerado = (i: number) => item({ numero_documento: `5710${i}`, descricao: `PRODUTO ${i}` })
+
+  it('IA disse "contrato" mas o documento tem cara de extrato: força "extrato"', () => {
+    const r = validarDocumentoLido(bruto({
+      tipoDocumento: 'contrato',
+      itens: [numerado(1), numerado(2), numerado(3), numerado(4), numerado(5), numerado(6)],
+      pagamentos: [{ data: '2026-08-28', valor: 500 }],
+    }), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.tipoDocumento).toBe('extrato')
+    // Rebaixado a extrato, os pagamentos morrem junto — extrato nunca gera
+    // conta a pagar (o boleto dele chega por e-mail).
+    expect(r.documento.pagamentos).toEqual([])
+  })
+
+  it('contrato de verdade (poucas linhas, sem numeração própria) continua "contrato"', () => {
+    const r = validarDocumentoLido(bruto({
+      tipoDocumento: 'contrato',
+      itens: [item({ numero_documento: null }), item({ numero_documento: null, descricao: 'MAP' })],
+      pagamentos: [{ data: '2026-08-28', valor: 500 }],
+    }), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.tipoDocumento).toBe('contrato')
+    expect(r.documento.pagamentos).toHaveLength(1)
+  })
+
+  it('muitas linhas SEM numeração própria não bastam para rebaixar', () => {
+    const r = validarDocumentoLido(bruto({
+      tipoDocumento: 'contrato',
+      itens: Array.from({ length: 8 }, (_, i) => item({ numero_documento: null, descricao: `LINHA ${i}` })),
+    }), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.tipoDocumento).toBe('contrato')
+  })
+
+  it('poucas linhas, todas numeradas, não bastam para rebaixar', () => {
+    const r = validarDocumentoLido(bruto({
+      tipoDocumento: 'contrato',
+      itens: [numerado(1), numerado(2), numerado(3), numerado(4)],
+    }), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.tipoDocumento).toBe('contrato')
+  })
+
+  // O BURACO que a medição em produção (23/08/2026) encontrou: um contrato
+  // Mosaic de 6 mercadorias tem 6 itens, mas TODOS carregam o MESMO número —
+  // o do contrato inteiro (280451), não um por linha como no extrato. A
+  // versão antiga do cinto contava "itens com número" (todo item de todo
+  // documento tem número) e rebaixava isto a extrato por engano, derrubando
+  // R$ 647.986,35 de pagamentos junto. O discriminador certo é a quantidade
+  // de números DISTINTOS — aqui é 1, bem abaixo do limiar.
+  it('muitas linhas com o MESMO número de documento não bastam para rebaixar (contrato de várias mercadorias)', () => {
+    const mesmoNumero = (i: number) => item({ numero_documento: '280451', descricao: `MERCADORIA ${i}` })
+    const r = validarDocumentoLido(bruto({
+      tipoDocumento: 'contrato',
+      itens: [mesmoNumero(1), mesmoNumero(2), mesmoNumero(3), mesmoNumero(4), mesmoNumero(5), mesmoNumero(6)],
+      pagamentos: [{ data: '2026-08-28', valor: 323993.18 }, { data: '2026-11-28', valor: 323993.17 }],
+    }), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.tipoDocumento).toBe('contrato')
+    // O ponto inteiro do achado: rebaixar a extrato apagaria os pagamentos —
+    // aqui eles precisam sobreviver junto com o tipo.
+    expect(r.documento.pagamentos).toHaveLength(2)
+  })
+
+  // A TRAVA SUPREMA: o cinto só aperta num sentido. Nenhuma combinação de
+  // itens pode PROMOVER um extrato a contrato — promover é o lado que
+  // dobra dinheiro.
+  it('extrato com poucas linhas sem numeração continua "extrato" — o cinto nunca PROMOVE', () => {
+    const r = validarDocumentoLido(bruto({
+      tipoDocumento: 'extrato',
+      itens: [item({ numero_documento: null })],
+    }), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.tipoDocumento).toBe('extrato')
+  })
+})
+
+// Achado ao vivo, 23/08/2026, conferência contra a API real (não pelos 593
+// testes acima — todos mockam `anthropic.messages.stream`, nenhum chega a
+// mandar o SCHEMA pra API de verdade): a Anthropic recusa a requisição
+// INTEIRA com HTTP 400 quando uma propriedade combina `enum` com `type` como
+// array de tipos (união) — mesmo que o próprio enum liste `null` entre os
+// valores aceitos. `tipoDocumento` tinha exatamente essa forma
+// (`type: ['string', 'null']` + `enum: [...]`) e derrubava TODO
+// `POST /controle/documentos`, contrato ou extrato, sempre.
+//
+// Este teste não chama a API (um teste unitário não consegue) — mas percorre
+// o SCHEMA inteiro à procura da MESMA combinação quebrada, travando a regra
+// que a API impõe. Sem isto, "melhorar" o schema de volta para permitir
+// `null` explícito (em vez de confiar em `tipoDeDocumento()` para tratar
+// ausência como 'extrato') derruba a funcionalidade de novo, em silêncio,
+// só descoberto na próxima conferência ao vivo.
+describe('SCHEMA — invariante: enum nunca combinado com type em união', () => {
+  function acharViolacoes(node: unknown, caminho: string, achados: string[]): void {
+    if (node === null || typeof node !== 'object') return
+
+    if (Array.isArray(node)) {
+      node.forEach((item, i) => acharViolacoes(item, `${caminho}[${i}]`, achados))
+      return
+    }
+
+    const obj = node as Record<string, unknown>
+
+    // A violação exata que a API recusa: `enum` presente junto de `type`
+    // como array (união de tipos), em qualquer nível do schema.
+    if ('enum' in obj && Array.isArray(obj.type)) {
+      achados.push(caminho)
+    }
+
+    for (const [chave, valor] of Object.entries(obj)) {
+      acharViolacoes(valor, `${caminho}.${chave}`, achados)
+    }
+  }
+
+  it('nenhuma propriedade do SCHEMA combina enum com type em array', () => {
+    const achados: string[] = []
+    acharViolacoes(SCHEMA, 'SCHEMA', achados)
+    expect(achados).toEqual([])
   })
 })

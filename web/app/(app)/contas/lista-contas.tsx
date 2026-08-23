@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/action-menu'
 import { SortableTableHead } from '@/components/ui/sortable-table-head'
 import { ENCERRADAS, PREFIXO_CONFERIR, type ContaAPI, type Conta } from './tipos'
+import { categoriaLabel } from '@/lib/centro-custo'
 
 // Declarado aqui (não em page.tsx) para não duplicar a mesma verdade em dois
 // lugares — page.tsx importa este tipo de volta, mesmo padrão que `fmtBRL`
@@ -212,7 +213,11 @@ export function ListaContas({ contas, onPagar, onDispensar, onDesfazer, onEditar
                 </TableCell>
                 <TableCell className="text-sm">
                   <Badge variant="outline" className="text-xs">
-                    {conta.categoria ?? 'Sem categoria'}
+                    {/* categoriaLabel só traduz value → rótulo (ex.: fertilizante_outro
+                        → "Fertilizante Outro"); categoria nula continua "Sem categoria"
+                        (categoriaLabel não tem fallback pra null, devolveria o próprio
+                        value cru se chamada com string vazia). */}
+                    {conta.categoria ? categoriaLabel(conta.categoria) : 'Sem categoria'}
                   </Badge>
                 </TableCell>
                 <TableCell>
@@ -248,7 +253,9 @@ export function ListaContas({ contas, onPagar, onDispensar, onDesfazer, onEditar
           const algumEstimado = grupo.contas.some(c => c.valor_estimado)
           const todosSemValor = grupo.contas.every(c => c.valor === null)
           const algumSemValor = !todosSemValor && grupo.contas.some(c => c.valor === null)
-          const categoriasGrupo = Array.from(new Set(grupo.contas.map(c => c.categoria ?? 'Sem categoria')))
+          const categoriasGrupo = Array.from(new Set(
+            grupo.contas.map(c => c.categoria ? categoriaLabel(c.categoria) : 'Sem categoria'),
+          ))
 
           return (
             <Fragment key={grupo.chave}>

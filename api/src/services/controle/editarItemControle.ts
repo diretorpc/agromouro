@@ -74,7 +74,7 @@ export async function editarItemControle(
   // não deveria conseguir.
   const { data: existente, error: errBusca } = await supabase
     .from('itens_nfe')
-    .select('id, documento_controle_id')
+    .select('id, documento_controle_id, conta_como_compra')
     .eq('id', itemId)
     .eq('fazenda_id', fazendaId)
     .is('nota_fiscal_id', null)
@@ -98,12 +98,29 @@ export async function editarItemControle(
     .from('itens_nfe')
     .update({
       ...patch,
-      // Cravado, NUNCA lido do corpo da requisição — `patch` já chega aqui
-      // sem este campo (fora do schema zod da rota, ver controle.ts), mas
-      // esta segunda camada garante que mesmo um bug na validação não
-      // conseguiria fazer um item de Controle virar gasto duplicado no
-      // Financeiro. Ver spec, seção "Trava de conta_como_compra".
-      conta_como_compra: false,
+      // PRESERVADO do banco, NUNCA lido do corpo da requisição — `patch` já
+      // chega aqui sem este campo (fora do schema zod da rota, ver
+      // controleItens.ts), mas esta segunda camada garante que mesmo um bug
+      // na validação não conseguiria fazer uma edição manual LIGAR o gasto.
+      // Ver spec, seção "Trava de conta_como_compra".
+      //
+      // ⚠️ ERA `false` CRAVADO até 23/08/2026 (Critical 1 da revisão final
+      // da branch do contrato de adubo). Aquela linha nasceu em 18/08 sob a
+      // premissa "item de Controle NUNCA conta como gasto" — premissa que
+      // morreu quando o contrato de fabricante (Mosaic) passou a gravar
+      // `conta_como_compra: true` por ser a única fonte daquele gasto (zero
+      // NF-e de adubo no banco, medido em 23/08). Com o `false` cravado,
+      // digitar em QUALQUER célula da linha do contrato na grade estilo
+      // Excel tirava R$ 647.986,35 do Financeiro em silêncio — o dono não
+      // via erro nenhum, o número simplesmente encolhia.
+      //
+      // `=== true` (não `??`, não valor cru) de propósito: só o `true`
+      // EXATO vindo do banco preserva o gasto ligado. Coluna ausente do
+      // select, `null` de uma linha antiga ou qualquer outro valor cai em
+      // `false` — o lado barato, mesma assimetria de `tipoDeDocumento()` em
+      // documentoPdf.ts. Extrato de revenda (os R$ 2,77 milhões da Syagri,
+      // Solos e Protec) nasce `false` e continua `false` por aqui, sempre.
+      conta_como_compra: existente.conta_como_compra === true,
     })
     .eq('id', itemId)
     .eq('fazenda_id', fazendaId)

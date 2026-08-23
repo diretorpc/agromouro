@@ -7,7 +7,7 @@ import type { DocumentoLido, ItemDocumentoLido, ResultadoLeituraDocumento } from
 // controla o que cada uma devolve; os testes leem `estado.*Inserido(s)`,
 // `estado.documentosDeletados` e `estado.documentosMarcadosErro` para
 // conferir o que foi gravado/desfeito/marcado.
-const { estado, uploadMock, removeMock } = vi.hoisted(() => {
+const { estado, uploadMock, removeMock, gravarContasMock } = vi.hoisted(() => {
   const estado = {
     lido: null as ResultadoLeituraDocumento | null,
     erroUpload: null as null | { message: string },
@@ -53,6 +53,11 @@ const { estado, uploadMock, removeMock } = vi.hoisted(() => {
     // caminho "pelo menos 1 item já gravado", onde a FK RESTRICT impede o
     // DELETE e o service marca erro em vez de apagar).
     documentosMarcadosErro: [] as { id: string; status: string; erro_mensagem: string }[],
+    // Cada INSERT em `alertas` (Important 4 — classificar como 'contrato'
+    // liga dinheiro e não pode acontecer calado). `erroInsertAlerta` prova
+    // que falhar aqui não derruba a importação.
+    alertasInseridos: [] as any[],
+    erroInsertAlerta: null as null | { message: string },
     // Controla o roteamento de `.eq()` no mock de documentos_controle: a
     // mesma chamada encadeada serve tanto `.delete().eq(...)` quanto
     // `.update(payload).eq(...)` — precisa saber qual das duas está em curso.
@@ -63,11 +68,18 @@ const { estado, uploadMock, removeMock } = vi.hoisted(() => {
     estado.erroUpload ? { data: null, error: estado.erroUpload } : { data: { path: 'ok' }, error: null },
   ))
   const removeMock = vi.fn(() => Promise.resolve({ data: null, error: null }))
-  return { estado, uploadMock, removeMock }
+  // Mock de `gravarContasDoContrato` (Task 5) — padrão "sem conta criada, sem
+  // erro" (a maioria dos testes deste arquivo é extrato e nem chama isto).
+  const gravarContasMock = vi.fn().mockResolvedValue({ criadas: 0, duplicadas: 0, erro: null })
+  return { estado, uploadMock, removeMock, gravarContasMock }
 })
 
 vi.mock('./documentoPdf', () => ({
   lerDocumentoPdf: vi.fn(() => Promise.resolve(estado.lido)),
+}))
+
+vi.mock('../contas/gravarContasDoContrato', () => ({
+  gravarContasDoContrato: (...args: unknown[]) => gravarContasMock(...args),
 }))
 
 vi.mock('../supabase', () => ({
@@ -163,6 +175,14 @@ vi.mock('../supabase', () => ({
           }),
         }
       }
+      if (table === 'alertas') {
+        return {
+          insert: vi.fn((payload: any) => {
+            estado.alertasInseridos.push(payload)
+            return Promise.resolve({ data: null, error: estado.erroInsertAlerta })
+          }),
+        }
+      }
       throw new Error(`tabela não mockada neste teste: ${table}`)
     }),
   },
@@ -173,6 +193,13 @@ import { gravarDocumentoDoPdf } from './gravarDocumentoPdf'
 // ─── Fixtures ─────────────────────────────────────────────────────────────
 
 const FORNECEDOR = 'SOLOS SOLUCOES AGRICOLAS'
+
+// Mensagem fixa devolvida em `avisoContas` para todo documento 'extrato' —
+// espelha o texto de gravarDocumentoPdf.ts (Step 5b). Todo teste desta
+// suíte que grava com sucesso usa `documento()` (padrão 'extrato'), então
+// este aviso aparece em praticamente todo `toEqual` de status 'gravado'.
+const AVISO_EXTRATO =
+  'Isto é um extrato de revenda, não um contrato — os itens entraram na aba Controle e nenhuma conta a pagar foi criada (o boleto do extrato chega por e-mail).'
 
 // Espelha as 5 colunas (menos fazenda_id) de idx_itens_nfe_dedupe_item —
 // migration 018, já com ocorrencia_no_documento (Achado B). Usada tanto para
@@ -201,10 +228,17 @@ function documento(over: Partial<DocumentoLido> = {}): DocumentoLido {
     dataDocumento: '2026-07-01',
     numeroDocumento: '000786-2026-07-01',
     codigoCliente: '000786',
+    // Padrão 'extrato': a maioria dos testes deste arquivo foi escrita para
+    // o extrato da Solos — mudar o padrão para 'contrato' faria vários deles
+    // passarem a testar outra coisa em silêncio (Task 2/3 tornaram os dois
+    // campos abaixo obrigatórios em DocumentoLido).
+    tipoDocumento: 'extrato',
     valorTotalDocumento: 1505,
     divergenciaTotal: 0,
     itens: [item()],
     itensDescartados: 0,
+    pagamentos: [],
+    pagamentosDescartados: 0,
     ...over,
   }
 }
@@ -232,6 +266,8 @@ beforeEach(() => {
   estado.payloadUpdatePendente = null
   estado.itemDuplicadoExistente = null
   estado.itensAtualizados = []
+  estado.alertasInseridos = []
+  estado.erroInsertAlerta = null
   vi.clearAllMocks()
 })
 
@@ -247,6 +283,9 @@ describe('gravarDocumentoDoPdf — sucesso completo', () => {
       itensGravados: 1,
       itensDescartados: 1,
       itensDuplicados: 0,
+      contasCriadas: 0,
+      avisoContas: AVISO_EXTRATO,
+      tipoDocumento: 'extrato',
     })
 
     // Documento: fornecedor, número, hash e path do Storage foram gravados.
@@ -549,6 +588,9 @@ describe('gravarDocumentoDoPdf — reimportação com item já gravado antes (Ac
       itensGravados: 1,
       itensDescartados: 0,
       itensDuplicados: 1,
+      contasCriadas: 0,
+      avisoContas: AVISO_EXTRATO,
+      tipoDocumento: 'extrato',
     })
 
     // Fallback tentou os 2 itens, um a um, na ordem da leitura.
@@ -584,6 +626,9 @@ describe('gravarDocumentoDoPdf — reimportação com item já gravado antes (Ac
       itensGravados: 0,
       itensDescartados: 0,
       itensDuplicados: 1,
+      contasCriadas: 0,
+      avisoContas: AVISO_EXTRATO,
+      tipoDocumento: 'extrato',
     })
     expect(estado.documentosDeletados).toEqual([])
     expect(estado.documentosMarcadosErro).toEqual([])
@@ -615,6 +660,7 @@ describe('gravarDocumentoDoPdf — persiste sinal de duplicata confirmada na lin
 
     expect(r).toEqual({
       status: 'gravado', documentoId: 'doc-1', itensGravados: 0, itensDescartados: 0, itensDuplicados: 1,
+      contasCriadas: 0, avisoContas: AVISO_EXTRATO, tipoDocumento: 'extrato',
     })
 
     expect(estado.itensAtualizados).toHaveLength(1)
@@ -647,6 +693,7 @@ describe('gravarDocumentoDoPdf — persiste sinal de duplicata confirmada na lin
 
     expect(r).toEqual({
       status: 'gravado', documentoId: 'doc-1', itensGravados: 0, itensDescartados: 0, itensDuplicados: 1,
+      contasCriadas: 0, avisoContas: AVISO_EXTRATO, tipoDocumento: 'extrato',
     })
     expect(estado.itensAtualizados).toEqual([])
   })
@@ -750,6 +797,9 @@ describe('gravarDocumentoDoPdf — linhas repetidas DENTRO do mesmo documento n�
       itensGravados: 2,
       itensDescartados: 0,
       itensDuplicados: 0,
+      contasCriadas: 0,
+      avisoContas: AVISO_EXTRATO,
+      tipoDocumento: 'extrato',
     })
     expect(estado.itensInseridos).toHaveLength(2)
     expect(estado.itensInseridos[0]).toMatchObject({ numero_documento: '57106', valor_total: 1505, ocorrencia_no_documento: 0 })
@@ -794,6 +844,311 @@ describe('gravarDocumentoDoPdf — linhas repetidas DENTRO do mesmo documento n�
       itensGravados: 0,
       itensDescartados: 0,
       itensDuplicados: 2,
+      contasCriadas: 0,
+      avisoContas: AVISO_EXTRATO,
+      tipoDocumento: 'extrato',
     })
+  })
+})
+
+// Task 6 do plano `docs/superpowers/sdd/2026-08-23-contrato-adubo-contas-a-
+// pagar`: a gravação passa a ramificar por `tipoDocumento`. Extrato precisa
+// continuar exatamente como sempre foi (trava dos R$ 2,77 milhões já
+// importados em produção — Syagri, Solos, Protec); contrato passa a contar
+// como gasto e a gerar conta a pagar via `gravarContasDoContrato` (Task 5).
+describe('gravarDocumentoDoPdf — contrato x extrato', () => {
+  // A TRAVA DOS R$ 2,77 MILHÕES. Syagri, Solos e Protec já estão no banco
+  // como extrato. Se um dia esta asserção virar `true`, o Financeiro passa a
+  // somar essas compras de novo quando as NF-e delas chegarem pelo Make.
+  it('extrato grava conta_como_compra: false', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'extrato' }) }
+    await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+    expect(estado.itensInseridos[0].conta_como_compra).toBe(false)
+  })
+
+  it('contrato grava conta_como_compra: true', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+    await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+    expect(estado.itensInseridos[0].conta_como_compra).toBe(true)
+  })
+
+  it('grava o tipo em documentos_controle', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+    await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+    expect(estado.documentoInserido.tipo).toBe('contrato')
+  })
+
+  it('contrato devolve quantas contas foram criadas', async () => {
+    gravarContasMock.mockResolvedValue({ criadas: 1, duplicadas: 0, erro: null })
+    estado.lido = {
+      status: 'documento',
+      documento: documento({ tipoDocumento: 'contrato', pagamentos: [{ data: '2026-08-28', valor: 1505 }] }),
+    }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    if (r.status !== 'gravado') throw new Error('esperava gravado')
+    expect(r.contasCriadas).toBe(1)
+    expect(r.avisoContas).toBeNull()
+  })
+
+  // Important 4 da revisão final (23/08/2026): classificar um documento como
+  // 'contrato' é a decisão que LIGA dinheiro (conta_como_compra: true) e é
+  // tomada por uma IA. Decisão de dinheiro tomada por IA não pode acontecer
+  // em silêncio — vira registro na central de alertas, onde o dono vê.
+  it('contrato grava um alerta na central — classificação que liga dinheiro não é silenciosa', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+
+    await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    expect(estado.alertasInseridos).toHaveLength(1)
+    expect(estado.alertasInseridos[0]).toMatchObject({
+      tipo: 'documento_classificado_contrato',
+      nivel: 'aviso',
+      lido: false,
+      fazenda_id: FAZENDA,
+    })
+    expect(estado.alertasInseridos[0].mensagem).toContain(FORNECEDOR)
+  })
+
+  it('extrato NÃO gera alerta — é o caminho normal, alertar treinaria a ignorar', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'extrato' }) }
+
+    await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    expect(estado.alertasInseridos).toHaveLength(0)
+  })
+
+  // O alerta é aviso, não pré-requisito: falhar nele não pode derrubar uma
+  // importação já persistida.
+  it('falha ao gravar o alerta não derruba a importação', async () => {
+    estado.erroInsertAlerta = { message: 'RLS negou' }
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    expect(r.status).toBe('gravado')
+  })
+
+  it('extrato não chama a criação de contas', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'extrato' }) }
+    await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+    expect(gravarContasMock).not.toHaveBeenCalled()
+  })
+
+  // Falhar a conta NÃO pode derrubar um documento já gravado com itens: o
+  // dono perderia o gasto inteiro por causa de um vencimento.
+  it('erro ao criar conta não derruba o documento — vira aviso', async () => {
+    gravarContasMock.mockResolvedValue({ criadas: 0, duplicadas: 0, erro: 'RLS negou' })
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    expect(r.status).toBe('gravado')
+    if (r.status !== 'gravado') return
+    expect(r.avisoContas).toContain('RLS negou')
+    // Critical 2: o aviso NUNCA pode mandar cadastrar a conta à mão — conta
+    // avulsa nasce sem `documento_controle_id` e pagá-la lançaria de novo um
+    // gasto que já está em itens_nfe.
+    expect(r.avisoContas).not.toMatch(/cadastre .*à mão/i)
+  })
+
+  // Minor da revisão final: o texto dizia "a conta a pagar não pôde ser
+  // criada" mesmo quando algumas parcelas TINHAM sido criadas — o dono lia
+  // "nenhuma conta existe" e ia cadastrar à mão, dobrando o dinheiro.
+  it('erro DEPOIS de algumas parcelas criadas: o aviso diz que foi parcial', async () => {
+    gravarContasMock.mockResolvedValue({ criadas: 2, duplicadas: 0, erro: 'connection reset' })
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    if (r.status !== 'gravado') throw new Error('esperava gravado')
+    expect(r.avisoContas).toContain('2 conta')
+    expect(r.avisoContas).toContain('connection reset')
+    expect(r.avisoContas).not.toMatch(/cadastre .*à mão/i)
+  })
+
+  // Critical 2: contrato sem data legível AGORA cria a conta sem vencimento
+  // (contasDoContrato), e o aviso pede a data em vez de mandar cadastrar
+  // uma conta paralela.
+  it('contrato sem pagamento avisa que a conta nasceu SEM vencimento', async () => {
+    gravarContasMock.mockResolvedValue({ criadas: 1, duplicadas: 0, erro: null })
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato', pagamentos: [] }) }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    if (r.status !== 'gravado') throw new Error('esperava gravado')
+    expect(r.avisoContas).toContain('data de pagamento')
+    expect(r.avisoContas).toContain('sem vencimento')
+    expect(r.avisoContas).not.toMatch(/cadastre .*à mão/i)
+  })
+
+  // Important 1: a perda de uma parcela precisa CHEGAR ao dono. O valor da
+  // conta sobrevivente fica em aberto por causa disso — sem o aviso, ele vê
+  // uma conta sem valor e não sabe por quê.
+  it('parcela descartada na leitura vira aviso na tela', async () => {
+    gravarContasMock.mockResolvedValue({ criadas: 1, duplicadas: 0, erro: null })
+    estado.lido = {
+      status: 'documento',
+      documento: documento({
+        tipoDocumento: 'contrato',
+        pagamentos: [{ data: '2026-08-28', valor: null }],
+        pagamentosDescartados: 1,
+      }),
+    }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    if (r.status !== 'gravado') throw new Error('esperava gravado')
+    expect(r.avisoContas).toContain('1 data de pagamento')
+  })
+
+  // Important 2: o documento é sempre NOVO quando se chega aqui (reimportação
+  // volta antes, como duplicada-hash/duplicada-conteudo). Logo, "duplicada"
+  // nesta altura só pode ser duas parcelas colidindo ENTRE SI no mesmo
+  // vencimento — e o dono via "1 conta criada" com metade da dívida, calado.
+  it('parcela recusada por vencimento repetido vira aviso', async () => {
+    gravarContasMock.mockResolvedValue({ criadas: 1, duplicadas: 1, erro: null })
+    estado.lido = {
+      status: 'documento',
+      documento: documento({
+        tipoDocumento: 'contrato',
+        pagamentos: [{ data: '2026-08-28', valor: 100 }],
+      }),
+    }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    if (r.status !== 'gravado') throw new Error('esperava gravado')
+    expect(r.avisoContas).toContain('mesma data')
+  })
+
+  it('contrato normal, tudo certo: nenhum aviso', async () => {
+    gravarContasMock.mockResolvedValue({ criadas: 1, duplicadas: 0, erro: null })
+    estado.lido = {
+      status: 'documento',
+      documento: documento({
+        tipoDocumento: 'contrato',
+        pagamentos: [{ data: '2026-08-28', valor: 1505 }],
+      }),
+    }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    if (r.status !== 'gravado') throw new Error('esperava gravado')
+    expect(r.avisoContas).toBeNull()
+  })
+
+  it('extrato avisa que não gerou conta a pagar', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'extrato' }) }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    if (r.status !== 'gravado') throw new Error('esperava gravado')
+    expect(r.avisoContas).toContain('extrato de revenda')
+    expect(r.contasCriadas).toBe(0)
+  })
+
+  // Achado Important da revisão, round 1: `itensParaGravar` já carrega
+  // `conta_como_compra` calculado ANTES de entrar no fallback item-a-item
+  // (`inserirItensUmAUm`) — o fallback só repassa o payload pronto, não
+  // reconstrói nada. Sem este teste, uma refatoração futura que montasse o
+  // payload DENTRO do fallback poderia esquecer o campo sem que nada
+  // acusasse — trava contra essa porta lateral, para contrato E extrato.
+  it('fallback item-a-item (23505 no lote) também grava conta_como_compra: true para contrato', async () => {
+    estado.lido = {
+      status: 'documento',
+      documento: documento({
+        tipoDocumento: 'contrato',
+        itens: [
+          item({ numeroDocumento: '57106', descricao: 'ADUBO NPK 04-14-08', valorTotal: 1505 }),
+          item({ numeroDocumento: '57107', descricao: 'CLORETO DE POTASSIO', valorTotal: 900 }),
+        ],
+      }),
+    }
+    // Lote inteiro falha (mesmo padrão dos testes do Achado 1, acima) —
+    // dispara o fallback. Nenhuma chave marcada como duplicada: os dois
+    // itens são gravados individualmente, e é o payload de CADA UM que
+    // queremos inspecionar.
+    estado.erroInsertItens = {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "idx_itens_nfe_dedupe_item"',
+    }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    expect(r.status).toBe('gravado')
+    expect(estado.itensInseridosIndividualmente).toHaveLength(2)
+    for (const inserido of estado.itensInseridosIndividualmente) {
+      expect(inserido.conta_como_compra).toBe(true)
+    }
+  })
+
+  // Mesma trava, lado extrato — a restrição dos R$ 2,77 milhões vale em
+  // TODO caminho de gravação, inclusive o fallback item-a-item.
+  it('fallback item-a-item (23505 no lote) mantém conta_como_compra: false para extrato', async () => {
+    estado.lido = {
+      status: 'documento',
+      documento: documento({
+        tipoDocumento: 'extrato',
+        itens: [
+          item({ numeroDocumento: '57106', descricao: 'ADUBO NPK 04-14-08', valorTotal: 1505 }),
+          item({ numeroDocumento: '57107', descricao: 'CLORETO DE POTASSIO', valorTotal: 900 }),
+        ],
+      }),
+    }
+    estado.erroInsertItens = {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "idx_itens_nfe_dedupe_item"',
+    }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    expect(r.status).toBe('gravado')
+    expect(estado.itensInseridosIndividualmente).toHaveLength(2)
+    for (const inserido of estado.itensInseridosIndividualmente) {
+      expect(inserido.conta_como_compra).toBe(false)
+    }
+  })
+
+  // Achado Important da revisão, round 1: `gravarContasDoContrato` promete
+  // "nunca estoura", mas esse contrato não tinha reforço nenhum aqui — uma
+  // exceção real caía no `catch` externo (o mesmo que desfaz documento sem
+  // itens), derrubando um documento que JÁ tinha itens gravados. A chamada
+  // ganhou seu próprio try/catch (ver gravarDocumentoPdf.ts) exatamente para
+  // isto não acontecer — este teste prova o comportamento correto.
+  it('gravarContasDoContrato lança exceção: documento continua gravado, vira aviso', async () => {
+    gravarContasMock.mockRejectedValue(new Error('timeout de rede'))
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    expect(r.status).toBe('gravado')
+    if (r.status !== 'gravado') return
+    expect(r.avisoContas).toContain('timeout de rede')
+    // A garantia mais enfatizada pelo brief da Task 6: falha na conta não
+    // pode derrubar (nem marcar erro em) um documento já gravado com itens.
+    expect(estado.documentosDeletados).toEqual([])
+    expect(estado.documentosMarcadosErro).toEqual([])
+  })
+
+  // Correção do fix cosmético (2026-08-23): item de CONTRATO entrava em
+  // itens_nfe sem `centro_custo`, então a tela Financeiro jogava os
+  // R$ 647.986,35 de adubo no balde "Outro" — enquanto a conta a pagar
+  // irmã (deContrato.ts) já nascia com `fertilizante_outro`. As duas telas
+  // falavam de dinheiro diferente sobre a MESMA compra. Item de EXTRATO
+  // continua sem centro_custo (nulo) de propósito: extrato mistura produtos
+  // variados e chutar uma categoria única para todos seria pior do que
+  // deixar o dono classificar.
+  it('item de contrato nasce com centro_custo igual ao da conta a pagar irmã (fertilizante_outro)', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+    await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+    expect(estado.itensInseridos[0].centro_custo).toBe('fertilizante_outro')
+  })
+
+  it('item de extrato continua sem centro_custo (nulo) — produtos variados, o dono classifica', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'extrato' }) }
+    await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+    expect(estado.itensInseridos[0].centro_custo).toBeNull()
   })
 })

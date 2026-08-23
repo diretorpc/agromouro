@@ -205,6 +205,36 @@ function textoDescricaoExibido(item: ItemFinanceiro): string {
   return item.origem === 'conta' ? separarFornecedorDaConta(item.descricao).resto : item.descricao
 }
 
+// Célula "Origem" para item vindo de itens_nfe (origem já filtrada para
+// 'nfe' antes de chegar aqui — cartão/conta/manual são tratados fora desta
+// função). A checagem de FORNECEDOR vem ANTES da de is_manual de propósito:
+// item de contrato/extrato em PDF não tem nota vinculada, então is_manual já
+// nasce true (`!row.notas_fiscais`) mesmo tendo fornecedor conhecido
+// (itens_nfe.fornecedor, migration 017). Se a ordem virar — checar is_manual
+// primeiro — o fornecedor some da tela de novo e cai em "Manual" genérico,
+// como aconteceu com o contrato Mosaic de R$ 647.986,35 (achado do Matheus
+// em conferência ao vivo, 23/08/2026). "Manual" fica só para quem realmente
+// não tem fornecedor nenhum.
+function OrigemNfeCell({ item }: { item: ItemFinanceiro }) {
+  if (item.is_manual && item.emitente_nome) {
+    return (
+      <div>
+        <p className="font-medium text-sm whitespace-normal break-words">{item.emitente_nome}</p>
+        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">PDF</Badge>
+      </div>
+    )
+  }
+  if (item.is_manual) {
+    return <span className="text-xs text-muted-foreground italic">Manual</span>
+  }
+  return (
+    <div>
+      <p className="font-medium text-sm whitespace-normal break-words">{item.emitente_nome}</p>
+      <p className="text-xs text-muted-foreground">NF {item.nota_numero}</p>
+    </div>
+  )
+}
+
 // Mesma função de web/lib/centro-custo.ts (categoriaLabel) — nome local
 // mantido porque os 9 lugares que chamam já esperam "tipoLabel".
 const tipoLabel = categoriaLabel
@@ -491,7 +521,7 @@ export default function FinanceiroPage() {
     const [nfeResult, lancResult] = await Promise.all([
       supabase
         .from('itens_nfe')
-        .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, centro_custo, insumo_id, conta_como_compra, data_manual, nota_fiscal_id, insumos(tipo), notas_fiscais(numero, emitente_nome, data_emissao)')
+        .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, centro_custo, insumo_id, conta_como_compra, data_manual, nota_fiscal_id, fornecedor, insumos(tipo), notas_fiscais(numero, emitente_nome, data_emissao)')
         .order('id', { ascending: false }),
       supabase
         .from('lancamentos_financeiros')
@@ -522,7 +552,11 @@ export default function FinanceiroPage() {
       centro_custo: row.centro_custo ?? row.insumos?.tipo ?? 'outro',
       insumo_id: row.insumo_id,
       nota_numero: row.notas_fiscais?.numero ?? null,
-      emitente_nome: row.notas_fiscais?.emitente_nome ?? '',
+      // Item de PDF (contrato/extrato) não tem nota vinculada, então
+      // `notas_fiscais.emitente_nome` vem vazio e a coluna Origem saía em
+      // branco — o dono via R$ 647.986,35 sem saber de quem era. A coluna
+      // `fornecedor` de itens_nfe (migration 017) é quem guarda esse nome.
+      emitente_nome: row.notas_fiscais?.emitente_nome ?? row.fornecedor ?? '',
       // Prioridade para a data da NF-e quando existir; lançamento manual
       // (sem nota vinculada) usa data_manual — a data escolhida pelo usuário
       // no formulário (migration 015). Sem este fallback o lançamento manual
@@ -1214,13 +1248,8 @@ export default function FinanceiroPage() {
                           </Badge>
                         ) : item.origem === 'manual' ? (
                           <span className="text-xs text-muted-foreground italic">Manual</span>
-                        ) : item.is_manual ? (
-                          <span className="text-xs text-muted-foreground italic">Manual</span>
                         ) : (
-                          <div>
-                            <p className="font-medium text-sm whitespace-normal break-words">{item.emitente_nome}</p>
-                            <p className="text-xs text-muted-foreground">NF {item.nota_numero}</p>
-                          </div>
+                          <OrigemNfeCell item={item} />
                         )}
                       </TableCell>
                       <TableCell className="font-medium text-sm whitespace-normal break-words">
@@ -1402,13 +1431,8 @@ export default function FinanceiroPage() {
                             </Badge>
                           ) : item.origem === 'manual' ? (
                             <span className="text-xs text-muted-foreground italic">Manual</span>
-                          ) : item.is_manual ? (
-                            <span className="text-xs text-muted-foreground italic">Manual</span>
                           ) : (
-                            <div>
-                              <p className="font-medium text-sm whitespace-normal break-words">{item.emitente_nome}</p>
-                              <p className="text-xs text-muted-foreground">NF {item.nota_numero}</p>
-                            </div>
+                            <OrigemNfeCell item={item} />
                           )}
                         </TableCell>
                         <TableCell className="font-medium text-sm whitespace-normal break-words">

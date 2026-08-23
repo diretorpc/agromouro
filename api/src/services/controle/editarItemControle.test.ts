@@ -77,18 +77,60 @@ describe('editarItemControle', () => {
     expect(chamadasUpdate[0].filtros).toEqual({ id: 'item-1', fazenda_id: FAZENDA_A })
   })
 
-  // TRAVA DE DINHEIRO — item de Controle nunca pode virar gasto duplicado no
-  // Financeiro (Controle é conferência; o gasto real vem só da NF-e). Mesmo
-  // que um bug de validação a montante deixasse `conta_como_compra: true`
-  // passar no corpo da requisição, o UPDATE precisa gravar `false` de
-  // qualquer forma — cinto e suspensório.
-  it('conta_como_compra: true no patch é IGNORADO — o UPDATE grava false de qualquer forma', async () => {
-    estadoBanco.itemSelect = { data: { id: 'item-1' }, error: null }
+  // TRAVA DE DINHEIRO — a edição manual NUNCA pode LIGAR o gasto. Mesmo que
+  // um bug de validação a montante deixasse `conta_como_compra: true` passar
+  // no corpo da requisição, o UPDATE precisa ignorar o corpo e regravar o
+  // valor que o item JÁ TINHA no banco — cinto e suspensório.
+  //
+  // ⚠️ MUDANÇA DE 23/08/2026 (Critical 1 da revisão final da branch
+  // `feature/contrato-adubo-contas-a-pagar`): até aqui o UPDATE cravava
+  // `false`, porque a premissa de 18/08 era "item de Controle NUNCA conta
+  // como gasto". Essa premissa morreu — contrato de fabricante (Mosaic)
+  // grava `conta_como_compra: true` e é a ÚNICA fonte daquele gasto. Com o
+  // `false` cravado, editar qualquer célula da linha do contrato na grade
+  // tirava R$ 647.986,35 do Financeiro em silêncio. O que a trava protege
+  // continua idêntico: o corpo da requisição nunca decide este campo.
+  it('conta_como_compra: true no patch é IGNORADO — o UPDATE regrava o valor ATUAL do banco (false)', async () => {
+    estadoBanco.itemSelect = { data: { id: 'item-1', conta_como_compra: false }, error: null }
     estadoBanco.itemUpdate = { data: { id: 'item-1', conta_como_compra: false }, error: null }
 
     await editarItemControle('item-1', FAZENDA_A, { descricao: 'x', conta_como_compra: true } as any)
 
     expect(chamadasUpdate).toHaveLength(1)
+    expect(chamadasUpdate[0].payload.conta_como_compra).toBe(false)
+  })
+
+  // A TRAVA DOS R$ 2,77 MILHÕES, lado edição. Extrato de revenda (Syagri,
+  // Solos, Protec) nasce `false` e precisa CONTINUAR `false` em todo
+  // caminho — as NF-e dessas compras chegam pelo Make e somam sozinhas.
+  it('item de EXTRATO editado continua conta_como_compra: false', async () => {
+    estadoBanco.itemSelect = { data: { id: 'item-1', documento_controle_id: 'doc-1', conta_como_compra: false }, error: null }
+    estadoBanco.itemUpdate = { data: { id: 'item-1' }, error: null }
+
+    await editarItemControle('item-1', FAZENDA_A, { valor_total: 1600 })
+
+    expect(chamadasUpdate[0].payload.conta_como_compra).toBe(false)
+  })
+
+  // Critical 1: editar a descrição (ou qualquer outra célula) da linha do
+  // contrato Mosaic não pode apagar o gasto de R$ 647.986,35 do Financeiro.
+  it('item de CONTRATO editado continua conta_como_compra: true — não perde o gasto', async () => {
+    estadoBanco.itemSelect = { data: { id: 'item-1', documento_controle_id: 'doc-1', conta_como_compra: true }, error: null }
+    estadoBanco.itemUpdate = { data: { id: 'item-1' }, error: null }
+
+    await editarItemControle('item-1', FAZENDA_A, { descricao: 'MS15F 09 23 18 S15' })
+
+    expect(chamadasUpdate[0].payload.conta_como_compra).toBe(true)
+  })
+
+  // Linha lida sem o campo (banco antigo, select mudado por engano) não pode
+  // virar `true` por acidente: só o `true` EXATO preserva o gasto ligado.
+  it('conta_como_compra ausente na linha lida cai em false — nunca liga o gasto por omissão', async () => {
+    estadoBanco.itemSelect = { data: { id: 'item-1' }, error: null }
+    estadoBanco.itemUpdate = { data: { id: 'item-1' }, error: null }
+
+    await editarItemControle('item-1', FAZENDA_A, { descricao: 'x' })
+
     expect(chamadasUpdate[0].payload.conta_como_compra).toBe(false)
   })
 

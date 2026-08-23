@@ -3,6 +3,8 @@ import type Anthropic from '@anthropic-ai/sdk'
 import { supabase } from '../supabase'
 import { lerDocumentoPdf, type DocumentoLido, type ItemDocumentoLido } from './documentoPdf'
 import { normalizarFornecedor } from './normalizarFornecedor'
+import { gravarContasDoContrato } from '../contas/gravarContasDoContrato'
+import { CATEGORIA_PADRAO } from '../contas/deContrato'
 
 // Grava no banco o que `documentoPdf.ts` já leu — mesmo espírito de
 // gravarBoletoPdf.ts, mas com uma diferença de desenho: a LEITURA acontece
@@ -29,6 +31,20 @@ export type ResultadoGravarDocumento =
       // Separado de `itensDescartados` (que vem da LEITURA — linha ilegível)
       // porque o motivo é outro: aqui a linha foi lida certo, só já existia.
       itensDuplicados: number
+      // Quantas contas a pagar nasceram deste documento. Sempre 0 para
+      // extrato (o boleto dele chega por e-mail, ver deContrato.ts).
+      contasCriadas: number
+      // Texto pronto para mostrar na tela quando o documento entrou mas a
+      // conta a pagar não — sem isto, um contrato importado "com sucesso"
+      // deixaria um vencimento invisível. null quando não há o que avisar.
+      avisoContas: string | null
+      // Como o SERVIDOR classificou o PDF. A decisão de negócio continua
+      // 100% aqui — este campo existe só para a tela saber QUE TIPO de aviso
+      // ela tem em mãos (Important 5 da revisão final, 23/08/2026): o aviso
+      // "isto é um extrato" é informação útil na aba Contas a Pagar e RUÍDO
+      // na aba Controle, onde importar extrato é o caminho normal. Sem esta
+      // distinção, a única saída seria a tela adivinhar pelo texto do aviso.
+      tipoDocumento: 'extrato' | 'contrato'
     }
   // Repassados de `lerDocumentoPdf` sem tocar em banco nem Storage — mesmos
   // três motivos de recusa da leitura (ver documentoPdf.ts).
@@ -107,6 +123,53 @@ function numeroDocumentoDoItem(item: ItemDocumentoLido, documento: DocumentoLido
 // `item_de_documento_completo` da migration 017 ainda precisa de uma data.
 function dataManualDoItem(item: ItemDocumentoLido, documento: DocumentoLido): string | null {
   return item.data ?? documento.dataDocumento
+}
+
+// ⚠️ Important 4 da revisão final (23/08/2026). Classificar um PDF como
+// 'contrato' é a decisão que LIGA dinheiro: `conta_como_compra: true` faz
+// aqueles itens somarem no Financeiro, e o mesmo documento vira dívida em
+// Contas a Pagar. Quem toma essa decisão é uma IA lendo um PDF. Decisão de
+// dinheiro tomada por IA não pode acontecer em silêncio — se ela errar num
+// extrato de revenda, o Financeiro passa a somar duas vezes a mesma compra
+// (a NF-e dessa revenda chega depois pelo Make) e nada avisaria ninguém.
+//
+// Extrato NÃO gera alerta de propósito: é o caminho normal (3 dos 3 PDFs já
+// importados), e alertar no caminho normal treina o dono a ignorar o canal.
+//
+// Best-effort: nunca estoura e nunca muda o resultado da importação. O
+// documento e os itens já estão gravados quando isto roda; falhar a gravar
+// um aviso não pode derrubar dinheiro já persistido. Se a tabela recusar,
+// sobra o `console.warn` estruturado — pior que o alerta, melhor que o
+// silêncio.
+async function avisarClassificacaoContrato(
+  documento: DocumentoLido,
+  documentoId: string,
+  fazendaId: string,
+  nomeArquivo: string,
+): Promise<void> {
+  const mensagem =
+    `O PDF "${nomeArquivo}" foi lido como CONTRATO de compra (fornecedor: ${documento.fornecedor ?? 'não identificado'}, ` +
+    `documento: ${documento.numeroDocumento ?? 'sem número'}). Por isso ele CONTA como gasto no Financeiro e virou conta a pagar. ` +
+    'Se na verdade for um extrato de revenda, apague o documento na aba Controle — senão a compra será contada duas vezes ' +
+    'quando a nota fiscal dela chegar.'
+
+  try {
+    const { error } = await supabase.from('alertas').insert({
+      tipo:             'documento_classificado_contrato',
+      titulo:           `Documento lido como contrato: ${documento.fornecedor ?? nomeArquivo}`,
+      mensagem,
+      nivel:            'aviso',
+      lido:             false,
+      enviado_whatsapp: false,
+      fazenda_id:       fazendaId,
+    })
+    if (error) {
+      console.warn(`[GravarDocumentoPdf] classificacao=contrato documento=${documentoId} alerta_falhou="${error.message}" — ${mensagem}`)
+    }
+  } catch (err) {
+    const motivo = err instanceof Error ? err.message : String(err)
+    console.warn(`[GravarDocumentoPdf] classificacao=contrato documento=${documentoId} alerta_falhou="${motivo}" — ${mensagem}`)
+  }
 }
 
 // Marca o documento como 'erro' em vez de apagar a linha — usado quando pelo
@@ -331,6 +394,7 @@ export async function gravarDocumentoDoPdf(
       numero_documento: documento.numeroDocumento,
       data_documento:   documento.dataDocumento,
       valor_total:      documento.valorTotalDocumento,
+      tipo:             documento.tipoDocumento,
       status:           'processado',
       nome_arquivo:     nomeArquivo,
       arquivo_path:     arquivoPath,
@@ -414,20 +478,23 @@ export async function gravarDocumentoDoPdf(
         numero_documento:        numeroDocumentoItem,
         ocorrencia_no_documento: ocorrenciaNoDocumento,
         documento_controle_id:   documentoId,
-        // Sempre false (decisão do Matheus, 17/08/2026 — Achado 2 da revisão
-        // do Apolo): o PDF lido aqui é extrato de "contas a receber" ou
-        // contrato — lista duplicatas/notas do MESMO fornecedor cuja NF-e o
-        // Make já derrubou por e-mail e o nfeProcessor já gravou em
-        // itens_nfe a partir do XML. Se este item também contasse como
-        // gasto, o Financeiro (web/app/(app)/financeiro/page.tsx, que lê
-        // itens_nfe inteira sem filtro) somaria a MESMA compra duas vezes.
-        // A aba Controle vira conferência/cruzamento — não fonte de gasto —
-        // e aceita, como trade-off consciente, perder o gasto de uma compra
-        // que nunca teve NF-e nenhuma no sistema. Cobre também o motivo
-        // original: nada no schema atual distingue estorno/devolução dentro
-        // de um documento importado por PDF (diferente da NF-e, que tem
-        // CFOP para isso) — mais um motivo para nunca gravar `true` aqui.
-        conta_como_compra:       false,
+        // O TIPO decide, não a aba. Extrato de revenda (Syagri, Solos,
+        // Protec) tem NF-e chegando pelo Make e some do total de propósito —
+        // contar aqui dobraria o dinheiro. Contrato de fabricante (Mosaic)
+        // nunca gera NF-e no sistema: é a única fonte daquele gasto, e se não
+        // contar aqui não conta em lugar nenhum. Medido em 23/08/2026: zero
+        // NF-e de fornecedor de adubo no banco.
+        conta_como_compra:       documento.tipoDocumento === 'contrato',
+        // Só CONTRATO nasce com centro de custo — mesma constante que
+        // deContrato.ts usa na conta a pagar irmã desta mesma compra
+        // (CATEGORIA_PADRAO), para as duas telas não discordarem sobre a
+        // categoria do mesmo dinheiro. É um balde de partida, não uma
+        // fórmula: a tela Financeiro já tem edição em massa de centro de
+        // custo para o dono trocar. EXTRATO continua null de propósito — ele
+        // mistura produtos variados (herbicida, semente, adubo) numa lista
+        // só, e chutar "fertilizante" para todos seria pior que deixar o
+        // dono classificar (fix cosmético, 2026-08-23).
+        centro_custo:            documento.tipoDocumento === 'contrato' ? CATEGORIA_PADRAO : null,
         data_manual:             dataManual,
         fazenda_id:              fazendaId,
       }
@@ -495,18 +562,139 @@ export async function gravarDocumentoDoPdf(
       `${documento.itensDescartados} descartado(s) na leitura.`,
     )
 
+    // Depois dos itens, nunca antes: uma conta a pagar apontando para um
+    // documento que não conseguiu gravar item nenhum seria uma dívida sem
+    // compra. Chega aqui só quando o documento e os itens já estão de pé.
+    let contasCriadas = 0
+    let avisoContas: string | null = null
+
+    if (documento.tipoDocumento === 'contrato') {
+      // ANTES de criar as contas: o alerta é sobre a CLASSIFICAÇÃO (que já
+      // aconteceu e já ligou o gasto nos itens), não sobre o resultado da
+      // conta a pagar. Se a conta falhar, a classificação continua tendo
+      // ligado dinheiro — e é isso que o dono precisa poder conferir.
+      await avisarClassificacaoContrato(documento, documentoId, fazendaId, nomeArquivo)
+
+      // `gravarContasDoContrato` documenta "nunca estoura" (todo erro vira
+      // texto em `contas.erro`), mas esse contrato não é reforçado por
+      // try/catch dentro dela — e diferente do catch EXTERNO deste bloco
+      // (que hoje já roda depois de documento+itens gravados, ver comentário
+      // dele), um catch aqui devolve `status: 'gravado'` com aviso, que é o
+      // comportamento certo: uma exceção nesta chamada não pode transformar
+      // um documento (com itens) já persistido em `status: 'erro'` — essa é
+      // a garantia mais enfatizada pelo brief da Task 6 (achado Important da
+      // revisão, round 1).
+      try {
+        const contas = await gravarContasDoContrato(documento, documentoId, fazendaId)
+        contasCriadas = contas.criadas
+
+        // Vários avisos podem valer ao mesmo tempo (uma parcela ilegível E
+        // duas com a mesma data, por exemplo). Ficar com um só esconderia o
+        // outro — juntam-se numa frase só, na ordem do mais grave para o
+        // menos.
+        const avisos: string[] = []
+
+        if (contas.erro) {
+          // Minor da revisão final: o texto antigo dizia "a conta a pagar
+          // não pôde ser criada" mesmo quando ALGUMAS parcelas tinham sido
+          // criadas — o dono lia "não existe conta nenhuma" e ia cadastrar à
+          // mão, dobrando o dinheiro. Agora reflete o parcial.
+          avisos.push(contas.criadas > 0
+            ? `${contas.criadas === 1 ? '1 conta a pagar foi criada' : `${contas.criadas} contas a pagar foram criadas`}, ` +
+              `mas pelo menos uma parcela falhou (${contas.erro}). Confira a lista em Contas a Pagar.`
+            : `A conta a pagar não pôde ser criada (${contas.erro}). Tente importar o PDF de novo.`)
+        }
+
+        if (documento.pagamentos.length === 0 && contas.criadas > 0) {
+          // Critical 2: a conta É criada, sem vencimento, com vínculo ao
+          // documento. O aviso pede a DATA — nunca uma conta nova.
+          avisos.push(
+            'Não achei a data de pagamento no contrato, então a conta foi criada sem vencimento. ' +
+            'Preencha a data em Contas a Pagar.',
+          )
+        }
+
+        if (documento.pagamentosDescartados > 0) {
+          // Important 1: a parcela perdida é o motivo de a conta ter nascido
+          // sem valor. Sem esta frase, o dono vê uma conta em branco e não
+          // sabe por quê.
+          avisos.push(
+            (documento.pagamentosDescartados === 1
+              ? '1 data de pagamento não pôde ser lida no contrato'
+              : `${documento.pagamentosDescartados} datas de pagamento não puderam ser lidas no contrato`) +
+            ' — as contas criadas podem estar incompletas e o valor delas ficou em aberto. Confira o PDF.',
+          )
+        }
+
+        if (contas.duplicadas > 0) {
+          // Important 2. O documento é NECESSARIAMENTE novo aqui: uma
+          // reimportação volta antes, como 'duplicada-hash'/'duplicada-
+          // conteudo', sem nunca chegar a esta linha. Logo, "duplicada"
+          // nesta altura só pode ser duas parcelas colidindo ENTRE SI no
+          // índice `contas_a_pagar_contrato_unico` (mesmo vencimento) — e
+          // antes disso o dono via "1 conta criada" com metade da dívida,
+          // sem nada explicando.
+          avisos.push(
+            (contas.duplicadas === 1
+              ? '1 parcela tinha a mesma data de vencimento de outra'
+              : `${contas.duplicadas} parcelas tinham a mesma data de vencimento de outras`) +
+            ' e não virou conta separada. Confira em Contas a Pagar se o valor total do contrato está lá.',
+          )
+        }
+
+        if (avisos.length === 0 && contas.criadas === 0 && contas.duplicadas === 0) {
+          // Sobra: nenhuma conta, nenhum erro (hoje só alcançável com
+          // contrato sem data de pagamento E sem data de documento — que a
+          // gravação já recusa antes, com 'sem-identidade'). Diz a verdade
+          // sem mandar cadastrar à mão, que é o caminho que dobra dinheiro.
+          avisos.push(
+            'Nenhuma conta a pagar foi criada. NÃO cadastre uma conta avulsa por causa disso: ' +
+            'o gasto deste contrato já está no Financeiro, e uma conta avulsa o lançaria uma segunda vez.',
+          )
+        }
+
+        avisoContas = avisos.length > 0 ? `O contrato foi importado. ${avisos.join(' ')}` : null
+      } catch (err) {
+        const mensagem = err instanceof Error ? err.message : String(err)
+        console.error('[GravarDocumentoPdf] Exceção ao criar contas do contrato — documento e itens seguem gravados:', mensagem)
+        avisoContas =
+          `O contrato foi importado. A conta a pagar não pôde ser criada (${mensagem}). ` +
+          'Tente importar o PDF de novo — não cadastre uma conta avulsa, ela lançaria este gasto uma segunda vez.'
+      }
+    }
+
+    if (documento.tipoDocumento !== 'contrato') {
+      // Extrato não gera conta a pagar de propósito: o boleto dele chega por
+      // e-mail pelo Make (nfeEmail.ts). Sem esta linha, quem subiu o arquivo
+      // pela aba de Contas a Pagar ficaria esperando uma conta que nunca vem.
+      avisoContas = 'Isto é um extrato de revenda, não um contrato — os itens entraram na aba Controle e nenhuma conta a pagar foi criada (o boleto do extrato chega por e-mail).'
+    }
+
     return {
       status:           'gravado',
       documentoId,
       itensGravados,
       itensDescartados:  documento.itensDescartados,
       itensDuplicados,
+      contasCriadas,
+      avisoContas,
+      tipoDocumento:    documento.tipoDocumento,
     }
   } catch (err) {
     // Cobre o `throw` de data não-resolvível acima — acontece dentro do
     // `.map()` que MONTA `itensParaGravar`, sempre ANTES de qualquer INSERT
     // ser tentado. Zero itens deste documento podem existir em itens_nfe
     // neste ponto — o caminho "limpo" é sempre seguro aqui.
+    //
+    // ATENÇÃO: este `try` também envolve a chamada a `gravarContasDoContrato`
+    // (Task 6), que roda DEPOIS de documento+itens já persistidos — se a
+    // exceção dela caísse aqui, `desfazerDocumentoSemItens` seria o caminho
+    // ERRADO (a FK RESTRICT recusaria o DELETE, mas o retorno viraria
+    // `status: 'erro'` para um documento que na verdade foi gravado com
+    // sucesso). Por isso essa chamada tem seu PRÓPRIO try/catch, que
+    // converte qualquer exceção em `avisoContas` sem propagar — o invariante
+    // acima ("zero itens neste ponto") continua valendo porque nada depois
+    // do INSERT de itens pode chegar até aqui.
     const mensagem = err instanceof Error ? err.message : String(err)
     console.error('[GravarDocumentoPdf] Falha ao montar itens — desfazendo documento:', mensagem)
     await desfazerDocumentoSemItens(documentoId, arquivoPath)

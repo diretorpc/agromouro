@@ -179,7 +179,11 @@ export interface FiltrosControle {
 // como erro HTTP lançado (422/503/500), tratado no catch — api.ts já lança Error com
 // `.message` pronto pra mostrar.
 export type ResultadoGravarDocumento =
-  | { status: 'gravado'; documentoId: string; itensGravados: number; itensDescartados: number; itensDuplicados: number }
+  // `tipoDocumento` é a classificação FEITA NO SERVIDOR — a tela nunca decide
+  // nada por ele, só escolhe se exibe o aviso de extrato (ver
+  // `mostrarAvisoDeExtrato` em dialogo-importar.tsx, Important 5 da revisão
+  // final de 23/08/2026).
+  | { status: 'gravado'; documentoId: string; itensGravados: number; itensDescartados: number; itensDuplicados: number; contasCriadas: number; avisoContas: string | null; tipoDocumento: 'extrato' | 'contrato' }
   | { status: 'duplicada-hash' }
   | { status: 'duplicada-conteudo' }
 
