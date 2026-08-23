@@ -604,7 +604,7 @@ describe('contasDoContrato', () => {
         { data: '2026-09-28', valor: null },
       ],
     }), 'doc-1')
-    expect(contas.map(c => c.valor)).toEqual([323993.18, 323993.17])
+    expect(contas.map(c => c.valor)).toEqual([323993.17, 323993.18])
     expect(contas.reduce((s, c) => s + (c.valor ?? 0), 0)).toBe(647986.35)
     expect(contas.every(c => c.valor_estimado === true)).toBe(true)
   })
@@ -618,7 +618,7 @@ describe('contasDoContrato', () => {
         { data: '2026-10-28', valor: null },
       ],
     }), 'doc-1')
-    expect(contas.map(c => c.valor)).toEqual([33.34, 33.34, 33.32])
+    expect(contas.map(c => c.valor)).toEqual([33.33, 33.33, 33.34])
     expect(contas.reduce((s, c) => s + (c.valor ?? 0), 0)).toBe(100)
   })
 
@@ -654,6 +654,13 @@ Esperado: FALHA — `Cannot find module './deContrato'`.
 - [ ] **Step 3: Escrever a implementação**
 
 Criar `api/src/services/contas/deContrato.ts`:
+
+> ⚠️ **Corrigido no pre-flight de 23/08:** a versão anterior deste plano esperava
+> `[323993.18, 323993.17]` e `[33.34, 33.34, 33.32]` — expectativas de um algoritmo que
+> arredonda para cima e joga a sobra na PRIMEIRA parcela. A implementação abaixo joga na
+> ÚLTIMA (`base = floor`, última recebe o resto), como o comentário dela diz. Os dois
+> valores certos são `[323993.17, 323993.18]` e `[33.33, 33.33, 33.34]`. Teste e código
+> tinham de concordar antes de alguém executar.
 
 ```ts
 import { competenciaDoMes } from './datas'
@@ -1124,6 +1131,31 @@ Importar no topo do arquivo:
 import { gravarContasDoContrato } from '../contas/gravarContasDoContrato'
 ```
 
+- [ ] **Step 5b: Avisar quando o documento é extrato (movido da Task 9 no pre-flight)**
+
+No mesmo bloco do Step 5, acrescentar o caso do extrato — quem importou pela aba de Contas a Pagar esperando um vencimento precisa saber por que ele não nasceu:
+
+```ts
+    if (documento.tipoDocumento !== 'contrato') {
+      // Extrato não gera conta a pagar de propósito: o boleto dele chega por
+      // e-mail pelo Make (nfeEmail.ts). Sem esta linha, quem subiu o arquivo
+      // pela aba de Contas a Pagar ficaria esperando uma conta que nunca vem.
+      avisoContas = 'Isto é um extrato de revenda, não um contrato — os itens entraram na aba Controle e nenhuma conta a pagar foi criada (o boleto do extrato chega por e-mail).'
+    }
+```
+
+Teste correspondente:
+
+```ts
+  it('extrato avisa que não gerou conta a pagar', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'extrato' }) }
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+    if (r.status !== 'gravado') throw new Error('esperava gravado')
+    expect(r.avisoContas).toContain('extrato de revenda')
+    expect(r.contasCriadas).toBe(0)
+  })
+```
+
 - [ ] **Step 6: Rodar a suíte inteira**
 
 ```bash
@@ -1378,7 +1410,11 @@ Ao lado dos botões "Nova conta avulsa" / "Nova conta fixa" (~linha 479):
           <DialogoImportar onImportar={importarContrato} titulo="Importar contrato (PDF)" />
 ```
 
-- [ ] **Step 4: Extrato solto na aba errada — avisar, não recusar**
+- [ ] **Step 4: (MOVIDO PARA A TASK 6 no pre-flight de 23/08 — dois donos para o mesmo arquivo)**
+
+O aviso de "extrato na aba errada" mora em `gravarDocumentoPdf.ts`, que é arquivo da Task 6. Deixá-lo aqui daria dois donos ao mesmo arquivo em duas tasks. **A Task 6 já entrega este comportamento** — aqui não há nada a fazer. Texto original preservado abaixo para referência:
+
+<details><summary>Texto original do Step 4</summary>
 
 A spec original dizia *"recusa com: Isto é um extrato de revenda"*. **Mudado de propósito** (23/08, ver a mesma correção na spec): quando o arquivo chega na aba de Contas a Pagar, a IA **já leu** o PDF — a chamada já foi paga e o documento já é válido. Recusar depois disso joga fora trabalho bom e obriga o dono a subir o mesmo arquivo de novo noutra aba. Pior: seria uma regra de negócio decidida pela ABA, e é exatamente assim que dois caminhos para o mesmo arquivo passam a divergir.
 
@@ -1405,6 +1441,8 @@ Teste correspondente, no arquivo da Task 6:
     expect(r.contasCriadas).toBe(0)
   })
 ```
+
+</details>
 
 - [ ] **Step 5: Conferir no navegador**
 
