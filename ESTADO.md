@@ -583,20 +583,27 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
-## 🟡 Contrato de adubo → conta a pagar + gasto no Financeiro — CODADO E REVISADO, falta migration + conferencia ao vivo — 23/08/2026
+## 🟢 Contrato de adubo → conta a pagar + gasto no Financeiro — PROVADO AO VIVO, falta so' o PR — 23/08/2026
 
 Branch `feature/contrato-adubo-contas-a-pagar`, 25 commits. Desenho em
 `docs/superpowers/specs/2026-08-23-contrato-adubo-contas-a-pagar-design.md`, plano em
 `docs/superpowers/plans/2026-08-23-contrato-adubo-contas-a-pagar.md`.
 
-⛔ **DOIS BLOQUEIOS ANTES DO MERGE, nesta ordem:**
-1. **Aplicar `supabase/migrations/012_contrato_em_contas_a_pagar.sql`** no SQL Editor do
-   Supabase (a verificação do rodapé precisa devolver 3 linhas). Sem ela, subir o código
-   quebra **toda** importação de PDF, inclusive a de extrato que funciona hoje — e a
-   exclusão de item pela grade passa a recusar tudo (falha fechada).
-2. **Conferir ao vivo com o contrato 280451 real** — nenhuma linha desta branch foi
-   exercida ponta a ponta ainda. Medir, não supor:
-   `ls ~/Downloads/*JACOB*` e importar pela aba Contas a Pagar.
+✅ **Migration 012 aplicada em produção em 23/08** (3 linhas confirmadas pelo Matheus).
+✅ **Conferido ao vivo com o contrato 280451 real**, ponta a ponta — o contrato ESTÁ no
+sistema (documento `ff3de1fa`, conta a pagar de R$ 647.986,35 vencendo 28/08/2026).
+
+⛔ **Falta só abrir o PR.** Os commits estão locais na branch, nada foi enviado ao GitHub.
+
+⚠️ **O bug mais caro da feature só apareceu na conferência ao vivo, com a suíte 100%
+verde.** A API da Anthropic RECUSA a requisição inteira (HTTP 400) quando uma propriedade
+do schema combina `enum` com `type` em união (`['string','null']`). `POST
+/controle/documentos` devolvia 503 para QUALQUER PDF — contrato e extrato. Os 593 testes
+ficavam verdes porque **todos mockam `anthropic.messages.stream`**: nenhum manda o schema
+para a API de verdade. Corrigido em `b7d74f2`, com teste de invariante que percorre o
+SCHEMA atrás da mesma combinação. **Lição que vale além deste projeto: suíte que mocka o
+fornecedor externo não prova que o contrato com ele está certo. Conferência ao vivo não é
+formalidade — foi ela que pegou.**
 
 Contagem de teste NÃO se escreve aqui — mede-se: `cd api && npm test`
 
