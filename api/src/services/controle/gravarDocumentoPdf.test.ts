@@ -1131,4 +1131,24 @@ describe('gravarDocumentoDoPdf — contrato x extrato', () => {
     expect(estado.documentosDeletados).toEqual([])
     expect(estado.documentosMarcadosErro).toEqual([])
   })
+
+  // Correção do fix cosmético (2026-08-23): item de CONTRATO entrava em
+  // itens_nfe sem `centro_custo`, então a tela Financeiro jogava os
+  // R$ 647.986,35 de adubo no balde "Outro" — enquanto a conta a pagar
+  // irmã (deContrato.ts) já nascia com `fertilizante_outro`. As duas telas
+  // falavam de dinheiro diferente sobre a MESMA compra. Item de EXTRATO
+  // continua sem centro_custo (nulo) de propósito: extrato mistura produtos
+  // variados e chutar uma categoria única para todos seria pior do que
+  // deixar o dono classificar.
+  it('item de contrato nasce com centro_custo igual ao da conta a pagar irmã (fertilizante_outro)', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+    await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+    expect(estado.itensInseridos[0].centro_custo).toBe('fertilizante_outro')
+  })
+
+  it('item de extrato continua sem centro_custo (nulo) — produtos variados, o dono classifica', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'extrato' }) }
+    await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+    expect(estado.itensInseridos[0].centro_custo).toBeNull()
+  })
 })

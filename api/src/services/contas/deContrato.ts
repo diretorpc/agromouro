@@ -14,7 +14,12 @@ import type { DocumentoLido } from '../controle/documentoPdf'
 // Categoria inicial. NÃO é adivinhação de fórmula (o MS15F 09 23 18 tem N, P
 // e K juntos e não cabe em fertilizante_n/p/k) — é o balde honesto, e a tela
 // deixa trocar em massa. Ver CATEGORIAS_CONTAS_A_PAGAR em web/lib/centro-custo.ts.
-const CATEGORIA_PADRAO = 'fertilizante_outro'
+//
+// Exportada porque `gravarDocumentoPdf.ts` grava o ITEM (itens_nfe.centro_
+// custo) desta mesma compra — sem a mesma constante nos dois lugares, a
+// conta a pagar e o item do documento discordariam sobre a categoria da
+// MESMA compra (fix cosmético, 2026-08-23).
+export const CATEGORIA_PADRAO = 'fertilizante_outro'
 
 export type ContaDeContrato = {
   descricao:             string

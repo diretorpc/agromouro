@@ -4,6 +4,7 @@ import { supabase } from '../supabase'
 import { lerDocumentoPdf, type DocumentoLido, type ItemDocumentoLido } from './documentoPdf'
 import { normalizarFornecedor } from './normalizarFornecedor'
 import { gravarContasDoContrato } from '../contas/gravarContasDoContrato'
+import { CATEGORIA_PADRAO } from '../contas/deContrato'
 
 // Grava no banco o que `documentoPdf.ts` já leu — mesmo espírito de
 // gravarBoletoPdf.ts, mas com uma diferença de desenho: a LEITURA acontece
@@ -484,6 +485,16 @@ export async function gravarDocumentoDoPdf(
         // contar aqui não conta em lugar nenhum. Medido em 23/08/2026: zero
         // NF-e de fornecedor de adubo no banco.
         conta_como_compra:       documento.tipoDocumento === 'contrato',
+        // Só CONTRATO nasce com centro de custo — mesma constante que
+        // deContrato.ts usa na conta a pagar irmã desta mesma compra
+        // (CATEGORIA_PADRAO), para as duas telas não discordarem sobre a
+        // categoria do mesmo dinheiro. É um balde de partida, não uma
+        // fórmula: a tela Financeiro já tem edição em massa de centro de
+        // custo para o dono trocar. EXTRATO continua null de propósito — ele
+        // mistura produtos variados (herbicida, semente, adubo) numa lista
+        // só, e chutar "fertilizante" para todos seria pior que deixar o
+        // dono classificar (fix cosmético, 2026-08-23).
+        centro_custo:            documento.tipoDocumento === 'contrato' ? CATEGORIA_PADRAO : null,
         data_manual:             dataManual,
         fazenda_id:              fazendaId,
       }
