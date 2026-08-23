@@ -416,6 +416,85 @@ describe('validarDocumentoLido — pagamentos do contrato', () => {
     expect(r.documento.itens).toHaveLength(1)   // o documento NÃO foi derrubado
   })
 
+  // Important 1 da revisão final (23/08/2026): descartar em silêncio era o
+  // começo do bug caro. Quem monta a conta PRECISA saber que uma parcela se
+  // perdeu, senão a sobrevivente herda o total do contrato inteiro e vira
+  // uma dívida de R$ 647.986,35 marcada como valor CONFIRMADO.
+  it('pagamento descartado é CONTADO — a perda não pode ser silenciosa', () => {
+    const r = validarDocumentoLido(
+      contrato([{ data: '2126-08-28', valor: null }, { data: '2026-09-10', valor: null }]),
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toHaveLength(1)
+    expect(r.documento.pagamentosDescartados).toBe(1)
+  })
+
+  it('nenhum pagamento descartado: contador fica em 0', () => {
+    const r = validarDocumentoLido(contrato([{ data: '2026-08-28', valor: 100 }]), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentosDescartados).toBe(0)
+  })
+
+  // Important 2 da revisão final: sem deduplicar, a 2ª conta batia no índice
+  // único (fazenda_id, documento_controle_id, vencimento) da migration 012 e
+  // virava "duplicada" — o dono via "1 conta criada" com METADE da dívida e
+  // nada explicando. Mesma data = mesma parcela lida duas vezes.
+  it('duas datas de pagamento IGUAIS viram uma só parcela', () => {
+    const r = validarDocumentoLido(
+      contrato([{ data: '2026-08-28', valor: 323993.18 }, { data: '2026-08-28', valor: 323993.18 }]),
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([{ data: '2026-08-28', valor: 323993.18 }])
+  })
+
+  // Repetição não é perda: a parcela continua lá, só foi lida duas vezes.
+  // Contar como descartada faria a regra do valor (Important 1) travar sem
+  // motivo e a conta nasceria sem valor à toa.
+  it('data repetida NÃO conta como pagamento descartado', () => {
+    const r = validarDocumentoLido(
+      contrato([{ data: '2026-08-28', valor: 100 }, { data: '2026-08-28', valor: 100 }]),
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentosDescartados).toBe(0)
+  })
+
+  it('data repetida: a primeira sem valor adota o valor da repetida', () => {
+    const r = validarDocumentoLido(
+      contrato([{ data: '2026-08-28', valor: null }, { data: '2026-08-28', valor: 500 }]),
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([{ data: '2026-08-28', valor: 500 }])
+  })
+
+  // Minor da revisão final: MAX_PAGAMENTOS limitava os ACEITOS, não as
+  // iterações — uma resposta com 5.000 entradas era percorrida inteira. E o
+  // excedente cortado é perda de parcela como qualquer outra: entra no
+  // contador, senão a sobrevivente herdaria o total do contrato.
+  it('acima de MAX_PAGAMENTOS (24): corta a ENTRADA e conta o excedente como descartado', () => {
+    const muitos = Array.from({ length: 30 }, (_, i) => ({
+      data: `2026-09-${String((i % 28) + 1).padStart(2, '0')}`,
+      valor: 10,
+    }))
+    const r = validarDocumentoLido(contrato(muitos), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toHaveLength(24)
+    expect(r.documento.pagamentosDescartados).toBe(6)
+  })
+
+  it('extrato nunca tem pagamento descartado (nem pagamento)', () => {
+    const r = validarDocumentoLido(
+      { ...bruto(), tipoDocumento: 'extrato', pagamentos: [{ data: '2126-08-28', valor: 500 }] },
+      HOJE,
+    )
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.pagamentos).toEqual([])
+    expect(r.documento.pagamentosDescartados).toBe(0)
+  })
+
   it('valor de pagamento acima do teto do documento vira null, mantém a data', () => {
     const r = validarDocumentoLido(
       contrato([{ data: '2026-08-28', valor: 99_000_000 }]),

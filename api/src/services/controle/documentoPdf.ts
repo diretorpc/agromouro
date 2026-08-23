@@ -149,6 +149,12 @@ export type DocumentoLido = {
   // Datas de pagamento do contrato (vazio para extrato) — viram conta a pagar
   // em gravarContasDoContrato.ts.
   pagamentos:          PagamentoLido[]
+  // Quantas parcelas a IA listou e a validação recusou (data ilegível, ou
+  // excedente do teto). Sempre 0 para extrato. NÃO é só telemetria: com
+  // qualquer descarte, `deContrato.ts` fica PROIBIDO de derivar valor do
+  // total do documento — a parcela sobrevivente não pode herdar o dinheiro
+  // da que se perdeu (Important 1 da revisão final, 23/08/2026).
+  pagamentosDescartados: number
 }
 
 // Retorno de `validarDocumentoLido` — separado de `ResultadoLeituraDocumento`
@@ -403,31 +409,61 @@ function montarNumeroDocumento(codigoCliente: string | null, dataDocumento: stri
 // Exportada só para teste: é a única parte desta leitura que dá para provar
 // sem gastar uma chamada de IA, e é onde mora a decisão de aceitar ou
 // recusar cada linha.
+// O que a validação dos pagamentos devolve. `descartados` NÃO é enfeite de
+// log: é o sinal que impede o bug mais caro desta feature (Important 1 da
+// revisão final, 23/08/2026). Um contrato de duas parcelas de R$ 323 mil em
+// que uma data sai ilegível deixava UMA parcela de pé — e a regra "1
+// pagamento herda o total" de deContrato.ts transformava isso numa dívida de
+// R$ 647.986,35 marcada como valor CONFIRMADO. Sem este contador, quem monta
+// a conta não tem como saber que o "1 pagamento" na verdade era 2.
+export type PagamentosValidados = {
+  pagamentos:  PagamentoLido[]
+  descartados: number
+}
+
 // Exportada só para teste, mesmo motivo de `validarDocumentoLido`.
 export function validarPagamentos(
   bruto: unknown,
   tipoDocumento: 'extrato' | 'contrato',
   hojeISO: string,
-): PagamentoLido[] {
+): PagamentosValidados {
   // Extrato nunca tem pagamento: cada duplicata dele já vira ITEM, e o boleto
   // correspondente chega por e-mail pelo Make (nfeEmail.ts → gravarBoletoDoPdf).
   // Criar conta a pagar aqui duplicaria a mesma cobrança em dois lugares.
-  if (tipoDocumento !== 'contrato') return []
-  if (!Array.isArray(bruto)) return []
+  if (tipoDocumento !== 'contrato') return { pagamentos: [], descartados: 0 }
+  if (!Array.isArray(bruto)) return { pagamentos: [], descartados: 0 }
 
-  const pagamentos: PagamentoLido[] = []
+  let descartados = 0
 
-  for (const cru of bruto) {
-    if (pagamentos.length >= MAX_PAGAMENTOS) {
-      console.warn(`[DocumentoPDF] pagamentos acima de ${MAX_PAGAMENTOS} — resto ignorado.`)
-      break
-    }
+  // MAX_PAGAMENTOS corta a ENTRADA, não só os aceitos (minor da revisão
+  // final): antes o laço percorria a resposta inteira — 5.000 entradas
+  // alucinadas eram 5.000 iterações e 5.000 linhas de log, mesmo aceitando
+  // 24. E o excedente cortado conta como DESCARTADO de propósito: perder
+  // parcela por excesso é perder parcela igual, e a sobrevivente não pode
+  // herdar o total do contrato por causa disso.
+  const entrada = bruto.slice(0, MAX_PAGAMENTOS)
+  if (bruto.length > MAX_PAGAMENTOS) {
+    descartados += bruto.length - MAX_PAGAMENTOS
+    console.warn(`[DocumentoPDF] pagamentos acima de ${MAX_PAGAMENTOS} — ${bruto.length - MAX_PAGAMENTOS} descartado(s).`)
+  }
 
+  // Chaveado pela DATA, não uma lista: mesma data de pagamento = mesma
+  // parcela (Important 2). Sem isto, a IA lendo a mesma linha do Quadro
+  // Resumo duas vezes gerava duas contas com o mesmo vencimento — a segunda
+  // batia no índice único `contas_a_pagar_contrato_unico` (migration 012),
+  // era contada como "duplicada" e o dono via "1 conta criada" com metade
+  // da dívida, sem nada explicando. Deduplicar aqui, ANTES de virar conta,
+  // resolve o problema onde ele nasce (leitura repetida) em vez de deixar o
+  // banco arbitrar em silêncio.
+  const porData = new Map<string, PagamentoLido>()
+
+  for (const cru of entrada) {
     const p = cru as Record<string, unknown>
     const data = dataSanitizada(p?.data, hojeISO)
     // Sem data válida não há conta a pagar possível. Descarta o pagamento
     // (não o documento) e loga — o documento e o gasto continuam valendo.
     if (!data) {
+      descartados++
       console.warn(`[DocumentoPDF] pagamento sem data utilizável, descartado: ${JSON.stringify(p?.data)}`)
       continue
     }
@@ -442,10 +478,22 @@ export function validarPagamentos(
       ? arredondado
       : null
 
-    pagamentos.push({ data, valor })
+    const jaVisto = porData.get(data)
+    if (!jaVisto) {
+      porData.set(data, { data, valor })
+      continue
+    }
+
+    // Repetição NÃO é perda — a parcela continua de pé, só foi lida duas
+    // vezes. Por isso não entra em `descartados`: fazer a regra do valor
+    // travar por causa de uma leitura repetida deixaria a conta sem valor à
+    // toa. A única coisa aproveitada da repetição é um valor que a primeira
+    // leitura não trouxe.
+    console.warn(`[DocumentoPDF] pagamento com data repetida (${data}) — tratado como a MESMA parcela.`)
+    if (jaVisto.valor === null && valor !== null) jaVisto.valor = valor
   }
 
-  return pagamentos
+  return { pagamentos: [...porData.values()], descartados }
 }
 
 export function validarDocumentoLido(bruto: any, hojeISO: string): ResultadoValidacaoDocumento {
@@ -458,7 +506,7 @@ export function validarDocumentoLido(bruto: any, hojeISO: string): ResultadoVali
   const codigoCliente   = texto(bruto.codigoCliente)
   const numeroDocumento = montarNumeroDocumento(codigoCliente, dataDocumento)
   const tipoDocumento   = tipoDeDocumento(bruto.tipoDocumento)
-  const pagamentos      = validarPagamentos(bruto.pagamentos, tipoDocumento, hojeISO)
+  const pagamentosLidos = validarPagamentos(bruto.pagamentos, tipoDocumento, hojeISO)
 
   const valorTotalDocumentoBruto = numero(bruto.valorTotalDocumento)
   // Arredonda ANTES de aplicar o teto, mesma ordem que os itens já seguem —
@@ -615,7 +663,8 @@ export function validarDocumentoLido(bruto: any, hojeISO: string): ResultadoVali
         : null,
       itens,
       itensDescartados,
-      pagamentos,
+      pagamentos:            pagamentosLidos.pagamentos,
+      pagamentosDescartados: pagamentosLidos.descartados,
     },
   }
 }

@@ -225,6 +225,7 @@ function documento(over: Partial<DocumentoLido> = {}): DocumentoLido {
     itens: [item()],
     itensDescartados: 0,
     pagamentos: [],
+    pagamentosDescartados: 0,
     ...over,
   }
 }

@@ -23,6 +23,7 @@ function contrato(over: Partial<DocumentoLido> = {}): DocumentoLido {
       data: '2026-07-03',
     }],
     itensDescartados: 0,
+    pagamentosDescartados: 0,
     ...over,
   }
 }
