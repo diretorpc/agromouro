@@ -593,7 +593,17 @@ Branch `feature/contrato-adubo-contas-a-pagar`, 25 commits. Desenho em
 ✅ **Conferido ao vivo com o contrato 280451 real**, ponta a ponta — o contrato ESTÁ no
 sistema (documento `ff3de1fa`, conta a pagar de R$ 647.986,35 vencendo 28/08/2026).
 
-⛔ **Falta só abrir o PR.** Os commits estão locais na branch, nada foi enviado ao GitHub.
+⛔ **Falta só abrir o PR** (o `git push` foi barrado pelo classificador de permissões em
+23/08; os 31 commits estão locais e intactos). O contrato 280451 já está no sistema de
+verdade — a conferência ao vivo rodou contra a API local com o banco de produção.
+
+**Dois defeitos de TELA achados só na conferência visual** — a conferência por banco não
+pegaria nenhum dos dois: (1) a coluna Origem do Financeiro mostrava "Manual" em vez do
+fornecedor, porque a cadeia de ternários checava `is_manual` antes do fornecedor e a
+correção que preenchia o campo virou **código morto** — um quarto do pedido original não
+estava entregue; (2) a categoria aparecia crua (`fertilizante_outro`) na tela de Contas,
+com `categoriaLabel()` já existindo e não sendo usado.
+**Lição: revisar a consulta e o fallback não prova que a célula DESENHA o dado.**
 
 ⚠️ **O bug mais caro da feature só apareceu na conferência ao vivo, com a suíte 100%
 verde.** A API da Anthropic RECUSA a requisição inteira (HTTP 400) quando uma propriedade
