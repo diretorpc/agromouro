@@ -504,13 +504,28 @@ export async function gravarDocumentoDoPdf(
     let avisoContas: string | null = null
 
     if (documento.tipoDocumento === 'contrato') {
-      const contas = await gravarContasDoContrato(documento, documentoId, fazendaId)
-      contasCriadas = contas.criadas
+      // `gravarContasDoContrato` documenta "nunca estoura" (todo erro vira
+      // texto em `contas.erro`), mas esse contrato não é reforçado por
+      // try/catch dentro dela — e diferente do catch EXTERNO deste bloco
+      // (que hoje já roda depois de documento+itens gravados, ver comentário
+      // dele), um catch aqui devolve `status: 'gravado'` com aviso, que é o
+      // comportamento certo: uma exceção nesta chamada não pode transformar
+      // um documento (com itens) já persistido em `status: 'erro'` — essa é
+      // a garantia mais enfatizada pelo brief da Task 6 (achado Important da
+      // revisão, round 1).
+      try {
+        const contas = await gravarContasDoContrato(documento, documentoId, fazendaId)
+        contasCriadas = contas.criadas
 
-      if (contas.erro) {
-        avisoContas = `O contrato foi importado, mas a conta a pagar não pôde ser criada (${contas.erro}). Cadastre o vencimento à mão em Contas a Pagar.`
-      } else if (contas.criadas === 0 && contas.duplicadas === 0) {
-        avisoContas = 'O contrato foi importado, mas não encontrei a data de pagamento nele. Cadastre a conta à mão em Contas a Pagar.'
+        if (contas.erro) {
+          avisoContas = `O contrato foi importado, mas a conta a pagar não pôde ser criada (${contas.erro}). Cadastre o vencimento à mão em Contas a Pagar.`
+        } else if (contas.criadas === 0 && contas.duplicadas === 0) {
+          avisoContas = 'O contrato foi importado, mas não encontrei a data de pagamento nele. Cadastre a conta à mão em Contas a Pagar.'
+        }
+      } catch (err) {
+        const mensagem = err instanceof Error ? err.message : String(err)
+        console.error('[GravarDocumentoPdf] Exceção ao criar contas do contrato — documento e itens seguem gravados:', mensagem)
+        avisoContas = `O contrato foi importado, mas a conta a pagar não pôde ser criada (${mensagem}). Cadastre o vencimento à mão em Contas a Pagar.`
       }
     }
 
@@ -535,6 +550,16 @@ export async function gravarDocumentoDoPdf(
     // `.map()` que MONTA `itensParaGravar`, sempre ANTES de qualquer INSERT
     // ser tentado. Zero itens deste documento podem existir em itens_nfe
     // neste ponto — o caminho "limpo" é sempre seguro aqui.
+    //
+    // ATENÇÃO: este `try` também envolve a chamada a `gravarContasDoContrato`
+    // (Task 6), que roda DEPOIS de documento+itens já persistidos — se a
+    // exceção dela caísse aqui, `desfazerDocumentoSemItens` seria o caminho
+    // ERRADO (a FK RESTRICT recusaria o DELETE, mas o retorno viraria
+    // `status: 'erro'` para um documento que na verdade foi gravado com
+    // sucesso). Por isso essa chamada tem seu PRÓPRIO try/catch, que
+    // converte qualquer exceção em `avisoContas` sem propagar — o invariante
+    // acima ("zero itens neste ponto") continua valendo porque nada depois
+    // do INSERT de itens pode chegar até aqui.
     const mensagem = err instanceof Error ? err.message : String(err)
     console.error('[GravarDocumentoPdf] Falha ao montar itens — desfazendo documento:', mensagem)
     await desfazerDocumentoSemItens(documentoId, arquivoPath)

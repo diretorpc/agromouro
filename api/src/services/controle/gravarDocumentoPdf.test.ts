@@ -906,4 +906,87 @@ describe('gravarDocumentoDoPdf — contrato x extrato', () => {
     expect(r.avisoContas).toContain('extrato de revenda')
     expect(r.contasCriadas).toBe(0)
   })
+
+  // Achado Important da revisão, round 1: `itensParaGravar` já carrega
+  // `conta_como_compra` calculado ANTES de entrar no fallback item-a-item
+  // (`inserirItensUmAUm`) — o fallback só repassa o payload pronto, não
+  // reconstrói nada. Sem este teste, uma refatoração futura que montasse o
+  // payload DENTRO do fallback poderia esquecer o campo sem que nada
+  // acusasse — trava contra essa porta lateral, para contrato E extrato.
+  it('fallback item-a-item (23505 no lote) também grava conta_como_compra: true para contrato', async () => {
+    estado.lido = {
+      status: 'documento',
+      documento: documento({
+        tipoDocumento: 'contrato',
+        itens: [
+          item({ numeroDocumento: '57106', descricao: 'ADUBO NPK 04-14-08', valorTotal: 1505 }),
+          item({ numeroDocumento: '57107', descricao: 'CLORETO DE POTASSIO', valorTotal: 900 }),
+        ],
+      }),
+    }
+    // Lote inteiro falha (mesmo padrão dos testes do Achado 1, acima) —
+    // dispara o fallback. Nenhuma chave marcada como duplicada: os dois
+    // itens são gravados individualmente, e é o payload de CADA UM que
+    // queremos inspecionar.
+    estado.erroInsertItens = {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "idx_itens_nfe_dedupe_item"',
+    }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    expect(r.status).toBe('gravado')
+    expect(estado.itensInseridosIndividualmente).toHaveLength(2)
+    for (const inserido of estado.itensInseridosIndividualmente) {
+      expect(inserido.conta_como_compra).toBe(true)
+    }
+  })
+
+  // Mesma trava, lado extrato — a restrição dos R$ 2,77 milhões vale em
+  // TODO caminho de gravação, inclusive o fallback item-a-item.
+  it('fallback item-a-item (23505 no lote) mantém conta_como_compra: false para extrato', async () => {
+    estado.lido = {
+      status: 'documento',
+      documento: documento({
+        tipoDocumento: 'extrato',
+        itens: [
+          item({ numeroDocumento: '57106', descricao: 'ADUBO NPK 04-14-08', valorTotal: 1505 }),
+          item({ numeroDocumento: '57107', descricao: 'CLORETO DE POTASSIO', valorTotal: 900 }),
+        ],
+      }),
+    }
+    estado.erroInsertItens = {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "idx_itens_nfe_dedupe_item"',
+    }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    expect(r.status).toBe('gravado')
+    expect(estado.itensInseridosIndividualmente).toHaveLength(2)
+    for (const inserido of estado.itensInseridosIndividualmente) {
+      expect(inserido.conta_como_compra).toBe(false)
+    }
+  })
+
+  // Achado Important da revisão, round 1: `gravarContasDoContrato` promete
+  // "nunca estoura", mas esse contrato não tinha reforço nenhum aqui — uma
+  // exceção real caía no `catch` externo (o mesmo que desfaz documento sem
+  // itens), derrubando um documento que JÁ tinha itens gravados. A chamada
+  // ganhou seu próprio try/catch (ver gravarDocumentoPdf.ts) exatamente para
+  // isto não acontecer — este teste prova o comportamento correto.
+  it('gravarContasDoContrato lança exceção: documento continua gravado, vira aviso', async () => {
+    gravarContasMock.mockRejectedValue(new Error('timeout de rede'))
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    expect(r.status).toBe('gravado')
+    if (r.status !== 'gravado') return
+    expect(r.avisoContas).toContain('timeout de rede')
+    // A garantia mais enfatizada pelo brief da Task 6: falha na conta não
+    // pode derrubar (nem marcar erro em) um documento já gravado com itens.
+    expect(estado.documentosDeletados).toEqual([])
+    expect(estado.documentosMarcadosErro).toEqual([])
+  })
 })
