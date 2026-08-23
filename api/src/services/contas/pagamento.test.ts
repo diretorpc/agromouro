@@ -10,6 +10,42 @@ describe('precisaCriarLancamento', () => {
   })
 })
 
+describe('precisaCriarLancamento — conta vinda de contrato', () => {
+  // O gasto do contrato JÁ entrou no Financeiro na data do contrato, via
+  // itens_nfe (conta_como_compra = true). Criar lançamento ao marcar a conta
+  // como paga somaria os mesmos R$ 647.986,35 uma segunda vez.
+  it('conta de contrato NÃO cria lançamento', () => {
+    expect(precisaCriarLancamento({
+      nota_fiscal_id: null,
+      documento_controle_id: 'doc-1',
+    })).toBe(false)
+  })
+
+  it('conta avulsa (os dois vínculos nulos) CONTINUA criando lançamento', () => {
+    expect(precisaCriarLancamento({
+      nota_fiscal_id: null,
+      documento_controle_id: null,
+    })).toBe(true)
+  })
+
+  it('conta de NF-e continua sem criar lançamento', () => {
+    expect(precisaCriarLancamento({
+      nota_fiscal_id: 'nota-1',
+      documento_controle_id: null,
+    })).toBe(false)
+  })
+
+  // Conta antiga, gravada antes da migration 012: o Supabase devolve
+  // undefined para coluna ausente no select, e `undefined === null` é false
+  // — sem o tratamento, TODA conta avulsa antiga pararia de lançar.
+  it('coluna ausente (conta antiga) se comporta como nula', () => {
+    expect(precisaCriarLancamento({
+      nota_fiscal_id: null,
+      documento_controle_id: undefined as unknown as null,
+    })).toBe(true)
+  })
+})
+
 describe('montarLancamento', () => {
   const conta = {
     descricao: 'Energia', fornecedor: 'Cemig',

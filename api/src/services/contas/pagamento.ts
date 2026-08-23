@@ -29,8 +29,20 @@
 // `linhaCobrancaMaiorQueGasto`), mas a lacuna em `precisaCriarLancamento`
 // continua aberta — é um problema conhecido, não uma garantia resolvida.
 
-export function precisaCriarLancamento(conta: { nota_fiscal_id: string | null }): boolean {
-  return conta.nota_fiscal_id === null
+// Segundo caso de "já tem lançamento, não crie outro" (23/08/2026): conta
+// nascida de CONTRATO de adubo. O gasto dela já entrou no Financeiro na data
+// do contrato, por itens_nfe com conta_como_compra = true (ver
+// gravarDocumentoPdf.ts) — marcar a conta como paga só carimba data e valor.
+// Sem esta condição, o sistema dobraria os R$ 647.986,35 do contrato Mosaic
+// sozinho, sem NF-e nenhuma envolvida.
+//
+// `!= null` (frouxo) e não `=== null`: o Supabase devolve `undefined` para
+// coluna ausente, e conta gravada antes da migration 012 não tem a coluna no
+// objeto. Com comparação estrita, toda conta avulsa antiga pararia de lançar.
+export function precisaCriarLancamento(
+  conta: { nota_fiscal_id: string | null; documento_controle_id?: string | null },
+): boolean {
+  return conta.nota_fiscal_id == null && conta.documento_controle_id == null
 }
 
 export type DadosLancamento = {
