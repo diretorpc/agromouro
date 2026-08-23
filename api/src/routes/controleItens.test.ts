@@ -346,6 +346,20 @@ describe('DELETE /controle/itens/:id (router raiz)', () => {
     expect(res.sent).toBe(true)
   })
 
+  // Important 3 (23/08/2026): dívida em aberto é RECUSA com motivo, não
+  // falha — 409, e a mensagem tem que dizer o que fazer, senão o dono só vê
+  // "não deu" e continua sem entender por quê.
+  it('item de documento com conta a pagar em aberto: 409 com as duas saídas na mensagem', async () => {
+    excluirItemControleMock.mockResolvedValue({ status: 'divida_em_aberto' })
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A, params: { id: 'item-1' } })
+    await handler(req, res, next)
+
+    expect(res.statusCode).toBe(409)
+    expect(res.body.error).toContain('Contas a Pagar')
+    expect(res.body.error).toContain('documento inteiro')
+    expect(next).not.toHaveBeenCalled()
+  })
+
   it('erro do service: 500 com detalhe', async () => {
     excluirItemControleMock.mockResolvedValue({ status: 'erro', mensagem: 'lock timeout' })
     const { req, res, next } = criarReqRes({ fazendaId: FAZENDA_A, params: { id: 'item-1' } })
