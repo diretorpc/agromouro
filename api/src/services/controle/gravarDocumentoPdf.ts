@@ -570,15 +570,78 @@ export async function gravarDocumentoDoPdf(
         const contas = await gravarContasDoContrato(documento, documentoId, fazendaId)
         contasCriadas = contas.criadas
 
+        // Vários avisos podem valer ao mesmo tempo (uma parcela ilegível E
+        // duas com a mesma data, por exemplo). Ficar com um só esconderia o
+        // outro — juntam-se numa frase só, na ordem do mais grave para o
+        // menos.
+        const avisos: string[] = []
+
         if (contas.erro) {
-          avisoContas = `O contrato foi importado, mas a conta a pagar não pôde ser criada (${contas.erro}). Cadastre o vencimento à mão em Contas a Pagar.`
-        } else if (contas.criadas === 0 && contas.duplicadas === 0) {
-          avisoContas = 'O contrato foi importado, mas não encontrei a data de pagamento nele. Cadastre a conta à mão em Contas a Pagar.'
+          // Minor da revisão final: o texto antigo dizia "a conta a pagar
+          // não pôde ser criada" mesmo quando ALGUMAS parcelas tinham sido
+          // criadas — o dono lia "não existe conta nenhuma" e ia cadastrar à
+          // mão, dobrando o dinheiro. Agora reflete o parcial.
+          avisos.push(contas.criadas > 0
+            ? `${contas.criadas === 1 ? '1 conta a pagar foi criada' : `${contas.criadas} contas a pagar foram criadas`}, ` +
+              `mas pelo menos uma parcela falhou (${contas.erro}). Confira a lista em Contas a Pagar.`
+            : `A conta a pagar não pôde ser criada (${contas.erro}). Tente importar o PDF de novo.`)
         }
+
+        if (documento.pagamentos.length === 0 && contas.criadas > 0) {
+          // Critical 2: a conta É criada, sem vencimento, com vínculo ao
+          // documento. O aviso pede a DATA — nunca uma conta nova.
+          avisos.push(
+            'Não achei a data de pagamento no contrato, então a conta foi criada sem vencimento. ' +
+            'Preencha a data em Contas a Pagar.',
+          )
+        }
+
+        if (documento.pagamentosDescartados > 0) {
+          // Important 1: a parcela perdida é o motivo de a conta ter nascido
+          // sem valor. Sem esta frase, o dono vê uma conta em branco e não
+          // sabe por quê.
+          avisos.push(
+            (documento.pagamentosDescartados === 1
+              ? '1 data de pagamento não pôde ser lida no contrato'
+              : `${documento.pagamentosDescartados} datas de pagamento não puderam ser lidas no contrato`) +
+            ' — as contas criadas podem estar incompletas e o valor delas ficou em aberto. Confira o PDF.',
+          )
+        }
+
+        if (contas.duplicadas > 0) {
+          // Important 2. O documento é NECESSARIAMENTE novo aqui: uma
+          // reimportação volta antes, como 'duplicada-hash'/'duplicada-
+          // conteudo', sem nunca chegar a esta linha. Logo, "duplicada"
+          // nesta altura só pode ser duas parcelas colidindo ENTRE SI no
+          // índice `contas_a_pagar_contrato_unico` (mesmo vencimento) — e
+          // antes disso o dono via "1 conta criada" com metade da dívida,
+          // sem nada explicando.
+          avisos.push(
+            (contas.duplicadas === 1
+              ? '1 parcela tinha a mesma data de vencimento de outra'
+              : `${contas.duplicadas} parcelas tinham a mesma data de vencimento de outras`) +
+            ' e não virou conta separada. Confira em Contas a Pagar se o valor total do contrato está lá.',
+          )
+        }
+
+        if (avisos.length === 0 && contas.criadas === 0 && contas.duplicadas === 0) {
+          // Sobra: nenhuma conta, nenhum erro (hoje só alcançável com
+          // contrato sem data de pagamento E sem data de documento — que a
+          // gravação já recusa antes, com 'sem-identidade'). Diz a verdade
+          // sem mandar cadastrar à mão, que é o caminho que dobra dinheiro.
+          avisos.push(
+            'Nenhuma conta a pagar foi criada. NÃO cadastre uma conta avulsa por causa disso: ' +
+            'o gasto deste contrato já está no Financeiro, e uma conta avulsa o lançaria uma segunda vez.',
+          )
+        }
+
+        avisoContas = avisos.length > 0 ? `O contrato foi importado. ${avisos.join(' ')}` : null
       } catch (err) {
         const mensagem = err instanceof Error ? err.message : String(err)
         console.error('[GravarDocumentoPdf] Exceção ao criar contas do contrato — documento e itens seguem gravados:', mensagem)
-        avisoContas = `O contrato foi importado, mas a conta a pagar não pôde ser criada (${mensagem}). Cadastre o vencimento à mão em Contas a Pagar.`
+        avisoContas =
+          `O contrato foi importado. A conta a pagar não pôde ser criada (${mensagem}). ` +
+          'Tente importar o PDF de novo — não cadastre uma conta avulsa, ela lançaria este gasto uma segunda vez.'
       }
     }
 

@@ -875,7 +875,10 @@ describe('gravarDocumentoDoPdf — contrato x extrato', () => {
 
   it('contrato devolve quantas contas foram criadas', async () => {
     gravarContasMock.mockResolvedValue({ criadas: 1, duplicadas: 0, erro: null })
-    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+    estado.lido = {
+      status: 'documento',
+      documento: documento({ tipoDocumento: 'contrato', pagamentos: [{ data: '2026-08-28', valor: 1505 }] }),
+    }
 
     const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
 
@@ -939,16 +942,96 @@ describe('gravarDocumentoDoPdf — contrato x extrato', () => {
     expect(r.status).toBe('gravado')
     if (r.status !== 'gravado') return
     expect(r.avisoContas).toContain('RLS negou')
+    // Critical 2: o aviso NUNCA pode mandar cadastrar a conta à mão — conta
+    // avulsa nasce sem `documento_controle_id` e pagá-la lançaria de novo um
+    // gasto que já está em itens_nfe.
+    expect(r.avisoContas).not.toMatch(/cadastre .*à mão/i)
   })
 
-  it('contrato sem pagamento avisa que a conta precisa ser cadastrada à mão', async () => {
-    gravarContasMock.mockResolvedValue({ criadas: 0, duplicadas: 0, erro: null })
+  // Minor da revisão final: o texto dizia "a conta a pagar não pôde ser
+  // criada" mesmo quando algumas parcelas TINHAM sido criadas — o dono lia
+  // "nenhuma conta existe" e ia cadastrar à mão, dobrando o dinheiro.
+  it('erro DEPOIS de algumas parcelas criadas: o aviso diz que foi parcial', async () => {
+    gravarContasMock.mockResolvedValue({ criadas: 2, duplicadas: 0, erro: 'connection reset' })
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    if (r.status !== 'gravado') throw new Error('esperava gravado')
+    expect(r.avisoContas).toContain('2 conta')
+    expect(r.avisoContas).toContain('connection reset')
+    expect(r.avisoContas).not.toMatch(/cadastre .*à mão/i)
+  })
+
+  // Critical 2: contrato sem data legível AGORA cria a conta sem vencimento
+  // (contasDoContrato), e o aviso pede a data em vez de mandar cadastrar
+  // uma conta paralela.
+  it('contrato sem pagamento avisa que a conta nasceu SEM vencimento', async () => {
+    gravarContasMock.mockResolvedValue({ criadas: 1, duplicadas: 0, erro: null })
     estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato', pagamentos: [] }) }
 
     const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
 
     if (r.status !== 'gravado') throw new Error('esperava gravado')
     expect(r.avisoContas).toContain('data de pagamento')
+    expect(r.avisoContas).toContain('sem vencimento')
+    expect(r.avisoContas).not.toMatch(/cadastre .*à mão/i)
+  })
+
+  // Important 1: a perda de uma parcela precisa CHEGAR ao dono. O valor da
+  // conta sobrevivente fica em aberto por causa disso — sem o aviso, ele vê
+  // uma conta sem valor e não sabe por quê.
+  it('parcela descartada na leitura vira aviso na tela', async () => {
+    gravarContasMock.mockResolvedValue({ criadas: 1, duplicadas: 0, erro: null })
+    estado.lido = {
+      status: 'documento',
+      documento: documento({
+        tipoDocumento: 'contrato',
+        pagamentos: [{ data: '2026-08-28', valor: null }],
+        pagamentosDescartados: 1,
+      }),
+    }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    if (r.status !== 'gravado') throw new Error('esperava gravado')
+    expect(r.avisoContas).toContain('1 data de pagamento')
+  })
+
+  // Important 2: o documento é sempre NOVO quando se chega aqui (reimportação
+  // volta antes, como duplicada-hash/duplicada-conteudo). Logo, "duplicada"
+  // nesta altura só pode ser duas parcelas colidindo ENTRE SI no mesmo
+  // vencimento — e o dono via "1 conta criada" com metade da dívida, calado.
+  it('parcela recusada por vencimento repetido vira aviso', async () => {
+    gravarContasMock.mockResolvedValue({ criadas: 1, duplicadas: 1, erro: null })
+    estado.lido = {
+      status: 'documento',
+      documento: documento({
+        tipoDocumento: 'contrato',
+        pagamentos: [{ data: '2026-08-28', valor: 100 }],
+      }),
+    }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    if (r.status !== 'gravado') throw new Error('esperava gravado')
+    expect(r.avisoContas).toContain('mesma data')
+  })
+
+  it('contrato normal, tudo certo: nenhum aviso', async () => {
+    gravarContasMock.mockResolvedValue({ criadas: 1, duplicadas: 0, erro: null })
+    estado.lido = {
+      status: 'documento',
+      documento: documento({
+        tipoDocumento: 'contrato',
+        pagamentos: [{ data: '2026-08-28', valor: 1505 }],
+      }),
+    }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    if (r.status !== 'gravado') throw new Error('esperava gravado')
+    expect(r.avisoContas).toBeNull()
   })
 
   it('extrato avisa que não gerou conta a pagar', async () => {
