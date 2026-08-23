@@ -491,7 +491,7 @@ export default function FinanceiroPage() {
     const [nfeResult, lancResult] = await Promise.all([
       supabase
         .from('itens_nfe')
-        .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, centro_custo, insumo_id, conta_como_compra, data_manual, nota_fiscal_id, insumos(tipo), notas_fiscais(numero, emitente_nome, data_emissao)')
+        .select('id, descricao, quantidade, unidade, valor_unitario, valor_total, centro_custo, insumo_id, conta_como_compra, data_manual, nota_fiscal_id, fornecedor, insumos(tipo), notas_fiscais(numero, emitente_nome, data_emissao)')
         .order('id', { ascending: false }),
       supabase
         .from('lancamentos_financeiros')
@@ -522,7 +522,11 @@ export default function FinanceiroPage() {
       centro_custo: row.centro_custo ?? row.insumos?.tipo ?? 'outro',
       insumo_id: row.insumo_id,
       nota_numero: row.notas_fiscais?.numero ?? null,
-      emitente_nome: row.notas_fiscais?.emitente_nome ?? '',
+      // Item de PDF (contrato/extrato) não tem nota vinculada, então
+      // `notas_fiscais.emitente_nome` vem vazio e a coluna Origem saía em
+      // branco — o dono via R$ 647.986,35 sem saber de quem era. A coluna
+      // `fornecedor` de itens_nfe (migration 017) é quem guarda esse nome.
+      emitente_nome: row.notas_fiscais?.emitente_nome ?? row.fornecedor ?? '',
       // Prioridade para a data da NF-e quando existir; lançamento manual
       // (sem nota vinculada) usa data_manual — a data escolhida pelo usuário
       // no formulário (migration 015). Sem este fallback o lançamento manual
