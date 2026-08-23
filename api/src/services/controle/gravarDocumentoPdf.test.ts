@@ -7,7 +7,7 @@ import type { DocumentoLido, ItemDocumentoLido, ResultadoLeituraDocumento } from
 // controla o que cada uma devolve; os testes leem `estado.*Inserido(s)`,
 // `estado.documentosDeletados` e `estado.documentosMarcadosErro` para
 // conferir o que foi gravado/desfeito/marcado.
-const { estado, uploadMock, removeMock } = vi.hoisted(() => {
+const { estado, uploadMock, removeMock, gravarContasMock } = vi.hoisted(() => {
   const estado = {
     lido: null as ResultadoLeituraDocumento | null,
     erroUpload: null as null | { message: string },
@@ -63,11 +63,18 @@ const { estado, uploadMock, removeMock } = vi.hoisted(() => {
     estado.erroUpload ? { data: null, error: estado.erroUpload } : { data: { path: 'ok' }, error: null },
   ))
   const removeMock = vi.fn(() => Promise.resolve({ data: null, error: null }))
-  return { estado, uploadMock, removeMock }
+  // Mock de `gravarContasDoContrato` (Task 5) — padrão "sem conta criada, sem
+  // erro" (a maioria dos testes deste arquivo é extrato e nem chama isto).
+  const gravarContasMock = vi.fn().mockResolvedValue({ criadas: 0, duplicadas: 0, erro: null })
+  return { estado, uploadMock, removeMock, gravarContasMock }
 })
 
 vi.mock('./documentoPdf', () => ({
   lerDocumentoPdf: vi.fn(() => Promise.resolve(estado.lido)),
+}))
+
+vi.mock('../contas/gravarContasDoContrato', () => ({
+  gravarContasDoContrato: (...args: unknown[]) => gravarContasMock(...args),
 }))
 
 vi.mock('../supabase', () => ({
@@ -174,6 +181,13 @@ import { gravarDocumentoDoPdf } from './gravarDocumentoPdf'
 
 const FORNECEDOR = 'SOLOS SOLUCOES AGRICOLAS'
 
+// Mensagem fixa devolvida em `avisoContas` para todo documento 'extrato' —
+// espelha o texto de gravarDocumentoPdf.ts (Step 5b). Todo teste desta
+// suíte que grava com sucesso usa `documento()` (padrão 'extrato'), então
+// este aviso aparece em praticamente todo `toEqual` de status 'gravado'.
+const AVISO_EXTRATO =
+  'Isto é um extrato de revenda, não um contrato — os itens entraram na aba Controle e nenhuma conta a pagar foi criada (o boleto do extrato chega por e-mail).'
+
 // Espelha as 5 colunas (menos fazenda_id) de idx_itens_nfe_dedupe_item —
 // migration 018, já com ocorrencia_no_documento (Achado B). Usada tanto para
 // montar `estado.chavesDuplicadas` quanto, implicitamente, para entender o
@@ -201,10 +215,16 @@ function documento(over: Partial<DocumentoLido> = {}): DocumentoLido {
     dataDocumento: '2026-07-01',
     numeroDocumento: '000786-2026-07-01',
     codigoCliente: '000786',
+    // Padrão 'extrato': a maioria dos testes deste arquivo foi escrita para
+    // o extrato da Solos — mudar o padrão para 'contrato' faria vários deles
+    // passarem a testar outra coisa em silêncio (Task 2/3 tornaram os dois
+    // campos abaixo obrigatórios em DocumentoLido).
+    tipoDocumento: 'extrato',
     valorTotalDocumento: 1505,
     divergenciaTotal: 0,
     itens: [item()],
     itensDescartados: 0,
+    pagamentos: [],
     ...over,
   }
 }
@@ -247,6 +267,8 @@ describe('gravarDocumentoDoPdf — sucesso completo', () => {
       itensGravados: 1,
       itensDescartados: 1,
       itensDuplicados: 0,
+      contasCriadas: 0,
+      avisoContas: AVISO_EXTRATO,
     })
 
     // Documento: fornecedor, número, hash e path do Storage foram gravados.
@@ -549,6 +571,8 @@ describe('gravarDocumentoDoPdf — reimportação com item já gravado antes (Ac
       itensGravados: 1,
       itensDescartados: 0,
       itensDuplicados: 1,
+      contasCriadas: 0,
+      avisoContas: AVISO_EXTRATO,
     })
 
     // Fallback tentou os 2 itens, um a um, na ordem da leitura.
@@ -584,6 +608,8 @@ describe('gravarDocumentoDoPdf — reimportação com item já gravado antes (Ac
       itensGravados: 0,
       itensDescartados: 0,
       itensDuplicados: 1,
+      contasCriadas: 0,
+      avisoContas: AVISO_EXTRATO,
     })
     expect(estado.documentosDeletados).toEqual([])
     expect(estado.documentosMarcadosErro).toEqual([])
@@ -615,6 +641,7 @@ describe('gravarDocumentoDoPdf — persiste sinal de duplicata confirmada na lin
 
     expect(r).toEqual({
       status: 'gravado', documentoId: 'doc-1', itensGravados: 0, itensDescartados: 0, itensDuplicados: 1,
+      contasCriadas: 0, avisoContas: AVISO_EXTRATO,
     })
 
     expect(estado.itensAtualizados).toHaveLength(1)
@@ -647,6 +674,7 @@ describe('gravarDocumentoDoPdf — persiste sinal de duplicata confirmada na lin
 
     expect(r).toEqual({
       status: 'gravado', documentoId: 'doc-1', itensGravados: 0, itensDescartados: 0, itensDuplicados: 1,
+      contasCriadas: 0, avisoContas: AVISO_EXTRATO,
     })
     expect(estado.itensAtualizados).toEqual([])
   })
@@ -750,6 +778,8 @@ describe('gravarDocumentoDoPdf — linhas repetidas DENTRO do mesmo documento n�
       itensGravados: 2,
       itensDescartados: 0,
       itensDuplicados: 0,
+      contasCriadas: 0,
+      avisoContas: AVISO_EXTRATO,
     })
     expect(estado.itensInseridos).toHaveLength(2)
     expect(estado.itensInseridos[0]).toMatchObject({ numero_documento: '57106', valor_total: 1505, ocorrencia_no_documento: 0 })
@@ -794,6 +824,86 @@ describe('gravarDocumentoDoPdf — linhas repetidas DENTRO do mesmo documento n�
       itensGravados: 0,
       itensDescartados: 0,
       itensDuplicados: 2,
+      contasCriadas: 0,
+      avisoContas: AVISO_EXTRATO,
     })
+  })
+})
+
+// Task 6 do plano `docs/superpowers/sdd/2026-08-23-contrato-adubo-contas-a-
+// pagar`: a gravação passa a ramificar por `tipoDocumento`. Extrato precisa
+// continuar exatamente como sempre foi (trava dos R$ 2,77 milhões já
+// importados em produção — Syagri, Solos, Protec); contrato passa a contar
+// como gasto e a gerar conta a pagar via `gravarContasDoContrato` (Task 5).
+describe('gravarDocumentoDoPdf — contrato x extrato', () => {
+  // A TRAVA DOS R$ 2,77 MILHÕES. Syagri, Solos e Protec já estão no banco
+  // como extrato. Se um dia esta asserção virar `true`, o Financeiro passa a
+  // somar essas compras de novo quando as NF-e delas chegarem pelo Make.
+  it('extrato grava conta_como_compra: false', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'extrato' }) }
+    await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+    expect(estado.itensInseridos[0].conta_como_compra).toBe(false)
+  })
+
+  it('contrato grava conta_como_compra: true', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+    await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+    expect(estado.itensInseridos[0].conta_como_compra).toBe(true)
+  })
+
+  it('grava o tipo em documentos_controle', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+    await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+    expect(estado.documentoInserido.tipo).toBe('contrato')
+  })
+
+  it('contrato devolve quantas contas foram criadas', async () => {
+    gravarContasMock.mockResolvedValue({ criadas: 1, duplicadas: 0, erro: null })
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    if (r.status !== 'gravado') throw new Error('esperava gravado')
+    expect(r.contasCriadas).toBe(1)
+    expect(r.avisoContas).toBeNull()
+  })
+
+  it('extrato não chama a criação de contas', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'extrato' }) }
+    await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+    expect(gravarContasMock).not.toHaveBeenCalled()
+  })
+
+  // Falhar a conta NÃO pode derrubar um documento já gravado com itens: o
+  // dono perderia o gasto inteiro por causa de um vencimento.
+  it('erro ao criar conta não derruba o documento — vira aviso', async () => {
+    gravarContasMock.mockResolvedValue({ criadas: 0, duplicadas: 0, erro: 'RLS negou' })
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    expect(r.status).toBe('gravado')
+    if (r.status !== 'gravado') return
+    expect(r.avisoContas).toContain('RLS negou')
+  })
+
+  it('contrato sem pagamento avisa que a conta precisa ser cadastrada à mão', async () => {
+    gravarContasMock.mockResolvedValue({ criadas: 0, duplicadas: 0, erro: null })
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato', pagamentos: [] }) }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    if (r.status !== 'gravado') throw new Error('esperava gravado')
+    expect(r.avisoContas).toContain('data de pagamento')
+  })
+
+  it('extrato avisa que não gerou conta a pagar', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'extrato' }) }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    if (r.status !== 'gravado') throw new Error('esperava gravado')
+    expect(r.avisoContas).toContain('extrato de revenda')
+    expect(r.contasCriadas).toBe(0)
   })
 })

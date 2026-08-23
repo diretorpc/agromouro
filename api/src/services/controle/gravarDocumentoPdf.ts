@@ -3,6 +3,7 @@ import type Anthropic from '@anthropic-ai/sdk'
 import { supabase } from '../supabase'
 import { lerDocumentoPdf, type DocumentoLido, type ItemDocumentoLido } from './documentoPdf'
 import { normalizarFornecedor } from './normalizarFornecedor'
+import { gravarContasDoContrato } from '../contas/gravarContasDoContrato'
 
 // Grava no banco o que `documentoPdf.ts` já leu — mesmo espírito de
 // gravarBoletoPdf.ts, mas com uma diferença de desenho: a LEITURA acontece
@@ -29,6 +30,13 @@ export type ResultadoGravarDocumento =
       // Separado de `itensDescartados` (que vem da LEITURA — linha ilegível)
       // porque o motivo é outro: aqui a linha foi lida certo, só já existia.
       itensDuplicados: number
+      // Quantas contas a pagar nasceram deste documento. Sempre 0 para
+      // extrato (o boleto dele chega por e-mail, ver deContrato.ts).
+      contasCriadas: number
+      // Texto pronto para mostrar na tela quando o documento entrou mas a
+      // conta a pagar não — sem isto, um contrato importado "com sucesso"
+      // deixaria um vencimento invisível. null quando não há o que avisar.
+      avisoContas: string | null
     }
   // Repassados de `lerDocumentoPdf` sem tocar em banco nem Storage — mesmos
   // três motivos de recusa da leitura (ver documentoPdf.ts).
@@ -331,6 +339,7 @@ export async function gravarDocumentoDoPdf(
       numero_documento: documento.numeroDocumento,
       data_documento:   documento.dataDocumento,
       valor_total:      documento.valorTotalDocumento,
+      tipo:             documento.tipoDocumento,
       status:           'processado',
       nome_arquivo:     nomeArquivo,
       arquivo_path:     arquivoPath,
@@ -414,20 +423,13 @@ export async function gravarDocumentoDoPdf(
         numero_documento:        numeroDocumentoItem,
         ocorrencia_no_documento: ocorrenciaNoDocumento,
         documento_controle_id:   documentoId,
-        // Sempre false (decisão do Matheus, 17/08/2026 — Achado 2 da revisão
-        // do Apolo): o PDF lido aqui é extrato de "contas a receber" ou
-        // contrato — lista duplicatas/notas do MESMO fornecedor cuja NF-e o
-        // Make já derrubou por e-mail e o nfeProcessor já gravou em
-        // itens_nfe a partir do XML. Se este item também contasse como
-        // gasto, o Financeiro (web/app/(app)/financeiro/page.tsx, que lê
-        // itens_nfe inteira sem filtro) somaria a MESMA compra duas vezes.
-        // A aba Controle vira conferência/cruzamento — não fonte de gasto —
-        // e aceita, como trade-off consciente, perder o gasto de uma compra
-        // que nunca teve NF-e nenhuma no sistema. Cobre também o motivo
-        // original: nada no schema atual distingue estorno/devolução dentro
-        // de um documento importado por PDF (diferente da NF-e, que tem
-        // CFOP para isso) — mais um motivo para nunca gravar `true` aqui.
-        conta_como_compra:       false,
+        // O TIPO decide, não a aba. Extrato de revenda (Syagri, Solos,
+        // Protec) tem NF-e chegando pelo Make e some do total de propósito —
+        // contar aqui dobraria o dinheiro. Contrato de fabricante (Mosaic)
+        // nunca gera NF-e no sistema: é a única fonte daquele gasto, e se não
+        // contar aqui não conta em lugar nenhum. Medido em 23/08/2026: zero
+        // NF-e de fornecedor de adubo no banco.
+        conta_como_compra:       documento.tipoDocumento === 'contrato',
         data_manual:             dataManual,
         fazenda_id:              fazendaId,
       }
@@ -495,12 +497,38 @@ export async function gravarDocumentoDoPdf(
       `${documento.itensDescartados} descartado(s) na leitura.`,
     )
 
+    // Depois dos itens, nunca antes: uma conta a pagar apontando para um
+    // documento que não conseguiu gravar item nenhum seria uma dívida sem
+    // compra. Chega aqui só quando o documento e os itens já estão de pé.
+    let contasCriadas = 0
+    let avisoContas: string | null = null
+
+    if (documento.tipoDocumento === 'contrato') {
+      const contas = await gravarContasDoContrato(documento, documentoId, fazendaId)
+      contasCriadas = contas.criadas
+
+      if (contas.erro) {
+        avisoContas = `O contrato foi importado, mas a conta a pagar não pôde ser criada (${contas.erro}). Cadastre o vencimento à mão em Contas a Pagar.`
+      } else if (contas.criadas === 0 && contas.duplicadas === 0) {
+        avisoContas = 'O contrato foi importado, mas não encontrei a data de pagamento nele. Cadastre a conta à mão em Contas a Pagar.'
+      }
+    }
+
+    if (documento.tipoDocumento !== 'contrato') {
+      // Extrato não gera conta a pagar de propósito: o boleto dele chega por
+      // e-mail pelo Make (nfeEmail.ts). Sem esta linha, quem subiu o arquivo
+      // pela aba de Contas a Pagar ficaria esperando uma conta que nunca vem.
+      avisoContas = 'Isto é um extrato de revenda, não um contrato — os itens entraram na aba Controle e nenhuma conta a pagar foi criada (o boleto do extrato chega por e-mail).'
+    }
+
     return {
       status:           'gravado',
       documentoId,
       itensGravados,
       itensDescartados:  documento.itensDescartados,
       itensDuplicados,
+      contasCriadas,
+      avisoContas,
     }
   } catch (err) {
     // Cobre o `throw` de data não-resolvível acima — acontece dentro do
