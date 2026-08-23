@@ -583,11 +583,22 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
-## 🟡 Contrato de adubo → conta a pagar + gasto no Financeiro — SPEC APROVADA, nada codado — 23/08/2026
+## 🟡 Contrato de adubo → conta a pagar + gasto no Financeiro — CODADO E REVISADO, falta migration + conferencia ao vivo — 23/08/2026
 
-Branch `feature/contrato-adubo-contas-a-pagar`, commit `6b6bacd`. Desenho em
-`docs/superpowers/specs/2026-08-23-contrato-adubo-contas-a-pagar-design.md`.
-**Próximo passo: escrever o plano de implementação (skill writing-plans).**
+Branch `feature/contrato-adubo-contas-a-pagar`, 25 commits. Desenho em
+`docs/superpowers/specs/2026-08-23-contrato-adubo-contas-a-pagar-design.md`, plano em
+`docs/superpowers/plans/2026-08-23-contrato-adubo-contas-a-pagar.md`.
+
+⛔ **DOIS BLOQUEIOS ANTES DO MERGE, nesta ordem:**
+1. **Aplicar `supabase/migrations/012_contrato_em_contas_a_pagar.sql`** no SQL Editor do
+   Supabase (a verificação do rodapé precisa devolver 3 linhas). Sem ela, subir o código
+   quebra **toda** importação de PDF, inclusive a de extrato que funciona hoje — e a
+   exclusão de item pela grade passa a recusar tudo (falha fechada).
+2. **Conferir ao vivo com o contrato 280451 real** — nenhuma linha desta branch foi
+   exercida ponta a ponta ainda. Medir, não supor:
+   `ls ~/Downloads/*JACOB*` e importar pela aba Contas a Pagar.
+
+Contagem de teste NÃO se escreve aqui — mede-se: `cd api && npm test`
 
 Pedido do Matheus: *"quero essa função de ler o contrato e cadastrar a data de pagamento
 na ABA do contas a pagar! Cada um no seu quadrado. Também quero que joga o valor,
@@ -626,6 +637,37 @@ spec: N pagamentos com algum valor nulo **rateiam** o total e marcam
 **Fora de escopo, dito em voz alta:** cruzamento PDF↔NF-e (4ª vez adiado — se a Mosaic
 um dia mandar NF-e, dobra), estoque (as 165 t não entram), contrato cancelado/
 renegociado.
+
+**O que a revisão final (Apolo) achou depois de tudo codado — 3 Critical, 6 Important,
+todos corrigidos.** Nenhum deles seria pego por revisão de task isolada:
+
+- **C1** — `editarItemControle.ts` cravava `conta_como_compra: false` em todo PATCH. Essa
+  trava nasceu em 18/08 sob a premissa *"item de Controle nunca conta como gasto"*, e
+  esta branch quebrou a premissa. Editar qualquer célula do contrato na grade zerava os
+  R$ 647.986,35 no Financeiro, em silêncio — e como a conta a pagar continua vinculada,
+  pagá-la também não lançava: o dinheiro sumia das três telas de uma vez. **Lição: trava
+  cravada carrega a premissa da época; mudar a premissa sem recalibrar a trava é como
+  nasce bug caro.**
+- **C2** — o aviso *"cadastre a conta à mão"* (que a spec §7 desenhou) levava a conta
+  avulsa SEM vínculo → pagá-la criava lançamento → R$ 1,29 mi para uma compra de R$ 648
+  mil. Agora contrato sem data legível cria conta **sem vencimento**, e o caminho manual
+  deixou de existir.
+- **C3** — deploy antes da migration quebra toda importação (ver bloqueio 1 acima).
+- **I1** parcela com data ilegível descartada em silêncio fazia a sobrevivente herdar o
+  total como valor confirmado · **I2** duas datas iguais escondiam metade da dívida ·
+  **I3** apagar o item fazia a dívida virar invisível · **I4** a trava dos R$ 2,77 mi
+  virou julgamento da IA · **I5** aviso âmbar viraria ruído no Controle · **I6**
+  comentário sustentava decisão com fato morto.
+
+**O "cinto de segurança" da classificação foi calibrado com MEDIÇÃO, não palpite.** O
+limiar original contava itens numerados; a consulta ao banco mostrou que todo item de
+todo documento tem número (28/28, 49/49, 32/32) — a regra não discriminava nada. O que
+separa as populações é a quantidade de números **DISTINTOS**: extrato tem 25–30 (uma por
+duplicata), contrato tem sempre 1 (todos os itens carregam o número do contrato),
+independente de quantas mercadorias. Um re-revisor provou por sonda que o critério
+antigo rebaixava um contrato Mosaic de 6 mercadorias a extrato e sumia com a dívida
+inteira, sem alerta. Comando que remede: contar `numero_documento` distintos por
+`documento_controle_id` em `itens_nfe`.
 
 ## ✅ Gráficos da aba Controle — PR #63 mergeado em 19/08/2026
 
