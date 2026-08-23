@@ -87,23 +87,25 @@ const MAX_PAGAMENTOS = 24
 // que existe é o do contrato inteiro). Quando o documento tem cara de
 // extrato, a resposta 'contrato' é rebaixada.
 //
-// ⚠️ ESTES DOIS NÚMEROS FORAM ESTIMADOS, NÃO MEDIDOS. Os 3 PDFs reais
-// (Syagri, Solos, Protec) e o contrato 280451 da Mosaic não estavam
-// disponíveis para calibrar quando isto foi escrito. Referência conhecida
-// pela spec: o contrato Mosaic tem 1 item; os extratos têm dezenas de
-// duplicatas numeradas. A folga é grande, mas se um contrato de várias
-// mercadorias numeradas aparecer um dia, ele será rebaixado a extrato — o
-// gasto deixa de somar (lado BARATO, o dono corrige na tela) em vez de
-// contar duas vezes. Recalibrar contra os PDFs reais continua pendente.
+// ⚠️ MEDIDO em produção em 23/08/2026 (não é mais estimativa). O discriminador
+// não é "quantos itens têm número" — TODO item de TODO documento tem número,
+// extrato ou contrato, então essa contagem nunca discriminava nada de verdade.
+// O que separa as duas populações é a quantidade de números DISTINTOS: no
+// extrato, cada duplicata carrega o SEU número (Syagri 28 itens/25 distintos,
+// Solos 49/30, Protec 32/25); no contrato, todo item carrega o MESMO número
+// do contrato inteiro (Mosaic: 1 item, 1 número — e um contrato de 6
+// mercadorias mede o mesmo 1, não 6). Os extratos medidos ficam a mais de 6×
+// de distância do contrato (25 vs 1) — folga grande mesmo com poucos itens
+// distintos de sobra.
 const ITENS_PARA_PARECER_EXTRATO = 5
-const ITENS_NUMERADOS_PARA_PARECER_EXTRATO = 3
+const NUMEROS_DISTINTOS_PARA_PARECER_EXTRATO = 3
 
 // Só aperta para UM LADO: pode rebaixar 'contrato' → 'extrato', NUNCA o
 // contrário. Promover é o movimento que dobra dinheiro; rebaixar só deixa um
 // valor sem somar, visível na tela.
 function pareceExtrato(itens: ItemDocumentoLido[]): boolean {
   return itens.length > ITENS_PARA_PARECER_EXTRATO
-    && itens.filter(i => i.numeroDocumento !== null).length > ITENS_NUMERADOS_PARA_PARECER_EXTRATO
+    && new Set(itens.map(i => i.numeroDocumento).filter(n => n !== null)).size > NUMEROS_DISTINTOS_PARA_PARECER_EXTRATO
 }
 
 export type ItemDocumentoLido = {
@@ -699,8 +701,9 @@ export function validarDocumentoLido(bruto: any, hojeISO: string): ResultadoVali
   if (tipoDocumento !== tipoDaIA) {
     console.warn(
       `[DocumentoPDF] IA classificou como 'contrato', mas o documento tem ${itens.length} itens e ` +
-      `${itens.filter(i => i.numeroDocumento !== null).length} com número próprio — forma de EXTRATO. ` +
-      'Rebaixado para extrato: os itens NÃO contam como gasto e nenhuma conta a pagar será criada.',
+      `${new Set(itens.map(i => i.numeroDocumento).filter(n => n !== null)).size} números de documento ` +
+      'distintos — forma de EXTRATO. Rebaixado para extrato: os itens NÃO contam como gasto e nenhuma ' +
+      'conta a pagar será criada.',
     )
   }
 

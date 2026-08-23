@@ -619,6 +619,27 @@ describe('validarDocumentoLido — cinto determinístico do tipo (Important 4)',
     expect(r.documento.tipoDocumento).toBe('contrato')
   })
 
+  // O BURACO que a medição em produção (23/08/2026) encontrou: um contrato
+  // Mosaic de 6 mercadorias tem 6 itens, mas TODOS carregam o MESMO número —
+  // o do contrato inteiro (280451), não um por linha como no extrato. A
+  // versão antiga do cinto contava "itens com número" (todo item de todo
+  // documento tem número) e rebaixava isto a extrato por engano, derrubando
+  // R$ 647.986,35 de pagamentos junto. O discriminador certo é a quantidade
+  // de números DISTINTOS — aqui é 1, bem abaixo do limiar.
+  it('muitas linhas com o MESMO número de documento não bastam para rebaixar (contrato de várias mercadorias)', () => {
+    const mesmoNumero = (i: number) => item({ numero_documento: '280451', descricao: `MERCADORIA ${i}` })
+    const r = validarDocumentoLido(bruto({
+      tipoDocumento: 'contrato',
+      itens: [mesmoNumero(1), mesmoNumero(2), mesmoNumero(3), mesmoNumero(4), mesmoNumero(5), mesmoNumero(6)],
+      pagamentos: [{ data: '2026-08-28', valor: 323993.18 }, { data: '2026-11-28', valor: 323993.17 }],
+    }), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.tipoDocumento).toBe('contrato')
+    // O ponto inteiro do achado: rebaixar a extrato apagaria os pagamentos —
+    // aqui eles precisam sobreviver junto com o tipo.
+    expect(r.documento.pagamentos).toHaveLength(2)
+  })
+
   // A TRAVA SUPREMA: o cinto só aperta num sentido. Nenhuma combinação de
   // itens pode PROMOVER um extrato a contrato — promover é o lado que
   // dobra dinheiro.
