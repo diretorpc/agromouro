@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { validarDocumentoLido } from './documentoPdf'
+import { validarDocumentoLido, SCHEMA } from './documentoPdf'
 
 // A leitura em si (a chamada de IA) não dá para testar de mesa. O que dá — e
 // o que decide se um documento vira gasto de verdade ou é recusado — é a
@@ -650,5 +650,49 @@ describe('validarDocumentoLido — cinto determinístico do tipo (Important 4)',
     }), HOJE)
     if (r.status !== 'documento') throw new Error('esperava documento')
     expect(r.documento.tipoDocumento).toBe('extrato')
+  })
+})
+
+// Achado ao vivo, 23/08/2026, conferência contra a API real (não pelos 593
+// testes acima — todos mockam `anthropic.messages.stream`, nenhum chega a
+// mandar o SCHEMA pra API de verdade): a Anthropic recusa a requisição
+// INTEIRA com HTTP 400 quando uma propriedade combina `enum` com `type` como
+// array de tipos (união) — mesmo que o próprio enum liste `null` entre os
+// valores aceitos. `tipoDocumento` tinha exatamente essa forma
+// (`type: ['string', 'null']` + `enum: [...]`) e derrubava TODO
+// `POST /controle/documentos`, contrato ou extrato, sempre.
+//
+// Este teste não chama a API (um teste unitário não consegue) — mas percorre
+// o SCHEMA inteiro à procura da MESMA combinação quebrada, travando a regra
+// que a API impõe. Sem isto, "melhorar" o schema de volta para permitir
+// `null` explícito (em vez de confiar em `tipoDeDocumento()` para tratar
+// ausência como 'extrato') derruba a funcionalidade de novo, em silêncio,
+// só descoberto na próxima conferência ao vivo.
+describe('SCHEMA — invariante: enum nunca combinado com type em união', () => {
+  function acharViolacoes(node: unknown, caminho: string, achados: string[]): void {
+    if (node === null || typeof node !== 'object') return
+
+    if (Array.isArray(node)) {
+      node.forEach((item, i) => acharViolacoes(item, `${caminho}[${i}]`, achados))
+      return
+    }
+
+    const obj = node as Record<string, unknown>
+
+    // A violação exata que a API recusa: `enum` presente junto de `type`
+    // como array (união de tipos), em qualquer nível do schema.
+    if ('enum' in obj && Array.isArray(obj.type)) {
+      achados.push(caminho)
+    }
+
+    for (const [chave, valor] of Object.entries(obj)) {
+      acharViolacoes(valor, `${caminho}.${chave}`, achados)
+    }
+  }
+
+  it('nenhuma propriedade do SCHEMA combina enum com type em array', () => {
+    const achados: string[] = []
+    acharViolacoes(SCHEMA, 'SCHEMA', achados)
+    expect(achados).toEqual([])
   })
 })

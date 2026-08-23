@@ -222,7 +222,11 @@ export type ResultadoLeituraDocumento =
 // boletoPdf.ts. `ehDocumentoValido` vem PRIMEIRO: sem a pergunta explícita,
 // um boleto avulso ou uma NF-e/DANFE anexada por engano seria respondido com
 // itens inventados para preencher o formato.
-const SCHEMA = {
+// Exportado só para teste (mesmo motivo de `validarDocumentoLido` acima): é
+// a única forma de travar, sem gastar uma chamada de IA, a regra que a API
+// da Anthropic impõe sobre o formato do schema (ver comentário de
+// `tipoDocumento` abaixo e o teste de invariante em documentoPdf.test.ts).
+export const SCHEMA = {
   type: 'object',
   properties: {
     ehDocumentoValido: {
@@ -235,14 +239,30 @@ const SCHEMA = {
         'Boleto bancário avulso, nota fiscal (DANFE), comprovante de pagamento, propaganda, ' +
         'ou documento sem nenhuma linha de cobrança com valor legível = false.',
     },
+    // ⚠️ NÃO troque `type: 'string'` por `type: ['string', 'null']` — a API
+    // da Anthropic RECUSA a requisição inteira com HTTP 400 quando uma
+    // propriedade combina `enum` com `type` como array de tipos (união),
+    // mesmo que o próprio enum liste `null` entre os valores aceitos:
+    // "Invalid schema: Enum value 'extrato' does not match declared type
+    // '['string', 'null']'". Descoberto em RUNTIME em 23/08/2026, numa
+    // conferência ao vivo contra a API real — não pelos testes: os 593
+    // testes da suíte mockam `anthropic.messages.stream`, então nenhum
+    // chega a mandar este schema pra API de verdade. O efeito era
+    // `POST /controle/documentos` devolvendo 503 pra QUALQUER PDF, contrato
+    // ou extrato, sempre. Aqui `null` não faz falta: `tipoDeDocumento()`
+    // (mais abaixo) já trata qualquer valor que não seja exatamente a
+    // string 'contrato' como 'extrato' — a segurança do desempate não
+    // depende do schema aceitar null, só do código de validação. Guarda
+    // contra recaída: teste de invariante em documentoPdf.test.ts percorre
+    // o SCHEMA inteiro atrás desta mesma combinação quebrada.
     tipoDocumento: {
-      type: ['string', 'null'],
-      enum: ['extrato', 'contrato', null],
+      type: 'string',
+      enum: ['extrato', 'contrato'],
       description:
         'Qual dos dois formatos é este documento. "extrato" = relatório de "Contas a Receber" que uma ' +
         'revenda agrícola emite listando duplicatas/notas em aberto do cliente. "contrato" = contrato de ' +
         'compra e venda de mercadoria, com Quadro Resumo, VENDEDORA/COMPRADOR e número de contrato ' +
-        '(ex: Mosaic). null se não der para decidir com segurança — não chute. ' +
+        '(ex: Mosaic). ' +
         'NA DÚVIDA ENTRE OS DOIS, responda "extrato": errar para "contrato" faz o sistema contar a ' +
         'mesma compra duas vezes, e ninguém é avisado; errar para "extrato" só deixa um valor sem ' +
         'somar, que a pessoa corrige na tela.',
