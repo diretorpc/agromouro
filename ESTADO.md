@@ -593,9 +593,9 @@ Branch `feature/contrato-adubo-contas-a-pagar`, 25 commits. Desenho em
 ✅ **Conferido ao vivo com o contrato 280451 real**, ponta a ponta — o contrato ESTÁ no
 sistema (documento `ff3de1fa`, conta a pagar de R$ 647.986,35 vencendo 28/08/2026).
 
-⛔ **Falta só abrir o PR** (o `git push` foi barrado pelo classificador de permissões em
-23/08; os 31 commits estão locais e intactos). O contrato 280451 já está no sistema de
-verdade — a conferência ao vivo rodou contra a API local com o banco de produção.
+✅ **PR aberto: https://github.com/diretorpc/agromouro/pull/64** (23/08). O contrato
+280451 já está no sistema de verdade — a conferência ao vivo rodou contra a API local
+com o banco de produção. **Não mergeado ainda.**
 
 **Dois defeitos de TELA achados só na conferência visual** — a conferência por banco não
 pegaria nenhum dos dois: (1) a coluna Origem do Financeiro mostrava "Manual" em vez do
