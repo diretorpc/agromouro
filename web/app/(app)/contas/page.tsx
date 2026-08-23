@@ -16,6 +16,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Combobox } from '@/components/ui/combobox'
 import { api } from '@/lib/api'
 import { CATEGORIAS_CONTAS_A_PAGAR } from '@/lib/centro-custo'
+import type { ResultadoGravarDocumento } from '@/lib/types'
+import { DialogoImportar } from '../controle/components/dialogo-importar'
 import { FormularioContaFixa } from './formulario-conta-fixa'
 import { FormularioContaAvulsa } from './formulario-conta-avulsa'
 import { DialogoVencimento } from './dialogo-vencimento'
@@ -242,6 +244,32 @@ export default function ContasPage() {
   }
 
   useEffect(() => { load() }, [])
+
+  // Mesmo endpoint que a aba Controle usa (POST /controle/documentos) — não
+  // criar rota nova aqui. Dois caminhos para o mesmo arquivo é como uma trava
+  // de dedupe deixa de valer de um dos lados. O servidor decide pelo TIPO
+  // lido do PDF se é contrato (vira conta a pagar) ou extrato (vira itens em
+  // Controle, sem conta) — a tela só mostra o que o servidor decidiu.
+  async function importarContrato(pdf: File): Promise<ResultadoGravarDocumento> {
+    const arquivo = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      // readAsDataURL devolve "data:application/pdf;base64,XXXX" — a API
+      // espera só o base64 puro.
+      reader.onload = () => resolve((reader.result as string).split(',')[1] ?? '')
+      reader.onerror = () => reject(new Error('Não foi possível ler o arquivo.'))
+      reader.readAsDataURL(pdf)
+    })
+
+    const resultado = await api.post<ResultadoGravarDocumento>('/controle/documentos', {
+      arquivo,
+      nomeArquivo: pdf.name,
+    })
+
+    // Recarrega a lista: a conta recém-criada precisa aparecer sem F5.
+    if (resultado.status === 'gravado') await load()
+
+    return resultado
+  }
 
   // O aviso do WhatsApp manda /contas?filtro=sem-vencimento — a tela já abre filtrada.
   useEffect(() => {
@@ -476,6 +504,7 @@ export default function ContasPage() {
           <p className="text-sm text-muted-foreground mt-1 font-medium">O que a fazenda deve e quando vence</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <DialogoImportar onImportar={importarContrato} titulo="Importar contrato (PDF)" />
           <Button size="sm" variant="outline" onClick={() => setNovaAvulsaOpen(true)}>
             <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
             Nova conta avulsa

@@ -179,7 +179,7 @@ export interface FiltrosControle {
 // como erro HTTP lançado (422/503/500), tratado no catch — api.ts já lança Error com
 // `.message` pronto pra mostrar.
 export type ResultadoGravarDocumento =
-  | { status: 'gravado'; documentoId: string; itensGravados: number; itensDescartados: number; itensDuplicados: number }
+  | { status: 'gravado'; documentoId: string; itensGravados: number; itensDescartados: number; itensDuplicados: number; contasCriadas: number; avisoContas: string | null }
   | { status: 'duplicada-hash' }
   | { status: 'duplicada-conteudo' }
 

@@ -9,12 +9,17 @@ import type { ResultadoGravarDocumento } from '@/lib/types'
 
 type DialogoImportarProps = {
   onImportar: (pdf: File) => Promise<ResultadoGravarDocumento>
+  // Rótulo do botão e do cabeçalho. O comportamento NÃO muda com ele: o
+  // servidor decide o que fazer pelo TIPO lido do PDF, nunca pela aba de
+  // origem — dois caminhos com regras diferentes para o mesmo arquivo seria
+  // a porta dos fundos por onde uma trava de dedupe deixa de valer.
+  titulo?: string
 }
 
 type Estado =
   | { fase: 'ocioso' }
   | { fase: 'lendo' }
-  | { fase: 'sucesso'; itensGravados: number; itensDuplicados: number; itensDescartados: number }
+  | { fase: 'sucesso'; itensGravados: number; itensDuplicados: number; itensDescartados: number; contasCriadas: number; avisoContas: string | null }
   | { fase: 'aviso'; mensagem: string }  // duplicada — não é erro, não fecha sozinho
   | { fase: 'erro'; mensagem: string }
 
@@ -25,7 +30,7 @@ type Estado =
 // gastar upload e leitura por IA num arquivo que o servidor cortaria depois.
 const TAMANHO_MAXIMO_BYTES = 10 * 1024 * 1024
 
-export function DialogoImportar({ onImportar }: DialogoImportarProps) {
+export function DialogoImportar({ onImportar, titulo }: DialogoImportarProps) {
   const [aberto, setAberto] = useState(false)
   const [estado, setEstado] = useState<Estado>({ fase: 'ocioso' })
   const inputRef = useRef<HTMLInputElement>(null)
@@ -80,6 +85,8 @@ export function DialogoImportar({ onImportar }: DialogoImportarProps) {
           itensGravados:    resultado.itensGravados,
           itensDuplicados:  resultado.itensDuplicados,
           itensDescartados: resultado.itensDescartados,
+          contasCriadas:    resultado.contasCriadas,
+          avisoContas:      resultado.avisoContas,
         })
         limparInput()
         return
@@ -100,13 +107,13 @@ export function DialogoImportar({ onImportar }: DialogoImportarProps) {
     <>
       <Button onClick={() => setAberto(true)}>
         <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
-        Importar Documento
+        {titulo ?? 'Importar documento'}
       </Button>
 
       <Dialog open={aberto} onOpenChange={o => { setAberto(o); if (!o) reiniciar() }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Importar documento de fornecedor</DialogTitle>
+            <DialogTitle>{titulo ?? 'Importar documento de fornecedor'}</DialogTitle>
           </DialogHeader>
 
           <p className="text-sm text-muted-foreground">
@@ -142,6 +149,14 @@ export function DialogoImportar({ onImportar }: DialogoImportarProps) {
                 {', '}
                 {plural(estado.itensDescartados, 'não pôde ser lido', 'não puderam ser lidos')}.
               </p>
+              {estado.contasCriadas > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  {plural(estado.contasCriadas, 'conta criada', 'contas criadas')} em Contas a Pagar.
+                </p>
+              )}
+              {estado.avisoContas && (
+                <p className="text-sm text-amber-600">{estado.avisoContas}</p>
+              )}
             </div>
           )}
 
