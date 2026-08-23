@@ -14,12 +14,25 @@ type DialogoImportarProps = {
   // origem — dois caminhos com regras diferentes para o mesmo arquivo seria
   // a porta dos fundos por onde uma trava de dedupe deixa de valer.
   titulo?: string
+  // Important 5 da revisão final (23/08/2026). O servidor SEMPRE devolve o
+  // aviso "isto é um extrato de revenda, nenhuma conta a pagar foi criada" —
+  // e na aba Contas a Pagar ele é exatamente a informação que o dono precisa
+  // (ele subiu o PDF ali esperando uma conta). Na aba Controle, importar
+  // extrato é o caminho NORMAL: o mesmo aviso apareceria em âmbar em toda
+  // importação, e âmbar que aparece sempre é âmbar que ninguém lê — o dono
+  // seria treinado a ignorar justamente o canal dos avisos caros (parcela
+  // perdida, conta sem vencimento, gasto que pode contar duas vezes).
+  //
+  // ⚠️ Isto muda SÓ O QUE A TELA EXIBE. A decisão de negócio continua 100%
+  // no servidor, tomada pelo TIPO lido do PDF — nunca pela aba de origem.
+  // Ver o comentário de `titulo`, logo acima, e a spec §7.
+  mostrarAvisoDeExtrato?: boolean
 }
 
 type Estado =
   | { fase: 'ocioso' }
   | { fase: 'lendo' }
-  | { fase: 'sucesso'; itensGravados: number; itensDuplicados: number; itensDescartados: number; contasCriadas: number; avisoContas: string | null }
+  | { fase: 'sucesso'; itensGravados: number; itensDuplicados: number; itensDescartados: number; contasCriadas: number; avisoContas: string | null; tipoDocumento: 'extrato' | 'contrato' }
   | { fase: 'aviso'; mensagem: string }  // duplicada — não é erro, não fecha sozinho
   | { fase: 'erro'; mensagem: string }
 
@@ -30,7 +43,7 @@ type Estado =
 // gastar upload e leitura por IA num arquivo que o servidor cortaria depois.
 const TAMANHO_MAXIMO_BYTES = 10 * 1024 * 1024
 
-export function DialogoImportar({ onImportar, titulo }: DialogoImportarProps) {
+export function DialogoImportar({ onImportar, titulo, mostrarAvisoDeExtrato = false }: DialogoImportarProps) {
   const [aberto, setAberto] = useState(false)
   const [estado, setEstado] = useState<Estado>({ fase: 'ocioso' })
   const inputRef = useRef<HTMLInputElement>(null)
@@ -87,6 +100,7 @@ export function DialogoImportar({ onImportar, titulo }: DialogoImportarProps) {
           itensDescartados: resultado.itensDescartados,
           contasCriadas:    resultado.contasCriadas,
           avisoContas:      resultado.avisoContas,
+          tipoDocumento:    resultado.tipoDocumento,
         })
         limparInput()
         return
@@ -154,7 +168,11 @@ export function DialogoImportar({ onImportar, titulo }: DialogoImportarProps) {
                   {plural(estado.contasCriadas, 'conta criada', 'contas criadas')} em Contas a Pagar.
                 </p>
               )}
-              {estado.avisoContas && (
+              {/* Aviso de CONTRATO sempre aparece (é caro: vencimento sem
+                  data, parcela perdida, conta que faltou). Aviso de EXTRATO
+                  só onde ele é notícia — a aba Contas a Pagar. Ver
+                  `mostrarAvisoDeExtrato` no topo deste arquivo. */}
+              {estado.avisoContas && (estado.tipoDocumento === 'contrato' || mostrarAvisoDeExtrato) && (
                 <p className="text-sm text-amber-600">{estado.avisoContas}</p>
               )}
             </div>

@@ -285,6 +285,7 @@ describe('gravarDocumentoDoPdf — sucesso completo', () => {
       itensDuplicados: 0,
       contasCriadas: 0,
       avisoContas: AVISO_EXTRATO,
+      tipoDocumento: 'extrato',
     })
 
     // Documento: fornecedor, número, hash e path do Storage foram gravados.
@@ -589,6 +590,7 @@ describe('gravarDocumentoDoPdf — reimportação com item já gravado antes (Ac
       itensDuplicados: 1,
       contasCriadas: 0,
       avisoContas: AVISO_EXTRATO,
+      tipoDocumento: 'extrato',
     })
 
     // Fallback tentou os 2 itens, um a um, na ordem da leitura.
@@ -626,6 +628,7 @@ describe('gravarDocumentoDoPdf — reimportação com item já gravado antes (Ac
       itensDuplicados: 1,
       contasCriadas: 0,
       avisoContas: AVISO_EXTRATO,
+      tipoDocumento: 'extrato',
     })
     expect(estado.documentosDeletados).toEqual([])
     expect(estado.documentosMarcadosErro).toEqual([])
@@ -657,7 +660,7 @@ describe('gravarDocumentoDoPdf — persiste sinal de duplicata confirmada na lin
 
     expect(r).toEqual({
       status: 'gravado', documentoId: 'doc-1', itensGravados: 0, itensDescartados: 0, itensDuplicados: 1,
-      contasCriadas: 0, avisoContas: AVISO_EXTRATO,
+      contasCriadas: 0, avisoContas: AVISO_EXTRATO, tipoDocumento: 'extrato',
     })
 
     expect(estado.itensAtualizados).toHaveLength(1)
@@ -690,7 +693,7 @@ describe('gravarDocumentoDoPdf — persiste sinal de duplicata confirmada na lin
 
     expect(r).toEqual({
       status: 'gravado', documentoId: 'doc-1', itensGravados: 0, itensDescartados: 0, itensDuplicados: 1,
-      contasCriadas: 0, avisoContas: AVISO_EXTRATO,
+      contasCriadas: 0, avisoContas: AVISO_EXTRATO, tipoDocumento: 'extrato',
     })
     expect(estado.itensAtualizados).toEqual([])
   })
@@ -796,6 +799,7 @@ describe('gravarDocumentoDoPdf — linhas repetidas DENTRO do mesmo documento n�
       itensDuplicados: 0,
       contasCriadas: 0,
       avisoContas: AVISO_EXTRATO,
+      tipoDocumento: 'extrato',
     })
     expect(estado.itensInseridos).toHaveLength(2)
     expect(estado.itensInseridos[0]).toMatchObject({ numero_documento: '57106', valor_total: 1505, ocorrencia_no_documento: 0 })
@@ -842,6 +846,7 @@ describe('gravarDocumentoDoPdf — linhas repetidas DENTRO do mesmo documento n�
       itensDuplicados: 2,
       contasCriadas: 0,
       avisoContas: AVISO_EXTRATO,
+      tipoDocumento: 'extrato',
     })
   })
 })

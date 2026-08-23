@@ -504,7 +504,12 @@ export default function ContasPage() {
           <p className="text-sm text-muted-foreground mt-1 font-medium">O que a fazenda deve e quando vence</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <DialogoImportar onImportar={importarContrato} titulo="Importar contrato (PDF)" />
+          {/* `mostrarAvisoDeExtrato` só AQUI (Important 5, 23/08/2026): quem
+              sobe um PDF nesta aba está esperando uma conta a pagar, então
+              "isto é um extrato, nenhuma conta foi criada" é a resposta à
+              pergunta dele. Na aba Controle o mesmo aviso apareceria em toda
+              importação normal e treinaria o dono a ignorar o âmbar. */}
+          <DialogoImportar onImportar={importarContrato} titulo="Importar contrato (PDF)" mostrarAvisoDeExtrato />
           <Button size="sm" variant="outline" onClick={() => setNovaAvulsaOpen(true)}>
             <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
             Nova conta avulsa

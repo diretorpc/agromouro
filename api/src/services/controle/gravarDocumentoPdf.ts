@@ -37,6 +37,13 @@ export type ResultadoGravarDocumento =
       // conta a pagar não — sem isto, um contrato importado "com sucesso"
       // deixaria um vencimento invisível. null quando não há o que avisar.
       avisoContas: string | null
+      // Como o SERVIDOR classificou o PDF. A decisão de negócio continua
+      // 100% aqui — este campo existe só para a tela saber QUE TIPO de aviso
+      // ela tem em mãos (Important 5 da revisão final, 23/08/2026): o aviso
+      // "isto é um extrato" é informação útil na aba Contas a Pagar e RUÍDO
+      // na aba Controle, onde importar extrato é o caminho normal. Sem esta
+      // distinção, a única saída seria a tela adivinhar pelo texto do aviso.
+      tipoDocumento: 'extrato' | 'contrato'
     }
   // Repassados de `lerDocumentoPdf` sem tocar em banco nem Storage — mesmos
   // três motivos de recusa da leitura (ver documentoPdf.ts).
@@ -660,6 +667,7 @@ export async function gravarDocumentoDoPdf(
       itensDuplicados,
       contasCriadas,
       avisoContas,
+      tipoDocumento:    documento.tipoDocumento,
     }
   } catch (err) {
     // Cobre o `throw` de data não-resolvível acima — acontece dentro do
