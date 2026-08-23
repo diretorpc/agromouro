@@ -561,3 +561,73 @@ describe('validarDocumentoLido — tipo do documento', () => {
     expect(r.documento.tipoDocumento).toBe('extrato')
   })
 })
+
+// Important 4 da revisão final (23/08/2026): a trava dos R$ 2,77 milhões
+// tinha virado JULGAMENTO DA IA — o prompt descrevia os dois formatos, mas
+// nada em CÓDIGO conferia a resposta. Uma classificação errada para
+// 'contrato' liga `conta_como_compra: true` num extrato cuja NF-e o Make
+// ainda vai derrubar, e o Financeiro passa a somar o mesmo dinheiro duas
+// vezes, calado.
+//
+// O cinto de segurança é determinístico e só aperta para UM LADO: pode
+// forçar 'extrato', NUNCA 'contrato'. A forma dos dois documentos é
+// diferente de verdade — extrato lista muitas duplicatas, cada uma com o
+// seu próprio número; contrato tem poucas linhas de mercadoria e nenhuma
+// numeração por linha (o número que existe é o do contrato inteiro).
+describe('validarDocumentoLido — cinto determinístico do tipo (Important 4)', () => {
+  const numerado = (i: number) => item({ numero_documento: `5710${i}`, descricao: `PRODUTO ${i}` })
+
+  it('IA disse "contrato" mas o documento tem cara de extrato: força "extrato"', () => {
+    const r = validarDocumentoLido(bruto({
+      tipoDocumento: 'contrato',
+      itens: [numerado(1), numerado(2), numerado(3), numerado(4), numerado(5), numerado(6)],
+      pagamentos: [{ data: '2026-08-28', valor: 500 }],
+    }), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.tipoDocumento).toBe('extrato')
+    // Rebaixado a extrato, os pagamentos morrem junto — extrato nunca gera
+    // conta a pagar (o boleto dele chega por e-mail).
+    expect(r.documento.pagamentos).toEqual([])
+  })
+
+  it('contrato de verdade (poucas linhas, sem numeração própria) continua "contrato"', () => {
+    const r = validarDocumentoLido(bruto({
+      tipoDocumento: 'contrato',
+      itens: [item({ numero_documento: null }), item({ numero_documento: null, descricao: 'MAP' })],
+      pagamentos: [{ data: '2026-08-28', valor: 500 }],
+    }), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.tipoDocumento).toBe('contrato')
+    expect(r.documento.pagamentos).toHaveLength(1)
+  })
+
+  it('muitas linhas SEM numeração própria não bastam para rebaixar', () => {
+    const r = validarDocumentoLido(bruto({
+      tipoDocumento: 'contrato',
+      itens: Array.from({ length: 8 }, (_, i) => item({ numero_documento: null, descricao: `LINHA ${i}` })),
+    }), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.tipoDocumento).toBe('contrato')
+  })
+
+  it('poucas linhas, todas numeradas, não bastam para rebaixar', () => {
+    const r = validarDocumentoLido(bruto({
+      tipoDocumento: 'contrato',
+      itens: [numerado(1), numerado(2), numerado(3), numerado(4)],
+    }), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.tipoDocumento).toBe('contrato')
+  })
+
+  // A TRAVA SUPREMA: o cinto só aperta num sentido. Nenhuma combinação de
+  // itens pode PROMOVER um extrato a contrato — promover é o lado que
+  // dobra dinheiro.
+  it('extrato com poucas linhas sem numeração continua "extrato" — o cinto nunca PROMOVE', () => {
+    const r = validarDocumentoLido(bruto({
+      tipoDocumento: 'extrato',
+      itens: [item({ numero_documento: null })],
+    }), HOJE)
+    if (r.status !== 'documento') throw new Error('esperava documento')
+    expect(r.documento.tipoDocumento).toBe('extrato')
+  })
+})

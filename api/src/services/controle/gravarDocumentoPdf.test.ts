@@ -53,6 +53,11 @@ const { estado, uploadMock, removeMock, gravarContasMock } = vi.hoisted(() => {
     // caminho "pelo menos 1 item já gravado", onde a FK RESTRICT impede o
     // DELETE e o service marca erro em vez de apagar).
     documentosMarcadosErro: [] as { id: string; status: string; erro_mensagem: string }[],
+    // Cada INSERT em `alertas` (Important 4 — classificar como 'contrato'
+    // liga dinheiro e não pode acontecer calado). `erroInsertAlerta` prova
+    // que falhar aqui não derruba a importação.
+    alertasInseridos: [] as any[],
+    erroInsertAlerta: null as null | { message: string },
     // Controla o roteamento de `.eq()` no mock de documentos_controle: a
     // mesma chamada encadeada serve tanto `.delete().eq(...)` quanto
     // `.update(payload).eq(...)` — precisa saber qual das duas está em curso.
@@ -170,6 +175,14 @@ vi.mock('../supabase', () => ({
           }),
         }
       }
+      if (table === 'alertas') {
+        return {
+          insert: vi.fn((payload: any) => {
+            estado.alertasInseridos.push(payload)
+            return Promise.resolve({ data: null, error: estado.erroInsertAlerta })
+          }),
+        }
+      }
       throw new Error(`tabela não mockada neste teste: ${table}`)
     }),
   },
@@ -253,6 +266,8 @@ beforeEach(() => {
   estado.payloadUpdatePendente = null
   estado.itemDuplicadoExistente = null
   estado.itensAtualizados = []
+  estado.alertasInseridos = []
+  estado.erroInsertAlerta = null
   vi.clearAllMocks()
 })
 
@@ -867,6 +882,44 @@ describe('gravarDocumentoDoPdf — contrato x extrato', () => {
     if (r.status !== 'gravado') throw new Error('esperava gravado')
     expect(r.contasCriadas).toBe(1)
     expect(r.avisoContas).toBeNull()
+  })
+
+  // Important 4 da revisão final (23/08/2026): classificar um documento como
+  // 'contrato' é a decisão que LIGA dinheiro (conta_como_compra: true) e é
+  // tomada por uma IA. Decisão de dinheiro tomada por IA não pode acontecer
+  // em silêncio — vira registro na central de alertas, onde o dono vê.
+  it('contrato grava um alerta na central — classificação que liga dinheiro não é silenciosa', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+
+    await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    expect(estado.alertasInseridos).toHaveLength(1)
+    expect(estado.alertasInseridos[0]).toMatchObject({
+      tipo: 'documento_classificado_contrato',
+      nivel: 'aviso',
+      lido: false,
+      fazenda_id: FAZENDA,
+    })
+    expect(estado.alertasInseridos[0].mensagem).toContain(FORNECEDOR)
+  })
+
+  it('extrato NÃO gera alerta — é o caminho normal, alertar treinaria a ignorar', async () => {
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'extrato' }) }
+
+    await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    expect(estado.alertasInseridos).toHaveLength(0)
+  })
+
+  // O alerta é aviso, não pré-requisito: falhar nele não pode derrubar uma
+  // importação já persistida.
+  it('falha ao gravar o alerta não derruba a importação', async () => {
+    estado.erroInsertAlerta = { message: 'RLS negou' }
+    estado.lido = { status: 'documento', documento: documento({ tipoDocumento: 'contrato' }) }
+
+    const r = await gravarDocumentoDoPdf(PDF, ARQUIVO, HOJE, FAZENDA, anthropic)
+
+    expect(r.status).toBe('gravado')
   })
 
   it('extrato não chama a criação de contas', async () => {

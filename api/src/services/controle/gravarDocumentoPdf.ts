@@ -117,6 +117,53 @@ function dataManualDoItem(item: ItemDocumentoLido, documento: DocumentoLido): st
   return item.data ?? documento.dataDocumento
 }
 
+// ⚠️ Important 4 da revisão final (23/08/2026). Classificar um PDF como
+// 'contrato' é a decisão que LIGA dinheiro: `conta_como_compra: true` faz
+// aqueles itens somarem no Financeiro, e o mesmo documento vira dívida em
+// Contas a Pagar. Quem toma essa decisão é uma IA lendo um PDF. Decisão de
+// dinheiro tomada por IA não pode acontecer em silêncio — se ela errar num
+// extrato de revenda, o Financeiro passa a somar duas vezes a mesma compra
+// (a NF-e dessa revenda chega depois pelo Make) e nada avisaria ninguém.
+//
+// Extrato NÃO gera alerta de propósito: é o caminho normal (3 dos 3 PDFs já
+// importados), e alertar no caminho normal treina o dono a ignorar o canal.
+//
+// Best-effort: nunca estoura e nunca muda o resultado da importação. O
+// documento e os itens já estão gravados quando isto roda; falhar a gravar
+// um aviso não pode derrubar dinheiro já persistido. Se a tabela recusar,
+// sobra o `console.warn` estruturado — pior que o alerta, melhor que o
+// silêncio.
+async function avisarClassificacaoContrato(
+  documento: DocumentoLido,
+  documentoId: string,
+  fazendaId: string,
+  nomeArquivo: string,
+): Promise<void> {
+  const mensagem =
+    `O PDF "${nomeArquivo}" foi lido como CONTRATO de compra (fornecedor: ${documento.fornecedor ?? 'não identificado'}, ` +
+    `documento: ${documento.numeroDocumento ?? 'sem número'}). Por isso ele CONTA como gasto no Financeiro e virou conta a pagar. ` +
+    'Se na verdade for um extrato de revenda, apague o documento na aba Controle — senão a compra será contada duas vezes ' +
+    'quando a nota fiscal dela chegar.'
+
+  try {
+    const { error } = await supabase.from('alertas').insert({
+      tipo:             'documento_classificado_contrato',
+      titulo:           `Documento lido como contrato: ${documento.fornecedor ?? nomeArquivo}`,
+      mensagem,
+      nivel:            'aviso',
+      lido:             false,
+      enviado_whatsapp: false,
+      fazenda_id:       fazendaId,
+    })
+    if (error) {
+      console.warn(`[GravarDocumentoPdf] classificacao=contrato documento=${documentoId} alerta_falhou="${error.message}" — ${mensagem}`)
+    }
+  } catch (err) {
+    const motivo = err instanceof Error ? err.message : String(err)
+    console.warn(`[GravarDocumentoPdf] classificacao=contrato documento=${documentoId} alerta_falhou="${motivo}" — ${mensagem}`)
+  }
+}
+
 // Marca o documento como 'erro' em vez de apagar a linha — usado quando pelo
 // menos 1 item JÁ FOI gravado em itens_nfe apontando para este documento
 // (achado A da revisão do Apolo, rodada 3): `itens_nfe_doc_controle_fk` é
@@ -504,6 +551,12 @@ export async function gravarDocumentoDoPdf(
     let avisoContas: string | null = null
 
     if (documento.tipoDocumento === 'contrato') {
+      // ANTES de criar as contas: o alerta é sobre a CLASSIFICAÇÃO (que já
+      // aconteceu e já ligou o gasto nos itens), não sobre o resultado da
+      // conta a pagar. Se a conta falhar, a classificação continua tendo
+      // ligado dinheiro — e é isso que o dono precisa poder conferir.
+      await avisarClassificacaoContrato(documento, documentoId, fazendaId, nomeArquivo)
+
       // `gravarContasDoContrato` documenta "nunca estoura" (todo erro vira
       // texto em `contas.erro`), mas esse contrato não é reforçado por
       // try/catch dentro dela — e diferente do catch EXTERNO deste bloco

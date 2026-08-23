@@ -74,6 +74,38 @@ const MAX_ITENS = 300
 // linha — corta e loga, em vez de criar dezenas de contas a pagar fantasma.
 const MAX_PAGAMENTOS = 24
 
+// ⚠️ CINTO DE SEGURANÇA DETERMINÍSTICO DO TIPO (Important 4 da revisão
+// final, 23/08/2026). Até aqui, a decisão que liga R$ 647 mil de gasto — e
+// que, errada para o outro lado, dobraria os R$ 2,77 milhões de extrato já
+// em produção — dependia SÓ do julgamento da IA. `tipoDeDocumento()` já
+// resolve a INDECISÃO (nulo/desconhecido → 'extrato'); o que faltava era
+// conferir uma resposta CONFIANTE e errada.
+//
+// A forma dos dois documentos difere de verdade: um extrato de "Contas a
+// Receber" lista muitas duplicatas, cada uma com o SEU número; um contrato
+// tem poucas linhas de mercadoria e nenhuma numeração por linha (o número
+// que existe é o do contrato inteiro). Quando o documento tem cara de
+// extrato, a resposta 'contrato' é rebaixada.
+//
+// ⚠️ ESTES DOIS NÚMEROS FORAM ESTIMADOS, NÃO MEDIDOS. Os 3 PDFs reais
+// (Syagri, Solos, Protec) e o contrato 280451 da Mosaic não estavam
+// disponíveis para calibrar quando isto foi escrito. Referência conhecida
+// pela spec: o contrato Mosaic tem 1 item; os extratos têm dezenas de
+// duplicatas numeradas. A folga é grande, mas se um contrato de várias
+// mercadorias numeradas aparecer um dia, ele será rebaixado a extrato — o
+// gasto deixa de somar (lado BARATO, o dono corrige na tela) em vez de
+// contar duas vezes. Recalibrar contra os PDFs reais continua pendente.
+const ITENS_PARA_PARECER_EXTRATO = 5
+const ITENS_NUMERADOS_PARA_PARECER_EXTRATO = 3
+
+// Só aperta para UM LADO: pode rebaixar 'contrato' → 'extrato', NUNCA o
+// contrário. Promover é o movimento que dobra dinheiro; rebaixar só deixa um
+// valor sem somar, visível na tela.
+function pareceExtrato(itens: ItemDocumentoLido[]): boolean {
+  return itens.length > ITENS_PARA_PARECER_EXTRATO
+    && itens.filter(i => i.numeroDocumento !== null).length > ITENS_NUMERADOS_PARA_PARECER_EXTRATO
+}
+
 export type ItemDocumentoLido = {
   descricao:      string
   // NULLABLE de propósito: a coluna itens_nfe.quantidade é NULLABLE, e um
@@ -208,7 +240,10 @@ const SCHEMA = {
         'Qual dos dois formatos é este documento. "extrato" = relatório de "Contas a Receber" que uma ' +
         'revenda agrícola emite listando duplicatas/notas em aberto do cliente. "contrato" = contrato de ' +
         'compra e venda de mercadoria, com Quadro Resumo, VENDEDORA/COMPRADOR e número de contrato ' +
-        '(ex: Mosaic). null se não der para decidir com segurança — não chute.',
+        '(ex: Mosaic). null se não der para decidir com segurança — não chute. ' +
+        'NA DÚVIDA ENTRE OS DOIS, responda "extrato": errar para "contrato" faz o sistema contar a ' +
+        'mesma compra duas vezes, e ninguém é avisado; errar para "extrato" só deixa um valor sem ' +
+        'somar, que a pessoa corrige na tela.',
     },
     fornecedor: {
       type: ['string', 'null'],
@@ -348,7 +383,16 @@ const INSTRUCAO =
   'No CONTRATO, além dos produtos, leia a DATA DE PAGAMENTO do Quadro Resumo (campo "Data de pagamento", ' +
   'às vezes junto de "Forma de pagamento") e devolva em `pagamentos` — é o compromisso financeiro, e é ' +
   'DIFERENTE da "Data de Início" (que é o prazo de retirada da mercadoria e vai em dataDocumento). ' +
-  'Havendo mais de uma parcela, uma entrada por parcela. No EXTRATO, `pagamentos` é sempre lista vazia.'
+  'Havendo mais de uma parcela, uma entrada por parcela. No EXTRATO, `pagamentos` é sempre lista vazia. ' +
+  // Frase de desempate — Important 4 da revisão final (23/08/2026). O prompt
+  // descrevia os dois formatos, mas em nenhum lugar dizia o que fazer na
+  // dúvida, nem que os dois erros custam coisas MUITO diferentes. A IA
+  // decidia como se o custo fosse simétrico; não é.
+  'DESEMPATE, se você ficar em dúvida entre os dois formatos: responda "extrato". Errar para ' +
+  '"contrato" faz o sistema contar a mesma compra duas vezes, em silêncio, porque a nota fiscal ' +
+  'dessa compra vai chegar depois por outro caminho. Errar para "extrato" só deixa um valor sem ' +
+  'somar, e a pessoa corrige na tela. Só responda "contrato" quando o documento for claramente um ' +
+  'contrato de compra e venda com Quadro Resumo.'
 
 // O formato bater não prova que a data existe ('2026-02-31' passa no regex e
 // `dataExiste`/`diasEntre` — importados de contas/datas.ts, mesma checagem
@@ -505,8 +549,11 @@ export function validarDocumentoLido(bruto: any, hojeISO: string): ResultadoVali
   const dataDocumento   = dataSanitizada(bruto.dataDocumento, hojeISO)
   const codigoCliente   = texto(bruto.codigoCliente)
   const numeroDocumento = montarNumeroDocumento(codigoCliente, dataDocumento)
-  const tipoDocumento   = tipoDeDocumento(bruto.tipoDocumento)
-  const pagamentosLidos = validarPagamentos(bruto.pagamentos, tipoDocumento, hojeISO)
+  // Resposta CRUA da IA, ainda sujeita ao cinto determinístico lá embaixo —
+  // que só pode rodar depois de os itens estarem validados, porque é a forma
+  // deles que denuncia um extrato. Por isso `pagamentos` também só é
+  // calculado no fim: ele depende do tipo FINAL.
+  const tipoDaIA        = tipoDeDocumento(bruto.tipoDocumento)
 
   const valorTotalDocumentoBruto = numero(bruto.valorTotalDocumento)
   // Arredonda ANTES de aplicar o teto, mesma ordem que os itens já seguem —
@@ -644,6 +691,24 @@ export function validarDocumentoLido(bruto: any, hojeISO: string): ResultadoVali
   if (itens.length === 0) return { status: 'sem-itens-aproveitaveis', itensDescartados }
 
   const somaItens = Math.round(itens.reduce((acc, i) => acc + i.valorTotal, 0) * 100) / 100
+
+  // Cinto determinístico (Important 4): a IA pode ter dito 'contrato' com
+  // confiança sobre um documento que tem forma de extrato. Rebaixa, loga
+  // alto (esta é uma decisão de dinheiro) e segue. Nunca promove.
+  const tipoDocumento = tipoDaIA === 'contrato' && pareceExtrato(itens) ? 'extrato' : tipoDaIA
+  if (tipoDocumento !== tipoDaIA) {
+    console.warn(
+      `[DocumentoPDF] IA classificou como 'contrato', mas o documento tem ${itens.length} itens e ` +
+      `${itens.filter(i => i.numeroDocumento !== null).length} com número próprio — forma de EXTRATO. ` +
+      'Rebaixado para extrato: os itens NÃO contam como gasto e nenhuma conta a pagar será criada.',
+    )
+  }
+
+  // Depois do tipo final, nunca antes: extrato não tem pagamento, e um
+  // documento rebaixado precisa perder os pagamentos junto — senão viraria
+  // conta a pagar de um extrato, que é exatamente a cobrança em duplicidade
+  // que `validarPagamentos` existe para impedir.
+  const pagamentosLidos = validarPagamentos(bruto.pagamentos, tipoDocumento, hojeISO)
 
   return {
     status: 'documento',
