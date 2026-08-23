@@ -57,15 +57,25 @@ describe('gravarContasDoContrato', () => {
     expect(r).toEqual({ criadas: 0, duplicadas: 1, erro: null })
   })
 
-  // Uma parcela que falha não pode derrubar a outra que deu certo.
+  // Uma parcela que falha não pode derrubar as demais. Erro no MEIO (não na
+  // última posição): só assim o teste distingue "continua tentando as
+  // parcelas seguintes" de "para no primeiro erro genérico" — com o erro na
+  // última posição, um `return` precoce e o laço completo dão o mesmo
+  // resultado observável, e o teste não acusaria a diferença.
   it('erro numa parcela não impede as demais, e é reportado', async () => {
     insertMock
       .mockResolvedValueOnce({ error: null })
       .mockResolvedValueOnce({ error: { code: '42501', message: 'RLS' } })
+      .mockResolvedValueOnce({ error: null })
     const r = await gravarContasDoContrato(contrato({
-      pagamentos: [{ data: '2026-08-28', valor: 300000 }, { data: '2026-09-28', valor: 347986.35 }],
+      pagamentos: [
+        { data: '2026-08-28', valor: 200000 },
+        { data: '2026-09-28', valor: 200000 },
+        { data: '2026-10-28', valor: 247986.35 },
+      ],
     }), 'doc-1', 'f1')
-    expect(r.criadas).toBe(1)
+    expect(insertMock).toHaveBeenCalledTimes(3)
+    expect(r.criadas).toBe(2)
     expect(r.erro).toContain('RLS')
   })
 })
