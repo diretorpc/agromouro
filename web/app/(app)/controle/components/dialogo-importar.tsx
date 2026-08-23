@@ -171,8 +171,15 @@ export function DialogoImportar({ onImportar, titulo, mostrarAvisoDeExtrato = fa
               {/* Aviso de CONTRATO sempre aparece (é caro: vencimento sem
                   data, parcela perdida, conta que faltou). Aviso de EXTRATO
                   só onde ele é notícia — a aba Contas a Pagar. Ver
-                  `mostrarAvisoDeExtrato` no topo deste arquivo. */}
-              {estado.avisoContas && (estado.tipoDocumento === 'contrato' || mostrarAvisoDeExtrato) && (
+                  `mostrarAvisoDeExtrato` no topo deste arquivo.
+                  Checa `!== 'extrato'` em vez de `=== 'contrato'` de propósito:
+                  se o Vercel subir antes do Railway numa janela de deploy, o
+                  servidor antigo pode não mandar `tipoDocumento` nenhum
+                  (undefined). Nesse caso o default precisa MOSTRAR o aviso —
+                  esconder um aviso de contrato é o lado caro (vencimento sem
+                  data passa batido); mostrar um aviso de extrato a mais é só
+                  um âmbar de sobra, sem custo. */}
+              {estado.avisoContas && (estado.tipoDocumento !== 'extrato' || mostrarAvisoDeExtrato) && (
                 <p className="text-sm text-amber-600">{estado.avisoContas}</p>
               )}
             </div>
