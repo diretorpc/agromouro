@@ -324,6 +324,38 @@ describe('validarNotaLida — formaPagamentoLido guarda o texto cru, para a tela
   })
 })
 
+describe('validarNotaLida — centro de custo é escolha do dono, não leitura do papel', () => {
+  it('sem escolha, fica vazio: o sistema decide como sempre decidiu', () => {
+    const r = validarNotaLida(lida(), HOJE)
+    expect(r.status === 'nota' && r.nota.itens[0].centroCusto).toBe('')
+  })
+
+  it('escolha do dono sobrevive à validacao', () => {
+    const r = validarNotaLida(lida({ itens: [item({ centroCusto: 'manutencao' })] }), HOJE)
+    expect(r.status === 'nota' && r.nota.itens[0].centroCusto).toBe('manutencao')
+  })
+
+  it('texto arbitrario vindo do navegador e cortado, nao recusado', () => {
+    // A coluna e texto livre de proposito (o dropdown mistura categoria
+    // agricola com categoria de cartao). Cortar evita entrada gigante; recusar
+    // recriaria o bug de "nao salva em silencio".
+    const r = validarNotaLida(lida({ itens: [item({ centroCusto: 'x'.repeat(200) })] }), HOJE)
+    expect(r.status === 'nota' && r.nota.itens[0].centroCusto.length).toBe(40)
+  })
+
+  it('centro de custo vazio NAO viaja pro NFeData — a coluna fica nula', () => {
+    const r = validarNotaLida(lida(), HOJE)
+    if (r.status !== 'nota') throw new Error('fixture deveria validar')
+    expect(converterParaNFeData(r.nota).items[0].centroCusto).toBeUndefined()
+  })
+
+  it('centro de custo escolhido chega no NFeData que processarNFe grava', () => {
+    const r = validarNotaLida(lida({ itens: [item({ centroCusto: 'manutencao' })] }), HOJE)
+    if (r.status !== 'nota') throw new Error('fixture deveria validar')
+    expect(converterParaNFeData(r.nota).items[0].centroCusto).toBe('manutencao')
+  })
+})
+
 describe('converterParaNFeData', () => {
   it('NFS-e marca servico:true em todo item — servico nunca e estocavel', () => {
     const r = validarNotaLida(lida({ modelo: 'nfse' }), HOJE)

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
+import { CATEGORIAS_FINANCEIRAS } from '@/lib/centro-custo'
 import { cfopAposEscolha, podeGravar, type FamiliaItem } from './regras-conferencia'
 
 // Toda a UI do modo "Upload PDF" mora aqui, fora de page.tsx (que já passa de
@@ -26,6 +27,9 @@ type ItemLido = {
   unidadeTrib:    string
   ncm:            string
   cfop:           string
+  // Escolha do dono, não leitura do papel: o DANFE não traz centro de custo.
+  // '' = "o sistema decide" (a tela Financeiro cai em insumos.tipo ?? 'outro').
+  centroCusto?:   string
   // Qual família de efeito o CFOP lido representa, calculada pela API
   // (contas/cfop.ts). Vazia quando o CFOP não foi lido — aí o dono escolhe.
   // Só existe na tela: o servidor reconstrói o item a partir do `cfop`.
@@ -213,6 +217,26 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
       itens: nota.itens.map(item =>
         item.cfop ? item : { ...item, cfop: compra.cfop, familia: compra.chave }),
     })
+  }
+
+  // Centro de custo é o que o Financeiro usa para agrupar gasto. Item
+  // não-estocável (peça, material de construção, frete) entra com insumo_id
+  // nulo — sem escolher aqui, a nota inteira cai em "Outro" e o dono
+  // reclassifica item por item depois, na outra tela. Pedido do Matheus na
+  // primeira importação real (24/08/2026).
+  function escolherCentro(indice: number, valor: string) {
+    if (!nota) return
+    setNota({
+      ...nota,
+      itens: nota.itens.map((item, n) => n === indice ? { ...item, centroCusto: valor } : item),
+    })
+  }
+
+  // Nota de fornecedor costuma ser toda do mesmo centro (material de
+  // construção, peça, defensivo). Um clique em vez de N.
+  function aplicarCentroATodos(valor: string) {
+    if (!nota || !valor) return
+    setNota({ ...nota, itens: nota.itens.map(item => ({ ...item, centroCusto: valor })) })
   }
 
   function editar<K extends keyof NotaLida>(campo: K, valor: NotaLida[K]) {
@@ -429,7 +453,23 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
       </div>
 
       <div>
-        <p className="text-sm font-medium mb-1">Itens ({nota.itens.length})</p>
+        <div className="flex items-center justify-between gap-3 mb-1">
+          <p className="text-sm font-medium">Itens ({nota.itens.length})</p>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            Centro de custo de todos:
+            <select
+              className="rounded border border-input bg-background px-2 py-1 text-xs"
+              value=""
+              aria-label="Aplicar um centro de custo a todos os itens"
+              onChange={e => { aplicarCentroATodos(e.target.value); e.currentTarget.value = '' }}
+            >
+              <option value="">— escolher —</option>
+              {CATEGORIAS_FINANCEIRAS.map(c => (
+                <option key={c.value} value={c.value}>{c.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
         <div className="max-h-64 overflow-y-auto rounded-md border">
           <table className="w-full text-xs">
             <thead className="bg-muted sticky top-0">
@@ -439,6 +479,7 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
                 <th className="text-left p-2">Un</th>
                 <th className="text-right p-2">Total</th>
                 <th className="text-left p-2">O que é este item</th>
+                <th className="text-left p-2">Centro de custo</th>
                 <th className="p-2" />
               </tr>
             </thead>
@@ -487,6 +528,21 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
                         )}
                       </>
                     )}
+                  </td>
+                  <td className="p-2">
+                    <select
+                      className="w-full rounded border border-input bg-background px-1 py-0.5 text-xs"
+                      value={item.centroCusto ?? ''}
+                      aria-label={`Centro de custo do item ${item.descricao}`}
+                      onChange={e => escolherCentro(n, e.target.value)}
+                    >
+                      {/* Vazio é opção legítima, não erro: mantém o comportamento
+                          de sempre (Financeiro deriva de insumos.tipo). */}
+                      <option value="">— o sistema decide —</option>
+                      {CATEGORIAS_FINANCEIRAS.map(c => (
+                        <option key={c.value} value={c.value}>{c.label}</option>
+                      ))}
+                    </select>
                   </td>
                   <td className="p-2 text-right">
                     <button
