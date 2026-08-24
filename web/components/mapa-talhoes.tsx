@@ -15,6 +15,8 @@ const STATUS_FILL_OPACITY: Record<Talhao['status'], number> = {
   ativo: 0.35,
   pousio: 0.25,
   colhido: 0.15,
+  // Área arrendada segue plantada/ativa (só quem opera é terceiro) — mesma opacidade de 'ativo'.
+  arrendado: 0.35,
 }
 
 function FitBounds({ bounds }: { bounds: LatLngBounds }) {

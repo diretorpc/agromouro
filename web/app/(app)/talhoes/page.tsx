@@ -26,12 +26,15 @@ import type { Talhao } from '@/lib/types'
 // Leaflet não funciona com SSR — importação dinâmica obrigatória
 const MapaTalhoes = dynamic(() => import('@/components/mapa-talhoes'), { ssr: false })
 
-const STATUS_OPTIONS: Talhao['status'][] = ['ativo', 'pousio', 'colhido']
+const STATUS_OPTIONS: Talhao['status'][] = ['ativo', 'pousio', 'colhido', 'arrendado']
 
 const STATUS_STYLE: Record<Talhao['status'], { bg: string; color: string }> = {
-  ativo:   { bg: '#EDFAF1', color: '#16A34A' },
-  pousio:  { bg: '#FFFBEB', color: '#D97706' },
-  colhido: { bg: '#F3F4F6', color: '#6B7280' },
+  ativo:     { bg: '#EDFAF1', color: '#16A34A' },
+  pousio:    { bg: '#FFFBEB', color: '#D97706' },
+  colhido:   { bg: '#F3F4F6', color: '#6B7280' },
+  // Azul: distinto dos três acima, que são verde/âmbar/cinza. Área arrendada
+  // não é estado de lavoura — é regime de posse, e a cor precisa dizer isso.
+  arrendado: { bg: '#EFF6FF', color: '#2563EB' },
 }
 
 const SELECT_CLASS = 'flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring'
