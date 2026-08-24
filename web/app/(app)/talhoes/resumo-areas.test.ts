@@ -16,19 +16,25 @@ describe('resumirAreas', () => {
       talhao({ id: '2', area_ha: 128.8, status: 'colhido' }),
       talhao({ id: '3', area_ha: 350, status: 'arrendado', arrendatario: 'Usina Uberaba' }),
     ])
-    expect(r.total).toBe(928.8)
-    expect(r.arrendada).toBe(350)
-    expect(r.emOperacao).toBe(578.8)
+    expect(r.total).toBeCloseTo(928.8, 10)
+    expect(r.arrendada).toBeCloseTo(350, 10)
+    expect(r.emOperacao).toBeCloseTo(578.8, 10)
   })
 
-  // A invariante que impede a tela de se contradizer.
-  it('em operação + arrendada é SEMPRE igual ao total', () => {
+  // Valores CONCRETOS, não a identidade algébrica: `emOperacao` é derivado por
+  // subtração (`total - arrendada`), então `emOperacao + arrendada === total`
+  // seria verdade mesmo com a classificação por status quebrada. O que precisa
+  // ser provado é que o status `arrendado` cai no balde certo.
+  it('classifica por status: arrendado sai de emOperacao e entra em arrendada', () => {
     const r = resumirAreas([
-      talhao({ id: '1', area_ha: 105.9 }),
+      talhao({ id: '1', area_ha: 105.9, status: 'ativo' }),
       talhao({ id: '2', area_ha: 80.5, status: 'arrendado' }),
       talhao({ id: '3', area_ha: 196.4, status: 'pousio' }),
+      talhao({ id: '4', area_ha: 128.77, status: 'arrendado' }),
     ])
-    expect(r.emOperacao + r.arrendada).toBeCloseTo(r.total, 10)
+    expect(r.emOperacao).toBeCloseTo(302.3, 10)   // 105,9 + 196,4 — pousio continua sendo área nossa
+    expect(r.arrendada).toBeCloseTo(209.27, 10)   // 80,5 + 128,77
+    expect(r.total).toBeCloseTo(511.57, 10)
   })
 
   it('conta os talhões nos três recortes', () => {
