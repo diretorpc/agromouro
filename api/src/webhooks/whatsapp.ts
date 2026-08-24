@@ -135,12 +135,17 @@ Responda SOMENTE em JSON válido, sem texto extra:
 }
 
 // ─── Consultar estoque de um insumo ──────────────────────────────────────────
-async function consultarEstoque(nomeInsumo: string): Promise<string> {
+// export: exercitado direto por whatsapp.test.ts (isolamento entre fazendas).
+// fazendaId é obrigatório: o cliente supabase daqui usa SERVICE_KEY (bypassa RLS
+// por completo — as policies dependem de auth.uid(), que não existe no backend).
+// Sem este filtro escrito à mão, a consulta do MT devolveria o número do MG.
+export async function consultarEstoque(nomeInsumo: string, fazendaId: string): Promise<string> {
   const nomeSanitizado = nomeInsumo.trim().slice(0, 100)
 
   const { data: insumos } = await supabase
     .from('insumos')
     .select('id, nome, unidade')
+    .eq('fazenda_id', fazendaId)
     .ilike('nome', `%${nomeSanitizado}%`)
     .limit(3)
 
@@ -152,6 +157,7 @@ async function consultarEstoque(nomeInsumo: string): Promise<string> {
   const { data: estoques } = await supabase
     .from('estoque')
     .select('insumo_id, quantidade_atual, quantidade_minima_alerta')
+    .eq('fazenda_id', fazendaId)
     .in('insumo_id', ids)
 
   if (!estoques || estoques.length === 0) {
@@ -192,6 +198,7 @@ export async function buscarTalhao(nomeTalhao: string, fazendaId: string) {
 }
 
 // ─── Buscar insumo por nome ──────────────────────────────────────────────────
+// export: exercitado direto por whatsapp.test.ts (isolamento entre fazendas).
 // Decisão MVP: sem auto-criação. Se não achar, retorna null e o chamador avisa
 // o agricultor no WA. Fuzzy match + confirmação ficam para pós-MVP.
 //
@@ -199,13 +206,18 @@ export async function buscarTalhao(nomeTalhao: string, fazendaId: string) {
 // duplicatas no banco (mesmo nome, IDs diferentes — origem comum: importação
 // repetida de NF-e), o `.limit(1)` puro escolheria um aleatório, podendo
 // pegar um órfão sem estoque e falhar silenciosamente no UPDATE.
-async function buscarInsumo(nome: string) {
+//
+// fazendaId é obrigatório: o cliente supabase daqui usa SERVICE_KEY (bypassa RLS
+// por completo). Sem .eq('fazenda_id', ...), "glifosato" da fazenda A podia casar
+// com o glifosato da fazenda B e gravar movimentação de estoque cruzada.
+export async function buscarInsumo(nome: string, fazendaId: string) {
   const nomeSanitizado = nome.trim().slice(0, 100)
   if (!nomeSanitizado) return null
 
   const { data } = await supabase
     .from('insumos')
     .select('id, nome, unidade, estoque(id)')
+    .eq('fazenda_id', fazendaId)
     .ilike('nome', `%${nomeSanitizado}%`)
     .limit(5)
 
@@ -235,9 +247,10 @@ type InsumoResolvido =
 async function resolverInsumos(
   insumos: InsumoBruto[],
   talhao: { area_ha: number } | null,
+  fazendaId: string,
 ): Promise<InsumoResolvido[]> {
   return Promise.all(insumos.map(async (item): Promise<InsumoResolvido> => {
-    const insumo = await buscarInsumo(item.nome)
+    const insumo = await buscarInsumo(item.nome, fazendaId)
     if (!insumo) {
       return { ok: false, nome: item.nome, erro: 'insumo não encontrado no banco' }
     }
@@ -293,7 +306,7 @@ async function processarMensagem(telefone: string, texto: string, fazenda_codigo
       Array.isArray(dados.insumos) ? dados.insumos : []
 
     if (tipo === 'CONSULTA_ESTOQUE' && insumos.length > 0) {
-      const respostas = await Promise.all(insumos.map(i => consultarEstoque(i.nome)))
+      const respostas = await Promise.all(insumos.map(i => consultarEstoque(i.nome, fazenda_id)))
       resposta = respostas.join('\n')
 
     } else if (tipo === 'OPERACAO' || tipo === 'APLICACAO_INSUMO') {
@@ -318,7 +331,7 @@ async function processarMensagem(telefone: string, texto: string, fazenda_codigo
       const operacaoId = operacao.id
 
       // Resolve insumos (busca id no banco, calcula quantidade total)
-      const resolvidos = await resolverInsumos(insumos, talhao)
+      const resolvidos = await resolverInsumos(insumos, talhao, fazenda_id)
       const okItems   = resolvidos.filter((i): i is Extract<InsumoResolvido, { ok: true }>  => i.ok === true)
       const failItems = resolvidos.filter((i): i is Extract<InsumoResolvido, { ok: false }> => i.ok === false)
 
@@ -365,11 +378,15 @@ async function processarMensagem(telefone: string, texto: string, fazenda_codigo
         }
 
         // Decrementar quantidade_atual em estoque (Passo 6)
-        // 1 SELECT batch pega todos os atuais + mínimos; N UPDATEs em paralelo
+        // 1 SELECT batch pega todos os atuais + mínimos; N UPDATEs em paralelo.
+        // .eq('fazenda_id', ...) aqui também: última linha de defesa contra
+        // insumo_id vazando de outra fazenda (não deveria acontecer após o
+        // filtro em buscarInsumo, mas é barato garantir de novo aqui).
         const insumoIds = okItems.map(i => i.insumo_id)
         const { data: estoqueAtual } = await supabase
           .from('estoque')
           .select('insumo_id, quantidade_atual, quantidade_minima_alerta')
+          .eq('fazenda_id', fazenda_id)
           .in('insumo_id', insumoIds)
 
         const estoqueMap = new Map(
