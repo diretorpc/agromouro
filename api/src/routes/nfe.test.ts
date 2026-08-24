@@ -165,6 +165,37 @@ describe('POST /nfe/ler-pdf', () => {
     expect(res.body.existeNoOutroModelo).toBeNull()
   })
 
+  it('devolve as familias de efeito e a familia de cada item', async () => {
+    // Achado 2 do Apolo: CFOP ilegivel vira "compra" por omissao e dobra o
+    // gasto numa nota de entrega futura. A tela deixa o dono escolher o EFEITO,
+    // e a lista vem pronta da API — regra fiscal mora em contas/cfop.ts.
+    lerNotaPdfMock.mockResolvedValue({ status: 'nota', nota: NOTA_LIDA, itensDescartados: 0, duplicatasDescartadas: 0 })
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA, body: corpoValido })
+    await handler(req, res, next)
+
+    expect(res.body.familias.map((f: any) => f.chave))
+      .toEqual(['compra', 'entrega-faturada', 'faturamento', 'bonificacao'])
+    expect(res.body.nota.itens[0].familia).toBe('compra')   // CFOP 5102 lido
+  })
+
+  it('item SEM CFOP volta com familia vazia — a tela nao pode ja mostrar "compra"', async () => {
+    const semCfop = { ...NOTA_LIDA, itens: [{ ...NOTA_LIDA.itens[0], cfop: '' }] }
+    lerNotaPdfMock.mockResolvedValue({ status: 'nota', nota: semCfop, itensDescartados: 0, duplicatasDescartadas: 0 })
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA, body: corpoValido })
+    await handler(req, res, next)
+
+    expect(res.body.nota.itens[0].familia).toBe('')
+  })
+
+  it('CFOP de entrega futura volta na familia certa, nao em compra', async () => {
+    const entrega = { ...NOTA_LIDA, itens: [{ ...NOTA_LIDA.itens[0], cfop: '5117' }] }
+    lerNotaPdfMock.mockResolvedValue({ status: 'nota', nota: entrega, itensDescartados: 0, duplicatasDescartadas: 0 })
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA, body: corpoValido })
+    await handler(req, res, next)
+
+    expect(res.body.nota.itens[0].familia).toBe('entrega-faturada')
+  })
+
   it('cada recusa de conteudo vira 422 com mensagem em portugues', async () => {
     for (const status of ['nao-nota', 'sem-identidade', 'sem-itens', 'grande-demais']) {
       lerNotaPdfMock.mockResolvedValue({ status })

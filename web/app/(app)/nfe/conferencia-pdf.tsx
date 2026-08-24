@@ -25,7 +25,15 @@ type ItemLido = {
   unidadeTrib:    string
   ncm:            string
   cfop:           string
+  // Qual família de efeito o CFOP lido representa, calculada pela API
+  // (contas/cfop.ts). Vazia quando o CFOP não foi lido — aí o dono escolhe.
+  // Só existe na tela: o servidor reconstrói o item a partir do `cfop`.
+  familia?:       string
 }
+
+// Efeitos que a tela oferece, em português de produtor. Vêm prontos da API —
+// regra fiscal tem um dono só neste projeto, e não é o front.
+type FamiliaItem = { chave: string; rotulo: string; cfop: string }
 
 type DuplicataLida = { numero: string; vencimento: string | null; valor: number | null }
 
@@ -53,6 +61,7 @@ type RespostaLeitura = {
   // Aviso, não bloqueio: se a IA classificou errado, as duas travas de
   // duplicidade procuram no modelo errado e a compra entra duas vezes.
   existeNoOutroModelo?: NotaNoBanco | null
+  familias?: FamiliaItem[]
 }
 
 type RespostaGravacao = {
@@ -151,6 +160,32 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
     setItensRemovidos(n => n + 1)
   }
 
+  // Trocar o efeito de um item grava o CFOP representante daquela família —
+  // o dono escolhe "já paguei antes", não "5117".
+  function escolherFamilia(indice: number, chave: string) {
+    if (!nota) return
+    const familia = leitura?.familias?.find(f => f.chave === chave)
+    if (!familia) return
+    setNota({
+      ...nota,
+      itens: nota.itens.map((item, n) =>
+        n === indice ? { ...item, cfop: familia.cfop, familia: familia.chave } : item),
+    })
+  }
+
+  // Atalho para a nota comum (tudo é compra) — evita 30 cliques quando a coluna
+  // CFOP inteira saiu borrada. É escolha EXPLÍCITA do dono, não default calado.
+  function marcarRestantesComoCompra() {
+    if (!nota) return
+    const compra = leitura?.familias?.find(f => f.chave === 'compra')
+    if (!compra) return
+    setNota({
+      ...nota,
+      itens: nota.itens.map(item =>
+        item.cfop ? item : { ...item, cfop: compra.cfop, familia: compra.chave }),
+    })
+  }
+
   function editar<K extends keyof NotaLida>(campo: K, valor: NotaLida[K]) {
     if (!nota) return
     if (campo === 'numero' || campo === 'emitenteCnpj' || campo === 'modelo') setIdentidadeEditada(true)
@@ -246,7 +281,18 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
             <p>{leitura.duplicatasDescartadas} parcela(s) de cobrança ficaram de fora.</p>
           )}
           {semCfop > 0 && (
-            <p>{semCfop} item(ns) sem CFOP legível — vão entrar como compra normal e somar no estoque.</p>
+            <p>
+              {semCfop} item(ns) sem CFOP legível. <strong>Escolha na coluna "O que é este item"</strong> —
+              sem escolha o sistema assume compra nova, e numa nota de entrega de pedido já pago isso
+              conta o gasto duas vezes.{' '}
+              <button
+                type="button"
+                className="underline font-medium"
+                onClick={marcarRestantesComoCompra}
+              >
+                São todos compra normal
+              </button>
+            </p>
           )}
         </div>
       )}
@@ -302,7 +348,7 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
                 <th className="text-right p-2">Qtd</th>
                 <th className="text-left p-2">Un</th>
                 <th className="text-right p-2">Total</th>
-                <th className="text-center p-2">CFOP</th>
+                <th className="text-left p-2">O que é este item</th>
                 <th className="p-2" />
               </tr>
             </thead>
@@ -313,10 +359,28 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
                   <td className="p-2 text-right">{item.quantidade}</td>
                   <td className="p-2">{item.unidade}</td>
                   <td className="p-2 text-right">{brl(item.valorTotal)}</td>
-                  {/* CFOP vazio fica amarelo: é ele que decide estoque, bonificação
-                      e remessa de entrega futura — sem ele o item entra como compra. */}
-                  <td className={`p-2 text-center ${item.cfop ? '' : 'bg-amber-50 text-amber-700'}`}>
-                    {item.cfop || '—'}
+                  {/* O CFOP decide estoque, bonificação e entrega futura. Quando a
+                      IA não conseguiu ler, sem escolha o item entra como COMPRA — e
+                      numa nota de entrega futura isso dobra o gasto. O dono escolhe o
+                      EFEITO em português; o código sai da lista que a API mandou.
+                      Família fora da lista (consignação, remessa sem compra) aparece
+                      como código cru: trocá-la por "compra" seria piorar. */}
+                  <td className={`p-2 ${item.cfop ? '' : 'bg-amber-50'}`}>
+                    {item.cfop && !item.familia ? (
+                      <span title="CFOP com efeito próprio — não mexa sem motivo">CFOP {item.cfop}</span>
+                    ) : (
+                      <select
+                        className={`w-full rounded border bg-background px-1 py-0.5 text-xs ${item.familia ? 'border-input' : 'border-amber-400 text-amber-800'}`}
+                        value={item.familia ?? ''}
+                        aria-label={`O que é o item ${item.descricao}`}
+                        onChange={e => escolherFamilia(n, e.target.value)}
+                      >
+                        {!item.familia && <option value="">— escolha —</option>}
+                        {(leitura.familias ?? []).map(f => (
+                          <option key={f.chave} value={f.chave}>{f.rotulo}</option>
+                        ))}
+                      </select>
+                    )}
                   </td>
                   <td className="p-2 text-right">
                     <button
@@ -370,7 +434,13 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
 
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={onCancelar}>Cancelar</Button>
-        <Button onClick={gravar} disabled={gravando || nota.itens.length === 0 || !!duplicataValendo}>
+        {/* Item sem efeito escolhido TRAVA a gravação: deixar passar equivale a
+            decidir "é compra" por omissão, que é o caminho do gasto dobrado. */}
+        <Button
+          onClick={gravar}
+          disabled={gravando || nota.itens.length === 0 || !!duplicataValendo || semCfop > 0}
+          title={semCfop > 0 ? 'Escolha o que é cada item marcado em amarelo' : undefined}
+        >
           {gravando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
           {gravando ? 'Gravando…' : 'Confirmar e gravar'}
         </Button>

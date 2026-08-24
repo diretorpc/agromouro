@@ -7,6 +7,7 @@ import { lerNotaPdf, validarNotaLida, type ValidacaoNota } from '../services/nfe
 import { gravarNotaDoPdf } from '../services/nfe/gravarNotaDoPdf'
 import { nfeJaProcessada } from '../services/nfeProcessor'
 import { hojeSaoPauloISO } from '../services/contas/formato'
+import { FAMILIAS_ITEM, familiaDoCfop } from '../services/contas/cfop'
 
 export const nfeRoutes = Router()
 
@@ -203,9 +204,22 @@ nfeRoutes.post('/ler-pdf', async (req, res, next) => {
       ? null
       : await notaNoBanco(nota.numero, nota.emitenteCnpj, fazendaId, outroModelo)
 
+    // A tela deixa o dono corrigir o EFEITO de cada item (Achado 2 do Apolo):
+    // CFOP ilegível vira "compra" por omissão, e numa nota de entrega futura
+    // isso dobra o gasto. A regra fiscal continua morando em contas/cfop.ts —
+    // aqui a rota só entrega a lista pronta e diz em que família cada item caiu.
+    const notaComFamilias = {
+      ...nota,
+      // CFOP vazio devolve família VAZIA de propósito, embora efeitoDoCfop('')
+      // seja "compra": preencher aqui faria a tela mostrar "Compra normal" já
+      // escolhido para um item que ninguém leu — escondendo justamente o caso
+      // que o dono precisa decidir.
+      itens: nota.itens.map(i => ({ ...i, familia: i.cfop ? familiaDoCfop(i.cfop) : '' })),
+    }
+
     res.status(200).json({
-      status: 'nota', nota, itensDescartados, duplicatasDescartadas, jaExiste,
-      existeNoOutroModelo,
+      status: 'nota', nota: notaComFamilias, itensDescartados, duplicatasDescartadas, jaExiste,
+      existeNoOutroModelo, familias: FAMILIAS_ITEM,
     })
   } catch (err) {
     next(err)

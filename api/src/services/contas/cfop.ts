@@ -86,3 +86,41 @@ registrar(['5919', '6919'], {
 export function efeitoDoCfop(cfop: string): EfeitoItem {
   return TABELA[cfop] ?? COMPRA_NORMAL
 }
+
+// ─── As mesmas famílias, em português de produtor ───────────────────────────
+//
+// Existe porque a tela de conferência do PDF (aba Notas → "Upload PDF") precisa
+// deixar o dono corrigir o efeito de um item quando a IA não conseguiu ler a
+// coluna CFOP do DANFE — e um CFOP ilegível que vira "compra" por omissão é
+// exatamente o caminho que já produziu R$ 1,2 mi de gasto fantasma (achado do
+// Apolo, 24/08/2026, provado com a nota real da SYAGRI).
+//
+// A escolha na tela é do EFEITO ("já paguei isso antes"), nunca do código
+// fiscal: ninguém que trabalha na fazenda sabe o que é 5117, mas todo mundo
+// sabe o que já pagou. O código representante é gravado a partir da escolha.
+//
+// Mora AQUI, e não no front, de propósito: regra fiscal tem um dono só neste
+// projeto. A rota devolve esta lista pronta para a tela desenhar.
+export type FamiliaItem = {
+  readonly chave:  string
+  readonly rotulo: string   // o que o dono lê na tela
+  readonly cfop:   string   // código representante, gravado quando ele escolhe
+}
+
+export const FAMILIAS_ITEM: readonly FamiliaItem[] = Object.freeze([
+  Object.freeze({ chave: 'compra',            rotulo: 'Compra normal (entra no estoque e conta como gasto)', cfop: '5102' }),
+  Object.freeze({ chave: 'entrega-faturada',  rotulo: 'Entrega de pedido que já paguei (entra no estoque, sem gasto novo)', cfop: '5117' }),
+  Object.freeze({ chave: 'faturamento',       rotulo: 'Faturamento — paguei agora, mercadoria vem depois (gasto, sem estoque)', cfop: '5922' }),
+  Object.freeze({ chave: 'bonificacao',       rotulo: 'Bonificação — veio de graça (entra no estoque com custo zero)', cfop: '5910' }),
+])
+
+// Qual família descreve o CFOP que a IA leu. Comparação pelo EFEITO, não pelo
+// código: qualquer CFOP da mesma família (5117/6117/5116/6116...) devolve a
+// mesma chave, sem precisar repetir a lista de códigos aqui.
+export function familiaDoCfop(cfop: string): string {
+  const efeito = efeitoDoCfop(cfop)
+  const familia = FAMILIAS_ITEM.find(f => efeitoDoCfop(f.cfop) === efeito)
+  // CFOP de família que a tela não oferece (consignação, remessa sem compra):
+  // devolve '' para a tela mostrar o código cru e não mentir que é compra.
+  return familia?.chave ?? ''
+}
