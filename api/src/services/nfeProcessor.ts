@@ -52,6 +52,22 @@ export interface NFeItem {
   // provado rodando processarNFe de verdade: uma NFS-e virou insumo fantasma
   // e somou estoque. Serviço nunca é estocável — ponto final, não cascata.
   servico?:     boolean
+  // Centro de custo escolhido pelo DONO na conferência do PDF (aba Notas →
+  // "Upload PDF"). Só o caminho do PDF preenche; XML, e-mail e webhook deixam
+  // undefined, e a coluna fica nula como sempre ficou.
+  //
+  // POR QUE existe: a tela Financeiro lê `itens_nfe.centro_custo ?? insumos.tipo
+  // ?? 'outro'`. Item não-estocável (peça, frete, serviço, material de
+  // construção) entra com `insumo_id` nulo — então, sem esta escolha, TODA nota
+  // desse tipo cai em "Outro" e o dono tem que reclassificar item por item
+  // depois, na outra tela. Pedido do Matheus na primeira importação real
+  // (24/08/2026), com nota da ZAMPIERI ROCHA (material de construção).
+  //
+  // Texto livre de propósito, igual à coluna (migration 013 de
+  // api/src/database/migrations): o dropdown mistura categoria agrícola com
+  // categoria de cartão, e um CHECK aqui recriaria o bug de "não salva em
+  // silêncio".
+  centroCusto?: string
 }
 
 // Uma parcela do quadro de cobrança da NF-e (bloco <cobr><dup>).
@@ -583,6 +599,8 @@ export async function processarNFe(
           insumo_id:          null,
           cfop:               item.cfop || null,
           conta_como_compra:  contaComoCompraDoItem(index),
+          // Só o caminho do PDF manda; XML/e-mail/webhook gravam null como sempre.
+          centro_custo:       item.centroCusto ?? null,
           fazenda_id,
         })
         itensNaoEstocados.push(`• ${item.quantity}${item.unit} ${item.description.trim().slice(0, 60)}`)
@@ -610,6 +628,7 @@ export async function processarNFe(
         insumo_id:          insumo.id,
         cfop:               item.cfop || null,
         conta_como_compra:  contaComoCompraDoItem(index),
+        centro_custo:       item.centroCusto ?? null,
         fazenda_id,
       })
 

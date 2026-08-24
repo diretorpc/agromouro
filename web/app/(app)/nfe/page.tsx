@@ -621,7 +621,12 @@ export default function NfePage() {
       {/* Dialog: Adicionar NF */}
       <Dialog open={addDialog} onOpenChange={open => { if (!open) { setAddDialog(false); setAddErro('') } }}>
         {/* O modo PDF mostra a tabela de itens conferida — precisa de mais largura. */}
-        <DialogContent className={addMode === 'pdf' ? 'max-w-3xl' : 'max-w-lg'}>
+        {/* A conferência do PDF mostra tabela de itens com produto, quantidade,
+            valor, efeito e centro de custo — em 3xl tudo espremia e o nome do
+            produto e o efeito ficavam cortados (achado do Matheus na primeira
+            importação real, 24/08/2026). Largura de verdade, mas limitada pela
+            tela: `min(96vw, ...)` não estoura em notebook nem no celular. */}
+        <DialogContent className={addMode === 'pdf' ? 'w-[96vw] max-w-[1200px]' : 'max-w-lg'}>
           <DialogHeader>
             <DialogTitle>Adicionar Nota Fiscal</DialogTitle>
           </DialogHeader>

@@ -57,6 +57,10 @@ export type ItemNotaLido = {
   unidadeTrib:    string
   ncm:            string   // '' quando ilegível — a cascata de processarNFe trata
   cfop:           string   // '' quando ilegível
+  // Escolhido pelo DONO na conferência, nunca lido do papel (o DANFE não traz
+  // centro de custo). '' = "o sistema decide", que é o comportamento de sempre:
+  // a tela Financeiro cai em `insumos.tipo ?? 'outro'`.
+  centroCusto:    string
 }
 
 export type DuplicataLida = {
@@ -394,6 +398,12 @@ export function validarNotaLida(bruto: unknown, hojeISO: string): ValidacaoNota 
       unidadeTrib:    unidade,
       ncm:  codigoDeNDigitos(i.ncm, 8),
       cfop: codigoDeNDigitos(i.cfop, 4),
+      // Texto livre, igual à coluna do banco (migration 013 de
+      // api/src/database/migrations) — o dropdown da tela mistura categoria
+      // agrícola com categoria de cartão, e um CHECK aqui recriaria o bug de
+      // "não salva em silêncio". Cortado em 40 para não virar entrada de texto
+      // arbitrário vinda do navegador.
+      centroCusto: (texto(i.centroCusto) ?? '').slice(0, 40),
     })
   }
 
@@ -455,6 +465,9 @@ export function converterParaNFeData(nota: NotaLidaDoPdf): NFeData {
     unitTrib:     i.unidadeTrib,
     ncm:          i.ncm,
     cfop:         i.cfop,
+    // undefined quando o dono não escolheu: processarNFe grava null e a tela
+    // Financeiro segue derivando de insumos.tipo, como sempre fez.
+    ...(i.centroCusto ? { centroCusto: i.centroCusto } : {}),
     // `servico: true` vence a cascata de estoque sem consultar a IA de
     // categorização — mesma trava que parseXmlNFSe usa. Serviço nunca é
     // estocável, ponto final.
