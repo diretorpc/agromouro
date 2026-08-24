@@ -22,7 +22,7 @@
 
 ---
 
-## ✅ Talhões arrendados — 24/08/2026 — branch `feat/talhoes-arrendados`, sem PR ainda
+## ✅ Talhões arrendados — 24/08/2026 — **NO AR** (PR #66 mergeado)
 
 Área arrendada para a Usina Uberaba: terra própria da família operada por terceiro.
 `arrendado` virou o quarto valor de `talhoes.status`, com coluna `arrendatario` que o
@@ -61,6 +61,10 @@ O site que importava era o não tipado.
 
 Comando que mede: `cd web && npx tsc --noEmit && npx vitest run && npm run build`
 e a suíte do `api/` do mesmo jeito.
+
+**PR #66** — https://github.com/diretorpc/agromouro/pull/66 — MERGED (squash) na `main`
+como `6a07b6f`, 17 commits. Branch apagada nos dois lados. Vercel e Railway sobem sozinhos.
+
 
 ---
 
