@@ -1,4 +1,5 @@
 import { createTextColumn, isoDateColumn } from 'react-datasheet-grid'
+import { parseNumeroBR } from '@/lib/numeros-br'
 
 // Colunas de número e data em pt-BR — a biblioteca `react-datasheet-grid`
 // vem com `floatColumn`/`isoDateColumn` prontos, mas os dois têm bugs de
@@ -20,40 +21,11 @@ import { createTextColumn, isoDateColumn } from 'react-datasheet-grid'
 
 // ─── Número (quantidade, valor_unitario, valor_total) ──────────────────────
 
-// Usada tanto pra digitação direta quanto pra colar do Excel — pedido
-// explícito da correção: as duas entradas passam pela MESMA função, sem
-// caminho divergente que possa ficar destreinado.
-export function parseNumeroBR(bruto: string): number | null {
-  if (bruto == null) return null
-  let texto = String(bruto).trim()
-  if (texto === '') return null
-
-  // "R$ 1.234,56" — símbolo de moeda nunca impede a leitura. NBSP (espaço
-  // sem quebra de linha, código U+00A0) é trocado por espaço comum ANTES do
-  // `.trim()` — artefato comum de copiar valor monetário do Excel, que o
-  // `.trim()` sozinho não remove (NBSP não conta como espaço em branco pro
-  // JavaScript).
-  texto = texto.replace(/^R\$\s*/i, '').replace(/\u00A0/g, ' ').trim()
-  if (texto === '') return null
-
-  if (texto.includes(',')) {
-    // pt-BR: '.' é separador de MILHAR, ',' é separador DECIMAL — remove os
-    // pontos antes da vírgula, depois troca a vírgula por ponto (formato
-    // que `parseFloat` entende).
-    texto = texto.replace(/\./g, '').replace(',', '.')
-  } else if (/^\d{1,3}(\.\d{3})+$/.test(texto)) {
-    // Sem vírgula, mas com ponto(s) no padrão EXATO de agrupamento de milhar
-    // (ex.: "1.234", "12.345.678") — típico de colar um inteiro grande do
-    // Excel em pt-BR sem casa decimal. Qualquer outro formato com ponto
-    // (ex.: "44.2", vindo de teclado numérico/estilo en-US) NÃO bate nesse
-    // padrão e cai direto no parseFloat abaixo, que já entende ponto como
-    // decimal — sem essa distinção, "44.2" viraria 442 por engano.
-    texto = texto.replace(/\./g, '')
-  }
-
-  const numero = parseFloat(texto)
-  return Number.isFinite(numero) ? numero : null
-}
+// `parseNumeroBR` mora em `@/lib/numeros-br` desde 24/08/2026: a tela de
+// Talhoes tambem precisa dela, e importar ESTE arquivo la arrastaria
+// `react-datasheet-grid` para o bundle daquela pagina. NAO reexportar daqui —
+// o atalho reabriria exatamente a porta que a mudanca fechou. Os testes da
+// funcao moram em `lib/numeros-br.test.ts`, junto com ela.
 
 // O que aparece no INPUT enquanto a célula está em edição — sem separador de
 // milhar (mais fácil de editar, sem cursor pulando), vírgula como decimal.
