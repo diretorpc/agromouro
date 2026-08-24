@@ -30,6 +30,10 @@ const { seed, estadoBanco } = vi.hoisted(() => {
       // reproduz o cenário que a Tarefa 3 corrige (Supabase retorna error:null
       // mesmo com 0 linhas afetadas; só contar as linhas do .select() denuncia).
       { insumo_id: 'insumo-fantasma', fazenda_id: 'fazenda-mg', quantidade_atual: 100, quantidade_minima_alerta: 10, _updateNaoEncontra: true },
+      // Linha que faz o UPDATE simulado devolver ERROR de verdade (não apenas
+      // 0 linhas) — o caminho `if (updErr)` de decrementarEstoque não tinha
+      // nenhum teste até o Apolo apontar (Item 3 da rodada de correção).
+      { insumo_id: 'insumo-erro-update', fazenda_id: 'fazenda-mg', quantidade_atual: 40, quantidade_minima_alerta: 5, _updateGeraErro: true },
     ] as any[],
   }
   return { seed, estadoBanco: JSON.parse(JSON.stringify(seed)) }
@@ -74,6 +78,12 @@ vi.mock('../services/supabase', () => {
       return linhas
     }
 
+    // _updateGeraErro simula um UPDATE que devolve error DE VERDADE (rede,
+    // constraint, etc.) — diferente de "0 linhas casadas". Cobre o caminho
+    // `if (updErr)` de decrementarEstoque, sem teste até a rodada do Apolo.
+    const forcaErroDeUpdate = (): boolean =>
+      aplicaFiltros(linhasBase()).some((row: any) => row._updateGeraErro)
+
     const obj: any = {
       select: vi.fn(() => obj),
       eq:     vi.fn((campo: string, valor: any) => { eqFiltros.push([campo, valor]); return obj }),
@@ -94,8 +104,13 @@ vi.mock('../services/supabase', () => {
       }),
       // thenable: cobre os caminhos que fazem `await` direto na cadeia sem .single()
       then: (resolve: any, reject: any) => {
-        const linhas = updatePatch !== undefined ? executaUpdate() : executaSelect()
-        return Promise.resolve({ data: linhas, error: null }).then(resolve, reject)
+        if (updatePatch !== undefined) {
+          if (forcaErroDeUpdate()) {
+            return Promise.resolve({ data: null, error: { message: 'erro simulado de conexão' } }).then(resolve, reject)
+          }
+          return Promise.resolve({ data: executaUpdate(), error: null }).then(resolve, reject)
+        }
+        return Promise.resolve({ data: executaSelect(), error: null }).then(resolve, reject)
       },
     }
     return obj
@@ -107,6 +122,23 @@ vi.mock('../services/supabase', () => {
 })
 
 import { buscarTalhao, buscarInsumo, consultarEstoque, decrementarEstoque, formatarSaidas } from './whatsapp'
+import { supabase } from '../services/supabase'
+
+// Acha o builder de uma chamada `supabase.from(tabela)` específica pela ORDEM
+// em que aconteceu (0 = 1ª vez que a tabela foi consultada, 1 = 2ª, ...) — usado
+// pelos testes de mutação abaixo para provar que um .eq(...) específico foi
+// chamado de verdade, em vez de inferir isso só pelo dado devolvido (o Apolo
+// mostrou que dado devolvido pode ser igual mesmo com o filtro removido, quando
+// outro filtro da mesma função "mascara" o mutante).
+function builderDaChamada(tabela: string, ocorrencia: number): any {
+  const chamadas = (supabase.from as any).mock.calls
+    .map((args: any[], i: number) => ({ tabela: args[0], builder: (supabase.from as any).mock.results[i].value }))
+    .filter((c: any) => c.tabela === tabela)
+  if (!chamadas[ocorrencia]) {
+    throw new Error(`supabase.from('${tabela}') não foi chamado ${ocorrencia + 1}x — só ${chamadas.length}x`)
+  }
+  return chamadas[ocorrencia].builder
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -173,6 +205,38 @@ describe('consultarEstoque', () => {
     expect(resposta).toContain('300')
     expect(resposta).not.toContain('50 L')
   })
+
+  // ─── Item 3 (mutação) — mata o mutante que remove .eq('fazenda_id') de INSUMOS ─
+  // Os dois testes acima SOBREVIVEM à remoção desse filtro: como o MT também tem
+  // um "Glifosato" cadastrado (com id próprio), o filtro de ESTOQUE (linha ~160)
+  // sozinho já filtra o resultado certo — o filtro de INSUMOS fica sem prova
+  // própria. Aqui a fazenda MT não tem NENHUM "glifosato" cadastrado (nem
+  // insumo, nem estoque) — só a MG tem. Sem o filtro de fazenda_id em insumos,
+  // a busca por "glifosato" pedida para MT encontraria o insumo DA MG (ilike
+  // não distingue fazenda) e devolveria "sem registro de estoque" em vez de
+  // "não encontrei" — mensagem diferente, mutante morre.
+  it('MT sem NENHUM "glifosato" cadastrado (só MG tem): devolve "Não encontrei", nunca o número do MG', async () => {
+    estadoBanco.insumos = estadoBanco.insumos.filter(i => i.id !== 'insumo-glifosato-mt')
+    estadoBanco.estoque = estadoBanco.estoque.filter(e => e.insumo_id !== 'insumo-glifosato-mt')
+
+    const resposta = await consultarEstoque('glifosato', 'fazenda-mt')
+    expect(resposta).toContain('Não encontrei')
+    expect(resposta).not.toContain('300')
+  })
+
+  // ─── Item 3 (mutação) — mata o mutante que remove .eq('fazenda_id') de ESTOQUE ─
+  // Prova por INSPEÇÃO DE CHAMADA, não por dado devolvido: dado que o id de
+  // insumo já vem filtrado por fazenda (linha ~148), o `.in('insumo_id', ids)`
+  // sozinho já restringe ao id certo em qualquer cenário de dado plausível — o
+  // filtro de fazenda_id em ESTOQUE só importa como defesa contra uma linha de
+  // estoque corrompida (mesmo insumo_id, fazenda_id errado). Testar por dado
+  // exigiria simular corrupção; inspecionar a chamada prova o filtro existe.
+  it('a query de ESTOQUE realmente chama .eq(fazenda_id, ...) — não só a de insumos', async () => {
+    await consultarEstoque('glifosato', 'fazenda-mt')
+
+    const builderEstoque = builderDaChamada('estoque', 0)
+    expect(builderEstoque.eq).toHaveBeenCalledWith('fazenda_id', 'fazenda-mt')
+  })
 })
 
 describe('decrementarEstoque + formatarSaidas', () => {
@@ -196,5 +260,47 @@ describe('decrementarEstoque + formatarSaidas', () => {
 
     const resposta = formatarSaidas(saidas)
     expect(resposta).toContain('(estoque: 298L)')
+  })
+
+  // ─── Item 3 (mutação) — updErr != null nunca foi testado ───────────────────
+  // Até aqui só o caminho "UPDATE devolveu 0 linhas" (error: null) tinha teste.
+  // O `if (updErr)` — erro de verdade (rede, constraint) — não tinha nenhum.
+  it('quando o UPDATE devolve ERROR de verdade (não só 0 linhas), novaQuantidade fica null e loga', async () => {
+    const okItems = [
+      { ok: true as const, insumo_id: 'insumo-erro-update', nome: 'ProdutoComErro', quantidade: 3, unidade: 'L', dose_por_ha: null },
+    ]
+    const saidas = await decrementarEstoque(okItems, 'fazenda-mg')
+    expect(saidas[0].novaQuantidade).toBeNull()
+
+    const resposta = formatarSaidas(saidas)
+    expect(resposta).not.toContain('(estoque:')
+  })
+
+  // ─── Item 3 (mutação) — mata os mutantes que removem .eq('fazenda_id') no ──
+  // SELECT batch (linha ~313) e no UPDATE por item (linha ~334). Ambos são
+  // descritos no código como "última linha de defesa": com o dado do fixture
+  // (cada insumo_id só existe numa fazenda), remover UM dos dois filtros ainda
+  // deixa o resultado final (novaQuantidade) correto por acaso, porque o OUTRO
+  // filtro (mais o próprio dado ser fazenda-exclusivo) mascara o mutante — é
+  // exatamente por isso que o Apolo os achou sobreviventes. Prova por
+  // INSPEÇÃO DE CHAMADA, que não depende dessa coincidência de dado.
+  it('o SELECT batch realmente chama .eq(fazenda_id, ...)', async () => {
+    const okItems = [
+      { ok: true as const, insumo_id: 'insumo-glifosato-mg', nome: 'Glifosato', quantidade: 2, unidade: 'L', dose_por_ha: null },
+    ]
+    await decrementarEstoque(okItems, 'fazenda-mg')
+
+    const builderSelect = builderDaChamada('estoque', 0) // 1ª chamada = SELECT batch
+    expect(builderSelect.eq).toHaveBeenCalledWith('fazenda_id', 'fazenda-mg')
+  })
+
+  it('o UPDATE de cada item realmente chama .eq(fazenda_id, ...)', async () => {
+    const okItems = [
+      { ok: true as const, insumo_id: 'insumo-glifosato-mg', nome: 'Glifosato', quantidade: 2, unidade: 'L', dose_por_ha: null },
+    ]
+    await decrementarEstoque(okItems, 'fazenda-mg')
+
+    const builderUpdate = builderDaChamada('estoque', 1) // 2ª chamada = UPDATE do item
+    expect(builderUpdate.eq).toHaveBeenCalledWith('fazenda_id', 'fazenda-mg')
   })
 })
