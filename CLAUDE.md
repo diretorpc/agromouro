@@ -17,7 +17,7 @@ NF-e é processada **automaticamente** via Make (make.com), que monitora dois em
 
 ## O que é este projeto
 
-Sistema de gestão agrícola para fazenda de grãos (soja, milho, trigo).
+Sistema de gestão agrícola para fazenda de grãos (soja, milho, trigo) **e cana**.
 O agricultor não tem experiência técnica — o sistema deve funcionar
 pelo WhatsApp com o mínimo de interação possível.
 
@@ -91,12 +91,19 @@ web/
 - `lancamentos_financeiros` — despesas via NF-e e via cartão de crédito
 - `alertas` — central de notificações (estoque baixo, operação detectada, erro)
 - `cartoes` — cartões de crédito empresariais (migration `supabase/002_cartoes.sql`)
-- `cotacoes_commodities` — cotações CEPEA de soja, milho e trigo
+- `cotacoes_commodities` — cotações CEPEA de soja, milho e trigo (**cana não tem cotação
+  no sistema** — ver `api/src/jobs/cotacoes.ts`, que só conhece esses três)
 - `confirmacoes_pendentes` — confirmações de conversão de unidade no WhatsApp
 
 ## Contexto do negócio
 
-- Fazenda de grãos (soja, milho, trigo) com talhões identificados por número/nome
+- Fazenda de grãos (soja, milho, trigo) **e cana** — a cana é cultura permanente da
+  propriedade, não experimento: sempre existiu e vai continuar existindo. Talhões
+  identificados por número/nome
+- **Cana é cidadã de segunda no sistema, de propósito ou por esquecimento:** aparece no
+  Dashboard (cor própria) e no `seed.sql`, mas o job de cotações não a cobre. Ao mexer
+  em algo que enumera culturas, verificar se a cana precisa entrar — não presumir que
+  "grãos" cobre tudo
 - Máquinas: pulverizador John Deere M4030, distribuidor de adubo Stara Hércules 6.0, plantadeira JD, colhedora JD, tratores JD
 - O agricultor usa WhatsApp no dia a dia para registrar o que aconteceu no campo
 - NF-e chega dos fornecedores de insumos (defensivos, fertilizantes, sementes, combustível)

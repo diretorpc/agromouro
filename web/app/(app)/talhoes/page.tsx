@@ -15,6 +15,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { KpiCard } from '@/components/ui/kpi-card'
 import { supabase } from '@/lib/supabase'
+import { useFazenda } from '@/context/fazenda-context'
+import { mensagemErroBanco, ehFalhaDeConexao } from '@/lib/erros-supabase'
+import {
+  prepararTalhao, mensagemErroSalvar, mensagemErroExcluir, gravouNada,
+} from './salvar-talhao'
 import type { Talhao } from '@/lib/types'
 
 // Leaflet não funciona com SSR — importação dinâmica obrigatória
@@ -31,22 +36,61 @@ const STATUS_STYLE: Record<Talhao['status'], { bg: string; color: string }> = {
 const SELECT_CLASS = 'flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring'
 
 // ─── Parser KMZ ────────────────────────────────────────────
-async function parseKMZ(file: File): Promise<Record<string, [number, number][]>> {
+// .kml é XML puro; .kmz é um zip com o .kml dentro. O input aceita os dois,
+// e o JSZip morre com mensagem incompreensível se receber um .kml direto.
+async function lerKml(file: File): Promise<string> {
+  if (file.name.toLowerCase().endsWith('.kml')) return file.text()
+
   const JSZip = (await import('jszip')).default
-  const zip = await JSZip.loadAsync(file)
+
+  // O JSZip fala inglês de biblioteca ("Can't read the data of 'the loaded zip
+  // file'…"). Nunca deixar essa frase chegar na tela do produtor.
+  let zip
+  try {
+    zip = await JSZip.loadAsync(file)
+  } catch {
+    throw new Error('O arquivo não é um KMZ válido (ou está corrompido).')
+  }
 
   const kmlEntry = Object.values(zip.files).find(f => f.name.endsWith('.kml'))
   if (!kmlEntry) throw new Error('Arquivo KML não encontrado dentro do KMZ.')
 
-  const kmlText = await kmlEntry.async('string')
+  return kmlEntry.async('string')
+}
+
+interface LeituraKMZ {
+  poligonos: Record<string, [number, number][]>
+  /** Marcações do arquivo que não viraram talhão — o produtor precisa saber. */
+  ignoradas: number
+}
+
+async function parseKMZ(file: File): Promise<LeituraKMZ> {
+  const kmlText = await lerKml(file)
   const doc = new DOMParser().parseFromString(kmlText, 'text/xml')
 
-  const result: Record<string, [number, number][]> = {}
+  // XML malformado NÃO lança: por especificação o DOMParser devolve um
+  // documento com <parsererror> dentro. Sem esta checagem o arquivo quebrado
+  // vira "nenhum talhão mapeado", sem motivo nenhum na tela.
+  if (doc.querySelector('parsererror')) {
+    throw new Error('O arquivo não é um KML válido.')
+  }
 
-  doc.querySelectorAll('Placemark').forEach(pm => {
+  const poligonos: Record<string, [number, number][]> = {}
+  const placemarks = doc.querySelectorAll('Placemark')
+
+  // Contados SEPARADAMENTE porque exigem conselhos opostos: "sem nome" se
+  // resolve nomeando no Google Earth; "sem polígono" se resolve desenhando a
+  // área. Uma frase só para os dois manda o produtor consertar o que não está
+  // quebrado — e diagnóstico errado é pior que diagnóstico ausente.
+  let semNome = 0
+  let semPoligono = 0
+
+  placemarks.forEach(pm => {
     const nome = pm.querySelector('name')?.textContent?.trim()
     const coordsEl = pm.querySelector('Polygon coordinates') ?? pm.querySelector('coordinates')
-    if (!nome || !coordsEl) return
+
+    if (!coordsEl) { semPoligono++; return }
+    if (!nome) { semNome++; return }
 
     const coords: [number, number][] = coordsEl.textContent!
       .trim()
@@ -59,21 +103,46 @@ async function parseKMZ(file: File): Promise<Record<string, [number, number][]>>
         return acc
       }, [])
 
-    if (coords.length > 2) result[nome] = coords
+    if (coords.length > 2) poligonos[nome] = coords
+    else semPoligono++
   })
 
-  return result
+  if (placemarks.length === 0) {
+    throw new Error('O arquivo não tem nenhuma marcação.')
+  }
+
+  if (Object.keys(poligonos).length === 0) {
+    // Frase SOMADA, não escolhida: 5 áreas sem nome + 1 marcador de ponto é
+    // exportação realista do Google Earth, e escolher uma causa só diria
+    // "nenhuma com contorno" para um arquivo que tem cinco contornos.
+    const partes: string[] = []
+    if (semNome > 0) {
+      partes.push(`${semNome} área${semNome !== 1 ? 's' : ''} sem nome — nomeie cada uma no Google Earth com o nome do talhão`)
+    }
+    if (semPoligono > 0) {
+      partes.push(`${semPoligono} marcaç${semPoligono !== 1 ? 'ões' : 'ão'} sem contorno de área`)
+    }
+    throw new Error(`Nada pôde ser importado: ${partes.join('; ')}.`)
+  }
+
+  return { poligonos, ignoradas: semNome + semPoligono }
 }
 
 // ─── Página ────────────────────────────────────────────────
 export default function TalhoesPage() {
+  const { fazendaAtiva } = useFazenda()
   const [talhoes, setTalhoes] = useState<Talhao[]>([])
   const [loading, setLoading] = useState(true)
+  const [erroCarregamento, setErroCarregamento] = useState<string | null>(null)
+  const [recarregando, setRecarregando] = useState(false)
+  const cargaSeq = useRef(0)
   const kmzInputRef = useRef<HTMLInputElement>(null)
 
   // importar KMZ
   const [importando, setImportando] = useState(false)
-  const [importResult, setImportResult] = useState<{ ok: number; total: number; semMatch: string[] } | null>(null)
+  const [importResult, setImportResult] = useState<
+    { ok: number; total: number; semMatch: string[]; falhou: string[]; ignoradas: number; erro?: string } | null
+  >(null)
 
   // criar / editar talhão — mesmo dialog: editId null = criar, preenchido = editar
   const [formDialog, setFormDialog] = useState(false)
@@ -90,12 +159,35 @@ export default function TalhoesPage() {
   const [deletando, setDeletando] = useState(false)
 
   async function loadData() {
-    const { data } = await supabase
+    const seq = ++cargaSeq.current
+    setRecarregando(true)
+
+    // `status` desestruturado de propósito: ele mora no ENVELOPE, não dentro do
+    // erro, e é o que distingue "sem internet" de "apikey errada" / "sessão
+    // vencida". Sem repassá-lo, a tela diagnostica rede em erro de servidor.
+    const { data, error, status } = await supabase
       .from('talhoes')
       .select('id, nome, area_ha, cultura_atual, status, coordenadas')
       .order('nome')
-    setTalhoes((data ?? []) as Talhao[])
+
+    // Resposta atrasada não pode sobrescrever a mais recente. Com sinal ruim o
+    // produtor clica "Tentar de novo" duas vezes: a 1ª (lenta, que vai falhar)
+    // volta DEPOIS da 2ª (rápida, que deu certo) e traria a faixa de erro de
+    // volta por cima de dados frescos, dizendo que são antigos.
+    if (seq !== cargaSeq.current) return
+
+    setRecarregando(false)
     setLoading(false)
+
+    // Sem esta guarda, uma falha de rede virava lista vazia + convite a
+    // "Cadastrar primeiro talhão" — e o produtor recadastrava o que já existe.
+    if (error) {
+      setErroCarregamento(mensagemErroBanco({ ...error, status }, 'talhão'))
+      return
+    }
+
+    setErroCarregamento(null)
+    setTalhoes((data ?? []) as Talhao[])
   }
 
   useEffect(() => { loadData() }, [])
@@ -110,29 +202,50 @@ export default function TalhoesPage() {
     setImportResult(null)
 
     try {
-      const poligonos = await parseKMZ(file)
+      const { poligonos, ignoradas } = await parseKMZ(file)
       const nomes = Object.keys(poligonos)
 
       let ok = 0
       const semMatch: string[] = []
+      const falhou: string[] = []
 
       for (const nome of nomes) {
         const norm = (s: string) => s.toLowerCase().trim().replace(/\s+/g, ' ')
         const talhao = talhoes.find(t => norm(t.nome) === norm(nome))
         if (!talhao) { semMatch.push(nome); continue }
 
-        const { error } = await supabase
+        // `.select('id')` é obrigatório: sem ele o PostgREST responde 204 e o
+        // update que não tocou em linha nenhuma fica indistinguível do que tocou.
+        const { data, error, status } = await supabase
           .from('talhoes')
           .update({ coordenadas: poligonos[nome] })
           .eq('id', talhao.id)
+          .select('id')
 
-        if (!error) ok++
+        // Se o que caiu foi o SINAL, abortar. Sem isso: (1) o laço seguia
+        // disparando os restantes, cada um com ~7 s de retries do postgrest-js,
+        // (2) o banner acusava a fazenda por um problema de rede e (3) o
+        // loadData logo abaixo falhava e subia a faixa "sem conexão" — a tela
+        // se contradizendo sozinha.
+        if (error && ehFalhaDeConexao({ ...error, status })) {
+          setImportResult({
+            ok, total: nomes.length, semMatch, falhou, ignoradas,
+            erro: 'A conexão caiu no meio da importação. Os que faltaram não foram gravados — tente de novo.',
+          })
+          return
+        }
+
+        if (error || gravouNada(error, data)) falhou.push(nome)
+        else ok++
       }
 
-      setImportResult({ ok, total: nomes.length, semMatch })
+      setImportResult({ ok, total: nomes.length, semMatch, falhou, ignoradas })
       await loadData()
     } catch (err) {
-      setImportResult({ ok: 0, total: 0, semMatch: [], })
+      setImportResult({
+        ok: 0, total: 0, semMatch: [], falhou: [], ignoradas: 0,
+        erro: err instanceof Error ? err.message : 'Não foi possível ler o arquivo.',
+      })
     } finally {
       setImportando(false)
     }
@@ -161,26 +274,21 @@ export default function TalhoesPage() {
   // ── Criar / editar talhão ──
   async function salvar() {
     setFormErro(null)
-    const nome = form.nome.trim()
-    const area = parseFloat(form.area_ha)
 
-    if (!nome) return setFormErro('Nome é obrigatório.')
-    if (isNaN(area) || area <= 0) return setFormErro('Área deve ser um número positivo.')
-
-    const payload = {
-      nome,
-      area_ha: area,
-      status: form.status,
-      cultura_atual: form.cultura_atual.trim() || null,
-    }
+    const preparo = prepararTalhao(form, fazendaAtiva?.id ?? null, editId)
+    if (!preparo.ok) return setFormErro(preparo.erro)
 
     setSalvando(true)
-    const { error } = editId
-      ? await supabase.from('talhoes').update(payload).eq('id', editId)
-      : await supabase.from('talhoes').insert(payload)
+    const { data, error, status } = editId
+      ? await supabase.from('talhoes').update(preparo.payload).eq('id', editId).select('id')
+      : await supabase.from('talhoes').insert(preparo.payload).select('id')
     setSalvando(false)
 
-    if (error) { setFormErro('Erro ao salvar. Tente novamente.'); return }
+    if (error) { setFormErro(mensagemErroSalvar({ ...error, status })); return }
+    if (gravouNada(error, data)) {
+      setFormErro('Não foi possível salvar: nenhum talhão foi alterado. Confira a fazenda selecionada no topo da tela.')
+      return
+    }
 
     setFormDialog(false)
     loadData()
@@ -192,13 +300,13 @@ export default function TalhoesPage() {
     setDeleteErro(null)
     setDeletando(true)
 
-    const { error } = await supabase.from('talhoes').delete().eq('id', deleteDialog.id)
+    const { data, error, status } = await supabase
+      .from('talhoes').delete().eq('id', deleteDialog.id).select('id')
     setDeletando(false)
 
-    if (error) {
-      setDeleteErro(error.code === '23503'
-        ? 'Este talhão possui operações vinculadas e não pode ser excluído.'
-        : 'Erro ao excluir. Tente novamente.')
+    if (error) { setDeleteErro(mensagemErroExcluir({ ...error, status })); return }
+    if (gravouNada(error, data)) {
+      setDeleteErro('Não foi possível excluir: nenhum talhão foi removido. Confira a fazenda selecionada no topo da tela.')
       return
     }
 
@@ -211,6 +319,15 @@ export default function TalhoesPage() {
   const areaTotal      = talhoes.reduce((s, t) => s + (t.area_ha ?? 0), 0)
   const culturas       = [...new Set(talhoes.map(t => t.cultura_atual).filter(Boolean))]
   const comMapa        = talhoes.filter(t => t.coordenadas && t.coordenadas.length > 2)
+
+  // Erro de carregamento tem DOIS casos com tratamento oposto:
+  // - sem nada em mãos  → não inventar número; KPI mostra "—" e a tabela vira erro.
+  // - com dados na tela → não esconder o que já existe; erro vira faixa no topo.
+  // Sem essa distinção a tela se contradiz sozinha (KPI diz 13, tabela diz que
+  // falhou) ou exibe "0 ha" com cara de verdade numa fazenda de 2.107 ha.
+  const semDados     = talhoes.length === 0
+  const erroSemDados = !!erroCarregamento && semDados
+  const erroComDados = !!erroCarregamento && !semDados
 
   if (loading) return <TalhoesSkeleton />
 
@@ -227,22 +344,22 @@ export default function TalhoesPage() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <KpiCard
           label="Talhões Cadastrados"
-          value={talhoes.length}
-          sub={`${talhoesAtivos.length} ativo${talhoesAtivos.length !== 1 ? 's' : ''}`}
+          value={erroSemDados ? '—' : talhoes.length}
+          sub={erroSemDados ? 'não foi possível carregar' : `${talhoesAtivos.length} ativo${talhoesAtivos.length !== 1 ? 's' : ''}`}
           icon={<MapPin className="h-5 w-5" />}
           iconBg="#EEF5E5" iconColor="#5B8C2A"
         />
         <KpiCard
           label="Área Total"
-          value={`${areaTotal.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} ha`}
-          sub={`${talhoes.length} talh${talhoes.length !== 1 ? 'ões' : 'ão'}`}
+          value={erroSemDados ? '—' : `${areaTotal.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} ha`}
+          sub={erroSemDados ? 'não foi possível carregar' : `${talhoes.length} talh${talhoes.length !== 1 ? 'ões' : 'ão'}`}
           icon={<Layers className="h-5 w-5" />}
           iconBg="#EEF5E5" iconColor="#5B8C2A"
         />
         <KpiCard
           label="Culturas Ativas"
-          value={culturas.length}
-          sub={culturas.length > 0 ? culturas.join(', ') : 'nenhuma plantada'}
+          value={erroSemDados ? '—' : culturas.length}
+          sub={erroSemDados ? 'não foi possível carregar' : (culturas.length > 0 ? culturas.join(', ') : 'nenhuma plantada')}
           icon={<Sprout className="h-5 w-5" />}
           iconBg="#EEF5E5" iconColor="#5B8C2A"
         />
@@ -262,10 +379,28 @@ export default function TalhoesPage() {
         </Card>
       )}
 
+      {/* Falha ao atualizar, mas com dados já em mãos: avisa SEM esconder a lista */}
+      {erroComDados && (
+        <div className="flex items-start gap-3 rounded-lg px-4 py-3 text-sm bg-amber-50 text-amber-900">
+          <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <p className="font-semibold">
+              Não foi possível atualizar a lista — mostrando os dados carregados anteriormente.
+            </p>
+            <p className="mt-0.5 text-xs opacity-80">{erroCarregamento}</p>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => loadData()} disabled={recarregando}>
+            {recarregando ? 'Atualizando…' : 'Tentar de novo'}
+          </Button>
+        </div>
+      )}
+
       {/* Feedback importação */}
       {importResult && (
-        <div className={`flex items-start gap-3 rounded-lg px-4 py-3 text-sm ${importResult.ok > 0 ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
-          {importResult.ok > 0
+        // Verde SÓ quando nada falhou: "N mapeados com sucesso" em verde com
+        // uma lista de falhas logo abaixo é a tela mentindo para o produtor.
+        <div className={`flex items-start gap-3 rounded-lg px-4 py-3 text-sm ${importResult.ok > 0 && importResult.falhou.length === 0 ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+          {importResult.ok > 0 && importResult.falhou.length === 0
             ? <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
             : <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />}
           <div>
@@ -274,9 +409,25 @@ export default function TalhoesPage() {
                 ? `${importResult.ok} de ${importResult.total} talh${importResult.total !== 1 ? 'ões' : 'ão'} mapeado${importResult.ok !== 1 ? 's' : ''} com sucesso.`
                 : 'Nenhum talhão foi mapeado.'}
             </p>
+            {importResult.erro && (
+              <p className="mt-0.5 text-xs opacity-80">
+                Motivo: {importResult.erro}
+              </p>
+            )}
             {importResult.semMatch.length > 0 && (
               <p className="mt-0.5 text-xs opacity-80">
                 Sem correspondência: {importResult.semMatch.join(', ')}
+              </p>
+            )}
+            {importResult.falhou.length > 0 && (
+              <p className="mt-0.5 text-xs opacity-80">
+                Não gravou (confira a fazenda selecionada): {importResult.falhou.join(', ')}
+              </p>
+            )}
+            {importResult.ignoradas > 0 && (
+              <p className="mt-0.5 text-xs opacity-80">
+                {importResult.ignoradas} marcaç{importResult.ignoradas !== 1 ? 'ões' : 'ão'} do
+                arquivo sem nome ou sem contorno de área — ignorada{importResult.ignoradas !== 1 ? 's' : ''}.
               </p>
             )}
           </div>
@@ -315,7 +466,20 @@ export default function TalhoesPage() {
           </div>
         </CardHeader>
         <CardContent className="pt-0">
-          {talhoes.length === 0 ? (
+          {erroSemDados ? (
+            // Lista com erro NÃO mostra o estado vazio: o convite a "cadastrar
+            // o primeiro talhão" numa falha de leitura gera cadastro duplicado.
+            // Só entra aqui quando não há NADA em mãos — havendo dados, a faixa
+            // no topo avisa e a tabela continua na tela.
+            <div className="py-14 flex flex-col items-center gap-3 text-center">
+              <AlertCircle className="h-10 w-10 text-red-500/40" />
+              <p className="text-sm text-red-600 font-medium">Não foi possível carregar os talhões.</p>
+              <p className="text-xs text-muted-foreground">{erroCarregamento}</p>
+              <Button variant="outline" size="sm" onClick={() => { setLoading(true); loadData() }} disabled={recarregando}>
+                {recarregando ? 'Atualizando…' : 'Tentar de novo'}
+              </Button>
+            </div>
+          ) : talhoes.length === 0 ? (
             <div className="py-14 flex flex-col items-center gap-3 text-center">
               <MapPin className="h-10 w-10 text-muted-foreground/30" />
               <p className="text-sm text-muted-foreground font-medium">Nenhum talhão cadastrado.</p>

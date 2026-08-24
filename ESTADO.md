@@ -583,6 +583,89 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
+## ⚠️ Talhões: criar talhão estava quebrado — corrigido e comitado — 24/08/2026
+
+**Causa raiz:** o INSERT de `/talhoes` montava o payload sem `fazenda_id`. A coluna é
+`NOT NULL` (`supabase/migrations/001_multi_fazenda.sql`, passo 5) e a policy
+`talhoes_tenant` a exige no `WITH CHECK`. Era a ÚNICA tela do sistema sem isso —
+estoque, financeiro, nfe e operações todas passam `fazendaAtiva.id`. A tela ainda
+escondia o motivo real atrás de "Erro ao salvar. Tente novamente.".
+
+**Provado ao vivo** (Matheus logado, localhost:3000, Fazenda MG): criou o talhão `3M`
+(450 ha, cana) — lista 12→13; editou 450→451→450 ha e o total acompanhou nos dois
+sentidos. Aba nova, carga limpa: zero erro de console.
+
+**Arquivos:** `web/lib/erros-supabase.ts` (novo), `web/lib/numeros-br.ts` (novo,
+`parseNumeroBR` promovido de `colunas-br.ts` para não arrastar `react-datasheet-grid`
+para o bundle de Talhões), `web/app/(app)/talhoes/salvar-talhao.ts` (novo) + teste,
+`web/app/(app)/talhoes/page.tsx`, `web/vitest.config.mts`,
+`web/app/(app)/controle/components/colunas-br.ts`. Os testes de `parseNumeroBR`
+mudaram de endereço junto com a função: saíram de `colunas-br.test.ts` e foram para
+`web/lib/numeros-br.test.ts` — módulo compartilhado tem teste no próprio endereço.
+
+**5 rodadas de revisão do Apolo.** O que ele pegou e foi corrigido: detector de "sem
+conexão" não disparava em Safari/iOS (cada runtime escreve frase diferente — o
+discriminador certo é o `code`, não a mensagem); `.replace(',', '.')` reintroduzia o
+bug de milhar que este repo já pagou; KPIs exibindo "0 ha" como fato durante erro de
+carregamento; Importar KMZ contando sucesso de gravação que podia não ter ocorrido
+(sem `.select()` o PostgREST responde 204 e `data` vem null SEMPRE).
+
+Na última rodada ele pegou o pior de todos, que era meu: `if (!error.code)` fazia
+apikey errada num deploy da Vercel (gateway responde 401 SEM `code`) virar
+"verifique a internet" em TODA tela, com a internet perfeita. O `status` mora no
+ENVELOPE da resposta, não dentro do erro — os call sites agora desestruturam
+`{ data, error, status }`. Também: KMZ com áreas sem nome recebia o conselho errado
+("nenhuma com contorno"), mandando reexportar polígono que já estava lá; e o botão
+"Tentar de novo" tinha corrida que ressuscitava erro velho por cima de dados novos.
+
+Última rodada, com sonda ponta a ponta contra host morto: resposta 5xx com corpo HTML
+despejava a página de erro do gateway inteira na tela, e corpo vazio imprimia
+`Erro: ` pelado (`??` não pega string vazia, só null). Queda de conexão no meio da
+importação KMZ era acusada como problema de fazenda — agora aborta e diz a verdade.
+Medição de graça da sonda: sem sinal, o `postgrest-js` faz retries e o botão fica
+~7 s em "Salvando…" antes da mensagem aparecer.
+
+**Correção de documento (regra da casa):** o comentário do `web/vitest.config.mts`
+afirmava que alias `@/` "inflaria a instalação". Errado e medido — `resolve.alias` é do
+próprio Vite, custa 0 pacote. Texto corrigido no arquivo.
+
+### ✅ RESPONDIDO — policies de `talhoes` conferidas no banco vivo em 24/08/2026
+
+`select policyname, cmd, qual, with_check from pg_policies where tablename = 'talhoes';`
+devolveu **UMA linha**: `talhoes_tenant`, `ALL`, com `qual` idêntico a `with_check`
+(`auth.uid() IS NOT NULL AND fazenda_id = get_fazenda_ativa_id()`).
+
+Consequências, agora fundamentadas e não supostas:
+- As 3 policies de `api/src/database/migrations/009_rls_talhoes.sql` **foram dropadas**
+  pelo passo 8 da `001_multi_fazenda.sql`, como o script pretendia. O arquivo 009 é
+  fóssil — engana quem lê procurando a regra vigente.
+- **Não há caminho para gravar em fazenda errada:** INSERT com `fazenda_id` de outra
+  fazenda é recusado pelo `WITH CHECK`.
+- **O `.select('id')` não produz falso alarme:** `USING` idêntico ao `WITH CHECK`
+  significa que toda linha gravada volta no RETURNING.
+
+Registro do erro de raciocínio (para não repetir): eu tinha declarado isso fechado com
+base em ter criado um talhão ao vivo. O Apolo mostrou que aquele teste passa nas DUAS
+configurações de policy — as do 009 são MAIS permissivas, não mais estreitas, e o caso
+que as distingue (gravar com `fazenda_id` de outra fazenda) nunca foi exercido. Só a
+consulta ao `pg_policies` decidia.
+
+### Comitado, ainda sem PR
+
+Commit `3ae993c` na branch `fix/talhoes-fazenda-id` (11 arquivos, +840/−122).
+Ainda NÃO empurrado para o GitHub e sem PR aberto.
+Comando que mede antes de subir:
+`cd web && npx tsc --noEmit && npx vitest run && npm run build`
+
+### Fora de escopo, virou chip de tarefa
+
+- `web/context/fazenda-context.tsx` desempata a fazenda padrão por `.order('estado')`;
+  o banco (`get_fazenda_ativa_id()`) desempata por `created_at`. Coincidem HOJE por
+  acaso (MG é a mais antiga E a primeira alfabeticamente). Fazenda nova em BA/ES/GO
+  quebra o primeiro login.
+- `use-estoque-data.ts` mantém tradutor de erro próprio, sem tratamento de rede — deve
+  delegar para `@/lib/erros-supabase`.
+
 ## ✅ Contrato de adubo → conta a pagar + gasto no Financeiro — NO AR (PR #64 mergeado) — 23/08/2026
 
 PR #64 mergeado (squash, `88e3c30`), branch apagada nos dois lados. Desenho em
