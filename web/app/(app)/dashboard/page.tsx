@@ -29,6 +29,11 @@ const CULTURE_PALETTE: Record<string, string> = {
   sorgo:         '#06B6D4',
   pasto:         '#84CC16',
   'sem cultura': '#9CA3AF',
+  // Fatia de área arrendada: cor FIXA, não fallback por índice — sem entrada
+  // própria a cor mudaria conforme a posição da fatia na ordenação por área.
+  // Tom neutro escuro de propósito: não é operação nossa. Distinto do cinza
+  // claro de "sem cultura".
+  arrendado:     '#475569',
 }
 const CULTURE_FALLBACK = ['#22C55E','#EAB308','#F97316','#3B82F6','#8B5CF6','#06B6D4','#84CC16','#F43F5E']
 

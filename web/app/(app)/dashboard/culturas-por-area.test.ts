@@ -30,6 +30,17 @@ describe('agruparCulturasPorArea', () => {
     ])
   })
 
+  // Talhão arrendado SEM cultura também vai para "Arrendado", não para
+  // "Sem cultura". Sem esta asserção, uma implementação que só redirecionasse
+  // quando há cultura passaria em todos os outros testes — a soma continuaria
+  // fechando e ninguém veria.
+  it('arrendado SEM cultura vai para Arrendado, não para "Sem cultura"', () => {
+    const r = agruparCulturasPorArea([
+      talhao({ id: '1', area_ha: 80.5, cultura_atual: null, status: 'arrendado' }),
+    ])
+    expect(r).toEqual([{ name: FATIA_ARRENDADO, value: 80.5 }])
+  })
+
   // A invariante que impede o gráfico de discordar do "ha total" do topo.
   it('a soma das fatias é igual à área de TODOS os talhões', () => {
     const talhoes = [
