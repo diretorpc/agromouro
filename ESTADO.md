@@ -22,6 +22,48 @@
 
 ---
 
+## ✅ Talhões arrendados — 24/08/2026 — branch `feat/talhoes-arrendados`, sem PR ainda
+
+Área arrendada para a Usina Uberaba: terra própria da família operada por terceiro.
+`arrendado` virou o quarto valor de `talhoes.status`, com coluna `arrendatario` que o
+banco só aceita preenchida nesse status. **Migration 021 JÁ APLICADA em produção.**
+
+Objetivo escolhido pelo dono: enxergar o **patrimônio completo**. Contrato, valor e
+vencimento ficaram FORA de escopo, explicitamente — nada tocou Financeiro nem Contas.
+
+Spec: `docs/superpowers/specs/2026-08-24-talhoes-arrendados-design.md`
+Plano: `docs/superpowers/plans/2026-08-24-talhoes-arrendados.md`
+
+**Provado AO VIVO em produção, com o dono logado** (criado talhão de 80 ha arrendado
+**com cultura cana**, de propósito — era o teste que importava; depois excluído):
+- Dashboard: a cana ficou em 659,3 ha, **não subiu**. Fatia "Arrendado" apareceu separada.
+- Talhões: "14 em operação · 1 arrendado", "sendo 80 ha arrendados", Culturas Ativas intacta.
+- Operações: o arrendado NÃO aparece no seletor; os outros 14 sim.
+- Custos: nem lista o arrendado. A afirmação da spec virou **medição**, não raciocínio.
+- Desarrendar (editar → Ativo) zera o arrendatário e a CHECK do banco não barra.
+
+**A revisão final achou o que 6 revisões de tarefa não viram: a "trava" existia em 1 das
+3 portas.** `web/operacoes` tinha; `api/src/webhooks/whatsapp.ts` (`buscarTalhao`) e o POST
+`api/src/routes/operacoes.ts` **não**. O WhatsApp é o canal principal do produtor e resolve
+talhão por LIKE frouxo sem `.order()` — "Gogo" casa com Gogo I, II e III. Corrigido no
+mesmo PR, com teste dos dois lados (recusa arrendado E aceita talhão normal).
+
+Também corrigido: o badge do Dashboard pintava arrendado com a **cor de "colhido"**, porque
+`StatusBadge` tipava o parâmetro como `string` e caia num fallback. Consertado TIPANDO como
+`Talhao['status']` — fecha a classe, não só o caso.
+
+**Lição de processo desta feature:** de 5 rodadas de correção, **3 foram em TESTES**, não em
+código de produção. Os testes que eu especifiquei no plano passariam com o código quebrado —
+o pior foi um que conferia `emOperacao + arrendada === total`, identidade verdadeira por
+construção porque `emOperacao` é derivado por subtração. E uma "prova" por grep na Task 1
+era **auto-confirmatória**: procurou o padrão TIPADO, que só acha o que o compilador já pega.
+O site que importava era o não tipado.
+
+Comando que mede: `cd web && npx tsc --noEmit && npx vitest run && npm run build`
+e a suíte do `api/` do mesmo jeito.
+
+---
+
 # 1. NO AR — o que o sistema já faz
 
 ## Contas a Pagar + Financeiro: edição completa, 2 cards de KPI — PR #60 mergeado em 18/08/2026
