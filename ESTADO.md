@@ -22,11 +22,42 @@
 
 ---
 
-## 🚧 Adicionar NF em PDF — 24/08/2026 — **ABERTO** (código pronto e revisado, falta prova ao vivo)
+## ✅ Adicionar NF em PDF — 24/08/2026 — **NO AR** (PRs #67, #68 e #69)
 
-**Tarefas 1 a 6 feitas.** Banco conferido na fonte viva (`arquivo_pdf`, `arquivo_hash`,
-`idx_nfe_arquivo_hash`) e bucket privado `notas-pdf` criado. Falta só a Task 7: subir uma
-nota real e abrir as cinco telas.
+Subir o DANFE em PDF na aba Notas, conferir na tela e gravar pelo MESMO `processarNFe`
+que o XML usa. Banco conferido na fonte viva (`arquivo_pdf`, `arquivo_hash`,
+`idx_nfe_arquivo_hash`) e bucket privado `notas-pdf` criado.
+
+Medir a suíte: `cd api && npm test` e `cd web && npx vitest run` (eram 634 e 172 antes
+desta feature).
+
+### PROVADO AO VIVO — nota 12728, ZAMPIERI ROCHA, 24/08/2026
+
+Conferido no BANCO, não na tela (script de leitura no scratchpad da sessão):
+
+```
+status=processada · R$ 457 · emissão 07/08/2026 · PDF guardado · hash gravado
+5 itens · soma R$ 457,00 = total da nota · centro de custo "manutencao" nos 5
+LANÇAMENTO FINANCEIRO: R$ 457     CONTA A PAGAR: R$ 457 vence 06/09 [aberta]
+MOVIMENTAÇÕES DE ESTOQUE: 0 (correto — material de construção não é estocável)
+```
+
+**O que a prova ao vivo pegou e nenhum teste pegaria:** a IA leu **5922** (faturamento de
+entrega futura) nos cinco itens, quando o DANFE imprime **5405** em quatro e **5102** no
+quinto. Nesta nota o dinheiro ficou certo por acaso; a mesma leitura numa nota de adubo
+faria a mercadoria **não entrar no estoque, calada**. Os 5 itens foram corrigidos no banco
+com o dono olhando o papel — `conta_como_compra` continua `true`, dinheiro intacto.
+
+Conserto no PR #69, em duas frentes: o prompt manda COPIAR o número da coluna CFOP
+(proibido deduzir da natureza da operação), e nota em que NENHUM item é "compra normal"
+abre faixa vermelha e exige confirmação marcada antes de gravar.
+
+**Lição:** o menu de efeito por item existia e não bastou — mostrava a resposta errada num
+campo pequeno, e "parecia conferido". Informação certa sem PESO é pior que informação
+ausente. Quem fechou o buraco foi o dono abrir o PDF e ler a coluna.
+
+**Ainda NÃO medido:** o custo por leitura (Opus lendo o PDF). Conferir no console da
+Anthropic e anotar aqui — número medido, nunca estimativa.
 
 Medir a suíte: `cd api && npm test` (era 634 antes desta feature).
 
