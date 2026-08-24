@@ -626,7 +626,15 @@ export default function NfePage() {
             produto e o efeito ficavam cortados (achado do Matheus na primeira
             importação real, 24/08/2026). Largura de verdade, mas limitada pela
             tela: `min(96vw, ...)` não estoura em notebook nem no celular. */}
-        <DialogContent className={addMode === 'pdf' ? 'w-[96vw] max-w-[1200px]' : 'max-w-lg'}>
+        {/* ⚠️ TEM que ser `sm:max-w-[...]`, nunca `max-w-[...]`: o DialogContent do
+            shadcn (components/ui/dialog.tsx:56) já traz `sm:max-w-sm`, e o twMerge
+            NÃO remove uma classe de grupo diferente — as duas sobrevivem, e a que
+            vier depois no CSS vence. Provado em 24/08/2026 compilando o CSS real:
+            com `max-w-[1200px]` a janela continuava com 384px em qualquer tela
+            ≥640px. É por isso que a primeira importação real do Matheus mostrou o
+            menu de efeito como "Fatu…". Mesmo padrão de nfe/page.tsx:521 e
+            cartoes/page.tsx:1126, que já usam `sm:max-w-[...]`. */}
+        <DialogContent className={addMode === 'pdf' ? 'w-[96vw] sm:max-w-[1200px]' : 'max-w-lg'}>
           <DialogHeader>
             <DialogTitle>Adicionar Nota Fiscal</DialogTitle>
           </DialogHeader>
