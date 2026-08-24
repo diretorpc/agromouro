@@ -204,6 +204,8 @@ Mesmo vocabulário de `controle.ts` — a distinção que importa é **"o arquiv
 | não é nota fiscal | 422 | "Este arquivo não parece ser uma nota fiscal." |
 | sem itens aproveitáveis | 422 | "Não consegui ler nenhum item desta nota." |
 | sem número ou CNPJ | 422 | "Não consegui identificar o número da nota ou o CNPJ do fornecedor." |
+| data de emissão ilegível | 422 | "Não consegui ler a data de emissão da nota." |
+| valor total ilegível | 422 | "Não consegui ler o valor total da nota." |
 | arquivo acima de 10 MB | 422 | "Arquivo grande demais (máximo 10 MB)." |
 | IA indisponível ou resposta truncada | 503 | "O leitor de notas está indisponível agora. Tente de novo em alguns minutos." |
 | nota já existe (passo 2) | 200 | "Esta nota já está no sistema (entrou em DD/MM/AAAA)." |
@@ -238,14 +240,16 @@ Sem alteração de RLS: quem lê é a API, com chave de serviço.
    `validarNotaLida` exportada. Testes cobrindo: CNPJ com letra, data fora da janela, valor
    absurdo, item sem descrição, 5.000 itens alucinados, CFOP de 3 dígitos, nota sem item
    nenhum, resposta truncada (`stop_reason: 'max_tokens'` → `falha`).
-3. **`api/src/services/nfe/gravarNotaDoPdf.ts` — gravação.** Hash, upload, dedupe,
+3. **`processarNFe` devolve o id da nota e aceita o arquivo.** Assinatura ganha um 4º
+   parâmetro opcional `arquivo?: { pdfPath, hash }`, gravado no **mesmo INSERT** da nota —
+   o índice único do hash só protege se ele chegar ao banco antes de o estoque mexer. A
+   suíte existente tem que continuar verde.
+4. **`api/src/services/nfe/gravarNotaDoPdf.ts` — gravação.** Hash, upload, dedupe,
    `processarNFe`, limpeza em caso de falha (apagar a casca da nota **e** remover o arquivo
    do bucket — o mesmo cuidado do `catch` de `importarXmlManual`). Testes com o Supabase e
    o `processarNFe` mockados: upload falha → nenhuma nota; `processarNFe` lança → casca
    apagada e arquivo removido; sucesso → `arquivo_pdf` e `arquivo_hash` gravados; hash
    repetido → `duplicada-arquivo`.
-4. **`processarNFe` devolve o id da nota.** Uma linha, mais o ajuste dos chamadores se o
-   TypeScript reclamar. A suíte existente tem que continuar verde.
 5. **Rotas.** `POST /nfe/ler-pdf`, `POST /nfe/importar-pdf`, `GET /nfe/:id/pdf`, mais o
    limite de 15 MB no mount de `/nfe` em `index.ts` (hoje 2 MB — nenhum PDF passa). A
    fazenda vem **sempre** de `req.user.app_metadata.fazenda_ativa_id`, nunca do corpo.
