@@ -34,10 +34,16 @@ backend. Logo o RLS **não protege nada do lado da API** — o único isolamento
 
 **O que estava quebrado no `api/src/webhooks/whatsapp.ts`:** `buscarTalhao`,
 `buscarInsumo`, `consultarEstoque` e o SELECT batch do decremento de estoque rodavam sem
-filtro de fazenda. Pior: o UPDATE de estoque tinha `.eq('fazenda_id', …)`, então casava
-ZERO linhas — e **Supabase não retorna erro em UPDATE de zero linhas**. O bot respondia
-"(estoque: 298L)" com um número que nunca foi gravado. Mesma família do
-`rls-escrita-silenciosa`.
+filtro de fazenda.
+
+Havia ainda um defeito **LATENTE — nunca observado**, e a distinção importa. O UPDATE de
+estoque JÁ filtrava por `fazenda_id`, enquanto o SELECT que calcula o novo saldo não. Se o
+SELECT trouxesse linha de outra fazenda, o UPDATE casaria ZERO linhas — e **Supabase não
+retorna erro em UPDATE de zero linhas** —, então o bot responderia um saldo que nunca foi
+gravado. Isso NÃO aconteceu em produção: com 100% do dado em `mg` e a rota sempre
+resolvendo `mg`, o UPDATE sempre casou. Registrado como risco fechado, não como incidente:
+quem ler isto daqui a seis meses não deve calibrar prioridade achando que já mordeu.
+Mesma família do `rls-escrita-silenciosa`.
 
 **Consertado:** os quatro filtros; o UPDATE agora usa `.select()`, conta linhas e grita
 com contexto quando não grava (e a resposta no WhatsApp deixa de afirmar o saldo).
@@ -62,6 +68,21 @@ Não é número vivo, é o retrato que motivou a prioridade. Para o valor de hoj
 Isso torna o bug uma **bomba armada**, não um incêndio: enquanto o `?? 'mg'` manda tudo
 para a MG, o cruzamento não aparece. Ele aparece inteiro no dia que a 2ª instância Z-API
 entrar no ar.
+
+Mais três medições da revisão, mesmo dia:
+
+- `operacoes` com `fonte='whatsapp'`: **1 na vida**, em 22/06/2026 ("pulverização talhão
+  lagoa, 1k de cutlass"). Nada depois, de fonte nenhuma. O canal principal do produtor
+  está praticamente parado — vale investigar POR QUÊ antes de investir mais nele.
+- `talhoes` com `status='arrendado'`: **2** — São Domingos (92,3 ha) e Rio Claro (123 ha).
+  A trava do PR #66 protege terra real, não hipótese.
+- **4 colisões reais de nome entre os 18 talhões:** "Gogo I" casa por `ilike` com Gogo II
+  e Gogo III; "Alvorada I" casa com Alvorada II. Sem `.order()`, a escolha era indefinida
+  e a dose `por_ha` saía sobre a área errada (152,76 L em vez de 273,12 L — 44% de erro,
+  com o bot respondendo "✅ Registrado!"). Corrigido nesta branch com `.order('nome')`.
+  ⚠️ Isso dá DETERMINISMO, e acerta os nomes de hoje por sorte da nomenclatura (o nome
+  mais curto ordena primeiro). **Desambiguação de verdade — perguntar ao agricultor qual
+  talhão — continua EM ABERTO** e precisa de spec.
 
 ---
 
