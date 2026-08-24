@@ -540,7 +540,18 @@ whatsappWebhook.post('/', async (req, res) => {
       .single()
 
     if (!fazenda) {
-      console.warn(`[WA] Fazenda não encontrada: ${fazenda_codigo}`)
+      // Mensagem NUNCA pode ser engolida em silêncio — é o pior modo de falha
+      // deste projeto, porque o agricultor não tem outro canal. Alcançável de
+      // verdade: o .env.example chegou a documentar um código de fazenda 'sp'
+      // que não existe; se a URL na Z-API tiver ?fazenda=sp, toda mensagem cai
+      // aqui. [WhatsApp] (não [WA]) para casar com o grep usado no resto do
+      // arquivo (9 outros logs) — quem caçar por "[WA]" no Railway não acha isto.
+      console.error(`[WhatsApp] Fazenda não encontrada: ${fazenda_codigo} — avisando o agricultor`)
+      await enviarMensagem(
+        phone,
+        `Não consegui identificar sua fazenda no sistema. Avise o suporte.`,
+        'mg',
+      )
       return
     }
 

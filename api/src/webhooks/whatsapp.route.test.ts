@@ -48,6 +48,15 @@ vi.mock('../services/supabase', () => {
   }
 })
 
+// enviarMensagem é a resposta que chega ao agricultor no WhatsApp — mockado
+// para o Item 2 (mensagem nunca pode ser engolida em silêncio) sem disparar
+// requisição HTTPS real para a Z-API.
+const { enviarMensagemMock } = vi.hoisted(() => ({ enviarMensagemMock: vi.fn().mockResolvedValue(true) }))
+vi.mock('../services/zapi', () => ({
+  enviarMensagem: enviarMensagemMock,
+  getAuthorizedPhones: vi.fn(() => [] as string[]),
+}))
+
 import { whatsappWebhook } from './whatsapp'
 
 function pegarHandlerPost(path: string) {
@@ -77,6 +86,7 @@ let erroSpy: ReturnType<typeof vi.spyOn>
 
 beforeEach(() => {
   vi.clearAllMocks()
+  enviarMensagemMock.mockClear()
   erroSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
@@ -91,10 +101,12 @@ describe('POST /webhook/whatsapp — fallback de fazenda_codigo', () => {
     const { req, res, next } = criarReqRes({}) // sem query.fazenda
     await handler(req, res, next)
 
-    expect(erroSpy).toHaveBeenCalledTimes(1)
-    const [mensagem] = erroSpy.mock.calls[0]
-    expect(mensagem).toContain("assumindo fazenda 'mg'")
-    expect(mensagem).toContain('?fazenda=')
+    // O fixture NUNCA acha a fazenda (de propósito — ver comentário do mock),
+    // então o 1º log é o fallback e o 2º é "fazenda não encontrada" (Item 2).
+    expect(erroSpy).toHaveBeenCalledTimes(2)
+    const [mensagemFallback] = erroSpy.mock.calls[0]
+    expect(mensagemFallback).toContain("assumindo fazenda 'mg'")
+    expect(mensagemFallback).toContain('?fazenda=')
 
     // "processa como mg": a fazenda efetivamente consultada foi 'mg', não
     // vazia nem undefined — confirma que o fallback continua funcionando.
@@ -103,11 +115,12 @@ describe('POST /webhook/whatsapp — fallback de fazenda_codigo', () => {
     expect(fromCall.eq).toHaveBeenCalledWith('codigo', 'mg')
   })
 
-  it('COM ?fazenda=mt na URL: NÃO dispara console.error', async () => {
+  it('COM ?fazenda=mt na URL: NÃO dispara o log de fallback (só o de "fazenda não encontrada")', async () => {
     const { req, res, next } = criarReqRes({ fazenda: 'mt' })
     await handler(req, res, next)
 
-    expect(erroSpy).not.toHaveBeenCalled()
+    expect(erroSpy).toHaveBeenCalledTimes(1)
+    expect(erroSpy.mock.calls[0][0]).not.toContain("assumindo fazenda 'mg'")
 
     const { supabase } = await import('../services/supabase')
     const fromCall = (supabase.from as any).mock.results[0].value
@@ -128,7 +141,8 @@ describe('POST /webhook/whatsapp — fallback de fazenda_codigo', () => {
 
     await expect(handler(req, res, next)).resolves.toBeUndefined()
 
-    expect(erroSpy).toHaveBeenCalledTimes(1)
+    // 1º log = fallback (Item 1); 2º log = fazenda não encontrada (Item 2) —
+    // o fixture nunca acha fazenda nenhuma, de propósito.
     const [mensagem] = erroSpy.mock.calls[0]
     expect(mensagem).toContain("assumindo fazenda 'mg'")
   })
@@ -138,7 +152,6 @@ describe('POST /webhook/whatsapp — fallback de fazenda_codigo', () => {
 
     await expect(handler(req, res, next)).resolves.toBeUndefined()
 
-    expect(erroSpy).toHaveBeenCalledTimes(1)
     const [mensagem] = erroSpy.mock.calls[0]
     expect(mensagem).toContain("assumindo fazenda 'mg'")
   })
@@ -148,8 +161,35 @@ describe('POST /webhook/whatsapp — fallback de fazenda_codigo', () => {
 
     await expect(handler(req, res, next)).resolves.toBeUndefined()
 
-    expect(erroSpy).toHaveBeenCalledTimes(1)
     const [mensagem] = erroSpy.mock.calls[0]
     expect(mensagem).toContain("assumindo fazenda 'mg'")
+  })
+})
+
+// ─── Item 2 — fazenda não encontrada NUNCA pode engolir a mensagem em silêncio ─
+// É o pior modo de falha deste projeto: o agricultor não tem outro canal além
+// do WhatsApp. Alcançável de verdade: o .env.example chegou a documentar um
+// código de fazenda 'sp' que não existe — se a URL na Z-API tiver ?fazenda=sp,
+// toda mensagem cairia aqui e sumiria (hipótese não confirmada, mas o canal só
+// produziu 1 operação na vida, em 22/06/2026, e nada depois).
+describe('POST /webhook/whatsapp — fazenda não encontrada', () => {
+  const handler = pegarHandlerPost('/')
+
+  it('avisa o agricultor via enviarMensagem, loga com console.error e prefixo [WhatsApp] (não [WA])', async () => {
+    const { req, res, next } = criarReqRes({ fazenda: 'sp' }) // código documentado no .env.example que não existe
+    await handler(req, res, next)
+
+    expect(enviarMensagemMock).toHaveBeenCalledTimes(1)
+    const [telefoneChamado, mensagemAoAgricultor, fazendaCodigoChamado] = enviarMensagemMock.mock.calls[0]
+    expect(telefoneChamado).toBe('5511999998888')
+    expect(typeof mensagemAoAgricultor).toBe('string')
+    expect(mensagemAoAgricultor.length).toBeGreaterThan(0)
+    expect(fazendaCodigoChamado).toBe('mg') // instância Z-API que sabemos que funciona
+
+    // Grep "[WhatsApp]" precisa achar esta linha — "[WA]" (prefixo antigo) não.
+    const chamadaComFazendaNaoEncontrada = erroSpy.mock.calls.find(([msg]) => String(msg).includes('não encontrada'))
+    expect(chamadaComFazendaNaoEncontrada, 'nenhum console.error mencionou "não encontrada"').toBeTruthy()
+    expect(chamadaComFazendaNaoEncontrada![0]).toContain('[WhatsApp]')
+    expect(chamadaComFazendaNaoEncontrada![0]).not.toContain('[WA]')
   })
 })
