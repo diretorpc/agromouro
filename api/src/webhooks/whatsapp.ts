@@ -166,13 +166,19 @@ async function consultarEstoque(nomeInsumo: string): Promise<string> {
 }
 
 // ─── Buscar talhão por nome/número ───────────────────────────────────────────
-// export: exercitado direto por whatsapp.test.ts (trava de área arrendada).
-export async function buscarTalhao(nomeTalhao: string) {
+// export: exercitado direto por whatsapp.test.ts (trava de área arrendada e
+// isolamento entre fazendas).
+// fazendaId é obrigatório: o cliente supabase daqui usa SERVICE_KEY (bypassa RLS
+// por completo — as policies dependem de auth.uid(), que não existe no backend).
+// Sem .eq('fazenda_id', ...), "talhão 5" da fazenda A podia casar com um talhão
+// de nome idêntico na fazenda B (ilike frouxo, sem .order() = ordem indefinida).
+export async function buscarTalhao(nomeTalhao: string, fazendaId: string) {
   const nomeSanitizado = nomeTalhao.trim().slice(0, 100)
 
   const { data } = await supabase
     .from('talhoes')
     .select('id, nome, area_ha')
+    .eq('fazenda_id', fazendaId)
     // Área arrendada é operada pela Usina Uberaba, não pela família — não pode
     // receber operação por NENHUMA porta (WhatsApp, form web, API direta).
     // Sem este filtro, "apliquei glifosato no Gogo" podia casar com um talhão
@@ -268,6 +274,17 @@ async function resolverInsumos(
 // ─── Processar mensagem recebida ──────────────────────────────────────────────
 async function processarMensagem(telefone: string, texto: string, fazenda_codigo: string = 'mg', fazenda_id?: string) {
   try {
+    // Sem fazenda_id não há como filtrar buscarTalhao por tenant — o cliente
+    // supabase daqui usa SERVICE_KEY e bypassa RLS por completo. Processar mesmo
+    // assim repetiria o bug desta correção. Na prática isso nunca acontece: a
+    // rota resolve a fazenda antes de chamar processarMensagem e retorna cedo se
+    // não encontrar. O guard existe para falhar alto se essa garantia quebrar.
+    if (!fazenda_id) {
+      console.error('[WhatsApp] processarMensagem chamado sem fazenda_id — mensagem recusada por segurança', { telefone, fazenda_codigo })
+      await enviarMensagem(telefone, `Tive um problema ao processar sua mensagem. Tente novamente em instantes.`, fazenda_codigo)
+      return
+    }
+
     const classificacao = await classificarMensagem(texto)
     const { tipo, dados } = classificacao
     let resposta = ''
@@ -280,7 +297,7 @@ async function processarMensagem(telefone: string, texto: string, fazenda_codigo
       resposta = respostas.join('\n')
 
     } else if (tipo === 'OPERACAO' || tipo === 'APLICACAO_INSUMO') {
-      const talhao = dados.talhao ? await buscarTalhao(dados.talhao) : null
+      const talhao = dados.talhao ? await buscarTalhao(dados.talhao, fazenda_id) : null
       const dataOp = dados.data || new Date().toISOString().split('T')[0]
 
       // Insert da operação capturando o id gerado
