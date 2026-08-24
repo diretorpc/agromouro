@@ -97,11 +97,19 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
   // continuar travando o botão (achado do Apolo, 24/08/2026: número lido errado
   // que casava com nota existente deixava a nota real sem caminho de entrada).
   const [identidadeEditada, setIdentidadeEditada] = useState(false)
+  // Foto do que a IA leu, tirada no instante em que a leitura chega — antes de
+  // qualquer edição. Mostrado ao lado dos campos para o dono CONFERIR contra o
+  // papel, em vez de só confiar que "o servidor recusa se for duplicata": um
+  // dígito errado no CNPJ faz o servidor não achar nada e gravar a nota como
+  // se fosse nova (achado do Apolo, 24/08/2026).
+  const [lidoOriginal, setLidoOriginal] = useState<{ numero: string; emitenteCnpj: string } | null>(null)
 
   function escolherArquivo(file: File) {
     setErro(''); setLeitura(null); setNota(null)
     setNomeArquivo(file.name)
     setBase64(null)
+    setLidoOriginal(null)
+    setIdentidadeEditada(false)
     if (file.size > LIMITE_BYTES) {
       setErro(`Arquivo grande demais (${(file.size / 1024 / 1024).toFixed(1)} MB). O limite é 10 MB.`)
       return
@@ -125,6 +133,7 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
       const r = await api.post<RespostaLeitura>('/nfe/ler-pdf', { arquivo: base64, nomeArquivo })
       setLeitura(r)
       setNota(r.nota)
+      setLidoOriginal({ numero: r.nota.numero, emitenteCnpj: r.nota.emitenteCnpj })
     } catch (err) {
       setErro(err instanceof Error ? err.message : 'Erro ao ler o PDF.')
     } finally {
@@ -161,15 +170,23 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
   }
 
   // Trocar o efeito de um item grava o CFOP representante daquela família —
-  // o dono escolhe "já paguei antes", não "5117".
+  // o dono escolhe "já paguei antes", não "5117". MAS: se a família escolhida
+  // é a MESMA que o item já tinha e ele já veio com um CFOP lido, não
+  // reescrever — só quando a família muda de verdade ou o CFOP original
+  // estava vazio. Sem essa trava, confirmar a família de um item 6117
+  // (interestadual) gravava 5117 (interno) — um código que a nota nunca
+  // imprimiu, só porque o dono confirmou o que a IA já tinha acertado.
   function escolherFamilia(indice: number, chave: string) {
     if (!nota) return
     const familia = leitura?.familias?.find(f => f.chave === chave)
     if (!familia) return
     setNota({
       ...nota,
-      itens: nota.itens.map((item, n) =>
-        n === indice ? { ...item, cfop: familia.cfop, familia: familia.chave } : item),
+      itens: nota.itens.map((item, n) => {
+        if (n !== indice) return item
+        const mantemCfopOriginal = item.familia === chave && !!item.cfop
+        return { ...item, cfop: mantemCfopOriginal ? item.cfop : familia.cfop, familia: familia.chave }
+      }),
     })
   }
 
@@ -250,7 +267,8 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
           <strong>Esta nota já está no sistema</strong>
           {leitura.jaExiste?.data_emissao ? ` (entrou em ${ddmmaaaa(leitura.jaExiste.data_emissao)})` : ''}.
           {' '}Gravar de novo somaria estoque e gasto duas vezes.
-          {' '}Se o número ou o CNPJ estiverem lidos errado, corrija abaixo — o aviso sai.
+          {' '}Se o número ou o CNPJ estiverem lidos errado, corrija abaixo — o sistema confere
+          de novo com o número corrigido.
         </div>
       )}
 
@@ -280,7 +298,12 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
           {leitura.duplicatasDescartadas > 0 && (
             <p>{leitura.duplicatasDescartadas} parcela(s) de cobrança ficaram de fora.</p>
           )}
-          {semCfop > 0 && (
+          {/* `familias` pode vir vazia/undefined quando a API é mais velha que o
+              front (web novo na Vercel, API antiga no Railway — sobem separados).
+              Sem família não existe escolha possível: o select só teria "— escolha
+              —" e o atalho não faria nada, então travar o botão prenderia o dono
+              sem saída. Mostramos o aviso antigo (sem exigir escolha) nesse caso. */}
+          {semCfop > 0 && ((leitura.familias?.length ?? 0) > 0 ? (
             <p>
               {semCfop} item(ns) sem CFOP legível. <strong>Escolha na coluna "O que é este item"</strong> —
               sem escolha o sistema assume compra nova, e numa nota de entrega de pedido já pago isso
@@ -293,7 +316,11 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
                 São todos compra normal
               </button>
             </p>
-          )}
+          ) : (
+            <p>
+              {semCfop} item(ns) sem CFOP legível — vão entrar como compra normal e somar no estoque.
+            </p>
+          ))}
         </div>
       )}
 
@@ -301,6 +328,7 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
         <div className="space-y-1">
           <Label htmlFor="pdf-numero">Número da nota</Label>
           <Input id="pdf-numero" value={nota.numero} onChange={e => editar('numero', e.target.value)} />
+          {lidoOriginal && <p className="text-[10px] text-muted-foreground">a IA leu: {lidoOriginal.numero}</p>}
         </div>
         <div className="space-y-1">
           <Label htmlFor="pdf-modelo">Tipo</Label>
@@ -321,6 +349,7 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
         <div className="space-y-1">
           <Label htmlFor="pdf-cnpj">CNPJ do fornecedor</Label>
           <Input id="pdf-cnpj" value={nota.emitenteCnpj} onChange={e => editar('emitenteCnpj', e.target.value)} />
+          {lidoOriginal && <p className="text-[10px] text-muted-foreground">a IA leu: {lidoOriginal.emitenteCnpj}</p>}
         </div>
         <div className="space-y-1">
           <Label htmlFor="pdf-data">Data de emissão</Label>
@@ -369,17 +398,28 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
                     {item.cfop && !item.familia ? (
                       <span title="CFOP com efeito próprio — não mexa sem motivo">CFOP {item.cfop}</span>
                     ) : (
-                      <select
-                        className={`w-full rounded border bg-background px-1 py-0.5 text-xs ${item.familia ? 'border-input' : 'border-amber-400 text-amber-800'}`}
-                        value={item.familia ?? ''}
-                        aria-label={`O que é o item ${item.descricao}`}
-                        onChange={e => escolherFamilia(n, e.target.value)}
-                      >
-                        {!item.familia && <option value="">— escolha —</option>}
-                        {(leitura.familias ?? []).map(f => (
-                          <option key={f.chave} value={f.chave}>{f.rotulo}</option>
-                        ))}
-                      </select>
+                      <>
+                        <select
+                          className={`w-full rounded border bg-background px-1 py-0.5 text-xs ${item.familia ? 'border-input' : 'border-amber-400 text-amber-800'}`}
+                          value={item.familia ?? ''}
+                          aria-label={`O que é o item ${item.descricao}`}
+                          onChange={e => escolherFamilia(n, e.target.value)}
+                        >
+                          {!item.familia && <option value="">— escolha —</option>}
+                          {(leitura.familias ?? []).map(f => (
+                            <option key={f.chave} value={f.chave}>{f.rotulo}</option>
+                          ))}
+                        </select>
+                        {/* `efeitoDoCfop` (api/contas/cfop.ts) devolve "compra normal"
+                            para todo código FORA da tabela conhecida — inclusive 5906/
+                            6906 (retirada de depósito, problema aberto no backlog: conta
+                            como gasto novo sem ser). O select já preenchido some com essa
+                            pista; manter o código impresso, discreto, é o que deixa o dono
+                            notar um CFOP que o sistema classificou como compra sem ser. */}
+                        {item.cfop && (
+                          <span className="block text-[10px] text-muted-foreground">CFOP {item.cfop}</span>
+                        )}
+                      </>
                     )}
                   </td>
                   <td className="p-2 text-right">
@@ -402,9 +442,12 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
             que faria o dono não desconfiar (achado do Apolo, 24/08/2026). */}
         {itensRemovidos > 0 ? (
           <p className="text-xs text-amber-700 mt-1">
-            Você removeu {itensRemovidos} linha(s). O gasto lançado continua sendo o
-            <strong> total impresso na nota</strong> ({brl(nota.valorTotal)}), não a soma das
-            linhas que sobraram ({brl(somaItens)}) — remover linha tira do estoque, não do dinheiro.
+            Você removeu {itensRemovidos} linha(s). Remover linha tira o item do estoque
+            <strong> e</strong> da lista do Financeiro. O lançamento de gasto só mantém o
+            total impresso na nota ({brl(nota.valorTotal)}) quando todas as linhas restantes
+            forem compra — havendo bonificação ou entrega já paga entre elas, o lançamento
+            passa a ser a soma dos itens ({brl(somaItens)}), e os dois totais podem ficar
+            diferentes. Não use isto para descontar valor da nota.
           </p>
         ) : Math.abs(somaItens - nota.valorTotal) > 0.01 && (
           <p className="text-xs text-muted-foreground mt-1">
@@ -435,11 +478,15 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={onCancelar}>Cancelar</Button>
         {/* Item sem efeito escolhido TRAVA a gravação: deixar passar equivale a
-            decidir "é compra" por omissão, que é o caminho do gasto dobrado. */}
+            decidir "é compra" por omissão, que é o caminho do gasto dobrado. Mas
+            só trava quando existe ESCOLHA possível (`familias` não vazia) — um
+            botão que trava sem oferecer a ação que destrava é pior que o default
+            que ele evita (achado do Apolo, 24/08/2026: API antiga sem `familias`
+            deixava o dono sem nenhum caminho para gravar a nota). */}
         <Button
           onClick={gravar}
-          disabled={gravando || nota.itens.length === 0 || !!duplicataValendo || semCfop > 0}
-          title={semCfop > 0 ? 'Escolha o que é cada item marcado em amarelo' : undefined}
+          disabled={gravando || nota.itens.length === 0 || !!duplicataValendo || (semCfop > 0 && (leitura.familias?.length ?? 0) > 0)}
+          title={semCfop > 0 && (leitura.familias?.length ?? 0) > 0 ? 'Escolha o que é cada item marcado em amarelo' : undefined}
         >
           {gravando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
           {gravando ? 'Gravando…' : 'Confirmar e gravar'}

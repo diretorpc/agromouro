@@ -15,6 +15,15 @@ const { estadoBanco, chamadasRpc, removeMock } = vi.hoisted(() => ({
     // cada teste só exercita uma das duas por vez.
     notaSelect: { data: null as any, error: null as any },
     rpcErro:    null as any,
+    // ACHADO 5 (revisão do Apolo, 24/08/2026): o teste original provava QUANDO
+    // o arquivo é removido, não que o SELECT de `arquivo_pdf` roda ANTES da
+    // RPC — que era o achado inteiro (a RPC apaga a linha da nota; ler
+    // `arquivo_pdf` depois disso já não acha nada). Esta flag marca o instante
+    // em que a RPC roda, e o `maybeSingle` passa a devolver `{ data: null }`
+    // depois dele — assim, se alguém inverter a ordem no código de produção
+    // (mover o select para depois do rpc), o teste do bucket falha de verdade
+    // em vez de continuar verde.
+    rpcJaRodou: false,
   },
   chamadasRpc: [] as { fn: string; args: any }[],
   removeMock: vi.fn(),
@@ -25,7 +34,8 @@ vi.mock('./supabase', () => {
     const obj: any = {
       select:      vi.fn(() => obj),
       eq:          vi.fn(() => obj),
-      maybeSingle: vi.fn(() => Promise.resolve(estadoBanco.notaSelect)),
+      maybeSingle: vi.fn(() =>
+        Promise.resolve(estadoBanco.rpcJaRodou ? { data: null, error: null } : estadoBanco.notaSelect)),
     }
     return obj
   }
@@ -34,6 +44,7 @@ vi.mock('./supabase', () => {
       from: vi.fn(() => builder()),
       rpc:  vi.fn((fn: string, args: any) => {
         chamadasRpc.push({ fn, args })
+        estadoBanco.rpcJaRodou = true
         return Promise.resolve({ error: estadoBanco.rpcErro })
       }),
       storage: { from: vi.fn(() => ({ remove: removeMock })) },
@@ -51,6 +62,7 @@ describe('importarXmlManual', () => {
     vi.mocked(processarNFe).mockReset()
     estadoBanco.notaSelect = { data: null, error: null }
     estadoBanco.rpcErro = null
+    estadoBanco.rpcJaRodou = false
     chamadasRpc.length = 0
   })
 
@@ -134,6 +146,7 @@ describe('excluirNotaManual', () => {
   beforeEach(() => {
     estadoBanco.rpcErro = null
     estadoBanco.notaSelect = { data: null, error: null }
+    estadoBanco.rpcJaRodou = false
     chamadasRpc.length = 0
     removeMock.mockReset()
     removeMock.mockResolvedValue({ error: null })
@@ -142,6 +155,13 @@ describe('excluirNotaManual', () => {
   // ACHADO 5 do Apolo (24/08/2026): a RPC apaga tudo no banco e nao sabe que
   // Storage existe. O caminho do PDF so vive na coluna arquivo_pdf, que some
   // junto com a linha — sem ler ANTES, o DANFE fica orfao para sempre.
+  //
+  // Este teste prova a ORDEM, não só o resultado: o mock de `maybeSingle`
+  // devolve `{ data: null }` assim que `rpc` roda (flag `rpcJaRodou`). Se o
+  // código de produção inverter a ordem — mover o select de `arquivo_pdf`
+  // para DEPOIS do `supabase.rpc('excluir_nota_fiscal', ...)` — o select
+  // passa a rodar depois da flag virar true, `arquivoPdf` vira null, e este
+  // teste falha porque `removeMock` deixa de ser chamado com o caminho certo.
   it('nota que veio de PDF: apaga tambem o arquivo do bucket', async () => {
     estadoBanco.notaSelect = { data: { arquivo_pdf: 'fazenda-1/abc.pdf' }, error: null }
 

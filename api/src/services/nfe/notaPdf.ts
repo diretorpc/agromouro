@@ -265,12 +265,32 @@ function numeroDaNota(v: unknown): string | null {
 // observação da conta, a mensagem do WhatsApp e o resumo diário). Pelo XML esse
 // mesmo papel avisa; pelo PDF calava.
 //
-// Descrição sem dígito nenhum ("Boleto Bancário") vira null de propósito: null
-// é a resposta honesta ("não li o código"), e não uma string que finge ser
-// código e nunca casa com nada.
+// Códigos tPag válidos da NF-e (Nota Técnica 2020.006): tudo que NÃO está
+// aqui é lido errado, não é forma de pagamento nova.
+const TPAG_VALIDOS = new Set([
+  '01', '02', '03', '04', '05', '10', '11', '12', '13', '14', '15',
+  '16', '17', '18', '19', '20', '21', '22', '90', '99',
+])
+
+// Achado [crítico] do Apolo em 24/08/2026, medido: a versão anterior fazia
+// `.replace(/\D/g, '')`, que CATA dígito de dentro de frase inteira —
+// "90 dias" virava '90' (= "sem pagamento", a nota fica SEM conta a pagar) e
+// "1 - A prazo" virava '01' (= "dinheiro à vista", e havendo duplicata o
+// sistema ainda escrevia "pode já ter sido pago, dispense esta conta").
+// Agora só aceitamos ENTRADA que já É o código (1 ou 2 dígitos, nada mais) —
+// e mesmo assim só se o código existir na tabela oficial. Frase inteira,
+// mistura de texto com número, ou código que a tabela não conhece: tudo null.
+//
+// O custo assumido aqui é o CERTO por doutrina do projeto (comentário em
+// contas/deNotaFiscal.ts): "03 - Cartão de Crédito" agora vira null e a nota
+// ganha um boleto A MAIS para o dono dispensar num toque — é o erro barato,
+// de propósito, porque o erro caro (perder um boleto real) vence sem ninguém
+// avisar.
 function tPagNormalizado(v: unknown): string | null {
-  const digitos = String(v ?? '').replace(/\D/g, '')
-  return digitos.length === 1 || digitos.length === 2 ? digitos.padStart(2, '0') : null
+  const s = String(v ?? '').trim()
+  if (!/^\d{1,2}$/.test(s)) return null // frase inteira != código -> "não li"
+  const codigo = s.padStart(2, '0')
+  return TPAG_VALIDOS.has(codigo) ? codigo : null
 }
 
 function dataNaJanela(v: unknown, hojeISO: string, diasPassado: number, diasFuturo: number): string | null {

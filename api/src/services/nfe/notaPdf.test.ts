@@ -243,9 +243,13 @@ describe('validarNotaLida — forma de pagamento sai no MESMO formato do XML', (
     }
   })
 
-  it('codigo com descricao junto ainda entrega so o codigo', () => {
+  it('codigo com descricao junto vira null — nao ARRISCA achar o digito certo na frase', () => {
+    // Achado [crítico] do Apolo em 24/08/2026: a versão anterior catava dígito
+    // de dentro de frase (`.replace(/\D/g,'')`), e "1 - A prazo" virava '01'
+    // (dinheiro à vista) — com duplicata na nota, o sistema dispensava um
+    // boleto real. Frase inteira nunca é o código puro: null é "não li".
     const r = validarNotaLida(lida({ formaPagamento: '03 - Cartao de Credito' }), HOJE)
-    expect(r.status === 'nota' && r.nota.formaPagamento).toBe('03')
+    expect(r.status === 'nota' && r.nota.formaPagamento).toBeNull()
   })
 
   it('descricao sem digito nenhum vira null, nao string que finge ser codigo', () => {
@@ -258,6 +262,31 @@ describe('validarNotaLida — forma de pagamento sai no MESMO formato do XML', (
   it('numero com digitos demais vira null — nao existe tPag de 3 digitos', () => {
     const r = validarNotaLida(lida({ formaPagamento: '1503' }), HOJE)
     expect(r.status === 'nota' && r.nota.formaPagamento).toBeNull()
+  })
+
+  it('frase com numero de dias NUNCA e o codigo — "90 dias" nao e tPag 90', () => {
+    // Caso medido do achado crítico: "90 dias" catava '90' (= "sem
+    // pagamento") e a nota ficava SEM conta a pagar. "1 - A prazo" catava
+    // '01' (= dinheiro) e, havendo duplicata, o sistema dispensava um boleto
+    // real. Nenhuma frase deve virar código — só o código puro.
+    for (const entrada of ['90 dias', 'PRAZO 90 DIAS', '1 - A prazo', 'a vista 5 dias', 'Cartao 3x', 'Cond. pag: 05']) {
+      const r = validarNotaLida(lida({ formaPagamento: entrada }), HOJE)
+      expect(r.status === 'nota' && r.nota.formaPagamento).toBeNull()
+    }
+  })
+
+  it('codigo que nao existe na tabela tPag vira null', () => {
+    for (const entrada of ['07', '55']) {
+      const r = validarNotaLida(lida({ formaPagamento: entrada }), HOJE)
+      expect(r.status === 'nota' && r.nota.formaPagamento).toBeNull()
+    }
+  })
+
+  it('codigos validos da tabela continuam passando', () => {
+    for (const [entrada, esperado] of [['3', '03'], ['15', '15'], ['90', '90']]) {
+      const r = validarNotaLida(lida({ formaPagamento: entrada }), HOJE)
+      expect(r.status === 'nota' && r.nota.formaPagamento).toBe(esperado)
+    }
   })
 })
 
