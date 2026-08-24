@@ -497,7 +497,25 @@ whatsappWebhook.post('/', async (req, res) => {
 
   res.status(200).json({ ok: true })
 
-  const fazenda_codigo = (req.query.fazenda as string) ?? 'mg'
+  // Fallback 'mg' proposital, NÃO remover às cegas: hoje existem 3 fazendas
+  // (mg, tejuco, mt) e todo o dado de produção está em mg (18 talhões, 56
+  // insumos, 55 linhas de estoque — tejuco e mt vazias). Se a URL do webhook
+  // configurada na Z-API não passar ?fazenda=, qualquer mensagem de qualquer
+  // fazenda cairia sempre em mg, e cairia CERTA por coincidência (é o único
+  // banco com dado) — não daria pra perceber pelo comportamento do bot. Ainda
+  // não sabemos se a URL configurada passa o parâmetro (o .env local não tem
+  // ZAPI_CLIENT_TOKEN para consultar a config em produção). O fallback continua
+  // ligado por segurança (não pode derrubar o bot), mas grita em log toda vez
+  // que precisar adivinhar. Sai assim que o log confirmar que a URL passa
+  // ?fazenda= de verdade.
+  const fazendaQuery = (req.query.fazenda as string | undefined)?.trim()
+  if (!fazendaQuery) {
+    console.error(
+      `[WhatsApp] assumindo fazenda 'mg' por falta do parâmetro ?fazenda= na URL do webhook`,
+      { telefone: `...${normalizarPhone(phone).slice(-4)}` },
+    )
+  }
+  const fazenda_codigo = fazendaQuery || 'mg'
 
   const { data: fazenda } = await supabase
     .from('fazendas')
