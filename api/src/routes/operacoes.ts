@@ -45,6 +45,22 @@ operacaoRoutes.post('/', async (req, res, next) => {
   try {
     const body = operacaoSchema.parse(req.body)
 
+    // Área arrendada é operada pela Usina Uberaba, não pela família — não pode
+    // receber operação por nenhuma porta (mesma trava do seletor web e do
+    // buscarTalhao do WhatsApp; ver api/src/webhooks/whatsapp.ts).
+    const { data: talhao, error: talhaoErr } = await supabase
+      .from('talhoes')
+      .select('status')
+      .eq('id', body.talhao_id)
+      .single()
+
+    if (talhaoErr || !talhao) {
+      return res.status(400).json({ error: 'Talhão não encontrado' })
+    }
+    if (talhao.status === 'arrendado') {
+      return res.status(400).json({ error: 'Este talhão está arrendado e não pode receber operações.' })
+    }
+
     const { data, error } = await supabase
       .from('operacoes')
       .insert(body)
