@@ -17,6 +17,7 @@ import { KpiCard } from '@/components/ui/kpi-card'
 import { supabase } from '@/lib/supabase'
 import { useFazenda } from '@/context/fazenda-context'
 import { mensagemErroBanco, ehFalhaDeConexao } from '@/lib/erros-supabase'
+import { normalizarCultura } from '@/lib/cultura'
 import {
   prepararTalhao, mensagemErroSalvar, mensagemErroExcluir, gravouNada,
 } from './salvar-talhao'
@@ -317,7 +318,8 @@ export default function TalhoesPage() {
   // ── Métricas ──
   const talhoesAtivos  = talhoes.filter(t => t.status === 'ativo')
   const areaTotal      = talhoes.reduce((s, t) => s + (t.area_ha ?? 0), 0)
-  const culturas       = [...new Set(talhoes.map(t => t.cultura_atual).filter(Boolean))]
+  // Normalizado: sem isso o KPI contava "cana" e "Cana" como duas culturas.
+  const culturas       = [...new Set(talhoes.map(t => normalizarCultura(t.cultura_atual)).filter(Boolean))]
   const comMapa        = talhoes.filter(t => t.coordenadas && t.coordenadas.length > 2)
 
   // Erro de carregamento tem DOIS casos com tratamento oposto:

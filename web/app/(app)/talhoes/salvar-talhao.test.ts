@@ -41,6 +41,13 @@ describe('prepararTalhao — criação', () => {
     expect(r.payload.cultura_atual).toBeNull()
   })
 
+  it('cultura é gravada normalizada — "Cana" não pode virar uma 2ª cultura', () => {
+    const r = prepararTalhao({ ...FORM_BASE, cultura_atual: ' Cana ' }, FAZENDA, null)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.payload.cultura_atual).toBe('cana')
+  })
+
   it('sem fazenda ativa não deixa nem tentar gravar — barra com mensagem clara', () => {
     const r = prepararTalhao(FORM_BASE, null, null)
     expect(r).toEqual({

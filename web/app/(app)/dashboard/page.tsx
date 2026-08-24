@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { KpiCard } from '@/components/ui/kpi-card'
 import { EmptyState } from '@/components/ui/empty-state'
 import { supabase } from '@/lib/supabase'
+import { normalizarCultura } from '@/lib/cultura'
 import { useFazenda } from '@/context/fazenda-context'
 import type { Talhao, Operacao, Estoque, Alerta, LancamentoFinanceiro, Safra, Insumo, Cotacao, ClimaDay } from '@/lib/types'
 
@@ -171,7 +172,7 @@ export default function DashboardPage() {
 
   const culturasPorArea = Object.entries(
     talhoes.reduce<Record<string, number>>((acc, t) => {
-      const c = t.cultura_atual ?? 'Sem cultura'
+      const c = normalizarCultura(t.cultura_atual) ?? 'Sem cultura'
       acc[c] = (acc[c] ?? 0) + t.area_ha; return acc
     }, {})
   )

@@ -1,4 +1,5 @@
 import { mensagemErroBanco, type ErroSupabase } from '@/lib/erros-supabase'
+import { normalizarCultura } from '@/lib/cultura'
 import { parseNumeroBR } from '@/lib/numeros-br'
 import type { Talhao } from '@/lib/types'
 
@@ -49,7 +50,7 @@ export function prepararTalhao(
     nome,
     area_ha: area,
     status: form.status,
-    cultura_atual: form.cultura_atual.trim() || null,
+    cultura_atual: normalizarCultura(form.cultura_atual),
   }
 
   // Edição NÃO repassa fazenda_id: reescrevê-lo com a fazenda ativa moveria o
