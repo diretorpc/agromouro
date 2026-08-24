@@ -42,6 +42,7 @@ export const CATEGORIAS_FINANCEIRAS = [
   { value: 'operacional', label: 'Operacional' },
   { value: 'rh', label: 'Mão de Obra (RH)' },
   { value: 'royalties', label: 'Royalties' },
+  { value: 'tejuco', label: 'Tejuco' },
   { value: 'outro', label: 'Outro' },
   { value: 'manutencao', label: 'Manutenção' },
   { value: 'alimentacao', label: 'Alimentação' },

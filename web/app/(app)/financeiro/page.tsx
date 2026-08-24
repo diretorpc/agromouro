@@ -108,6 +108,7 @@ const CENTRO_CUSTO_STYLE: Record<string, string> = {
   operacional:        'bg-gray-100 text-gray-600 border-gray-200',
   rh:                 'bg-rose-100 text-rose-700 border-rose-200',
   royalties:          'bg-emerald-100 text-emerald-700 border-emerald-200',
+  tejuco:             'bg-lime-100 text-lime-700 border-lime-200',
   outro:              'bg-gray-100 text-gray-700 border-gray-200',
 }
 
@@ -134,6 +135,7 @@ const CENTRO_CUSTO_COLOR: Record<string, string> = {
   operacional:        '#D97706',  // laranja-queimado (amber-600)
   rh:                 '#E11D48',  // rosa-carmim (rose-600)
   royalties:          '#9333EA',  // roxo (purple-600)
+  tejuco:             '#65A30D',  // lima escuro (lime-600) — vizinho do tejuco_gado
   outro:              '#94A3B8',  // slate suave
   // ── Categorias de cartão ──────────────────────────────────
   manutencao:         '#DB2777',  // pink (pink-600)
