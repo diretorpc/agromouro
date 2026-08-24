@@ -58,6 +58,9 @@ export interface NotaFiscal {
   data_emissao: string
   valor_total: number
   status: 'recebida' | 'processando' | 'processada' | 'erro'
+  // Caminho do PDF no Storage (migration 013). Nulo em toda nota que não veio
+  // por PDF — e-mail, webhook e XML manual não guardam arquivo nenhum.
+  arquivo_pdf?: string | null
 }
 
 export interface ItemNfe {

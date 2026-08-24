@@ -26,6 +26,7 @@ import { ActionMenu } from '@/components/ui/action-menu'
 import { supabase } from '@/lib/supabase'
 import { api } from '@/lib/api'
 import { useFazenda } from '@/context/fazenda-context'
+import { ConferenciaPdf } from './conferencia-pdf'
 import type { NotaFiscal, ItemNfe, ResultadoImportacaoXml } from '@/lib/types'
 
 const STATUS_STYLE: Record<string, string> = {
@@ -90,7 +91,7 @@ export default function NfePage() {
 
   // adicionar NF
   const [addDialog, setAddDialog] = useState(false)
-  const [addMode, setAddMode] = useState<'xml' | 'manual'>('xml')
+  const [addMode, setAddMode] = useState<'xml' | 'manual' | 'pdf'>('xml')
   const [xmlFileContent, setXmlFileContent] = useState<string | null>(null)
   const [xmlFileName, setXmlFileName] = useState<string | null>(null)
   const [xmlError, setXmlError] = useState('')
@@ -267,6 +268,20 @@ export default function NfePage() {
   const acoesNota = (nota: (typeof notasFiltradas)[number]) => {
     const menuItems = [
       { label: 'Baixar XML', icon: <Download className="h-3.5 w-3.5" />, onClick: () => exportarXML(nota) },
+      // Só para nota que entrou por PDF: o arquivo original fica num bucket
+      // privado, e a URL assinada (60 s) vem da API, que usa a chave de serviço.
+      ...(nota.arquivo_pdf ? [{
+        label: 'Baixar PDF',
+        icon: <FileText className="h-3.5 w-3.5" />,
+        onClick: async () => {
+          try {
+            const { url } = await api.get<{ url: string }>(`/nfe/${nota.id}/arquivo`)
+            window.open(url, '_blank')
+          } catch {
+            alert('Não consegui abrir o PDF desta nota.')
+          }
+        },
+      }] : []),
       ...(nota.status === 'processada' ? [{
         label: 'Ver no Financeiro',
         icon: <CircleDollarSign className="h-3.5 w-3.5 text-green-600" />,
@@ -605,7 +620,8 @@ export default function NfePage() {
 
       {/* Dialog: Adicionar NF */}
       <Dialog open={addDialog} onOpenChange={open => { if (!open) { setAddDialog(false); setAddErro('') } }}>
-        <DialogContent className="max-w-lg">
+        {/* O modo PDF mostra a tabela de itens conferida — precisa de mais largura. */}
+        <DialogContent className={addMode === 'pdf' ? 'max-w-3xl' : 'max-w-lg'}>
           <DialogHeader>
             <DialogTitle>Adicionar Nota Fiscal</DialogTitle>
           </DialogHeader>
@@ -622,15 +638,30 @@ export default function NfePage() {
             </button>
             <button
               type="button"
+              onClick={() => { setAddMode('pdf'); setAddErro('') }}
+              className={`flex-1 flex items-center justify-center gap-2 rounded-md py-1.5 text-sm font-medium transition-all ${addMode === 'pdf' ? 'bg-white shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              <FileText className="h-3.5 w-3.5" />
+              Upload PDF
+            </button>
+            <button
+              type="button"
               onClick={() => setAddMode('manual')}
               className={`flex-1 flex items-center justify-center gap-2 rounded-md py-1.5 text-sm font-medium transition-all ${addMode === 'manual' ? 'bg-white shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
             >
-              <FileText className="h-3.5 w-3.5" />
+              <Plus className="h-3.5 w-3.5" />
               Manual
             </button>
           </div>
 
-          {addMode === 'xml' ? (
+          {/* O modo PDF traz os próprios botões (ler → conferir → gravar), por
+              isso o DialogFooter lá embaixo some quando ele está ativo. */}
+          {addMode === 'pdf' ? (
+            <ConferenciaPdf
+              onGravada={() => { setAddDialog(false); loadNotas() }}
+              onCancelar={() => setAddDialog(false)}
+            />
+          ) : addMode === 'xml' ? (
             <div className="space-y-3">
               {/* File drop area */}
               <button
@@ -736,14 +767,16 @@ export default function NfePage() {
             </div>
           )}
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setAddDialog(false); setAddErro('') }}>
-              Cancelar
-            </Button>
-            <Button onClick={handleSaveNF} disabled={salvandoNF || !canSave || !fazendaAtiva}>
-              {salvandoNF ? 'Salvando…' : 'Importar'}
-            </Button>
-          </DialogFooter>
+          {addMode !== 'pdf' && (
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setAddDialog(false); setAddErro('') }}>
+                Cancelar
+              </Button>
+              <Button onClick={handleSaveNF} disabled={salvandoNF || !canSave || !fazendaAtiva}>
+                {salvandoNF ? 'Salvando…' : 'Importar'}
+              </Button>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
     </div>
