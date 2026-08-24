@@ -63,7 +63,7 @@ export default function DashboardPage() {
     desdeCotacoes.setDate(desdeCotacoes.getDate() - 7)
 
     Promise.all([
-      supabase.from('talhoes').select('id, nome, area_ha, cultura_atual, status').then(r => (r.data ?? []) as Talhao[]),
+      supabase.from('talhoes').select('id, nome, area_ha, cultura_atual, status, arrendatario').then(r => (r.data ?? []) as Talhao[]),
       supabase.from('operacoes').select('id, talhao_id, safra_id, tipo, data, descricao, fonte, talhoes(nome)').then(r => (r.data ?? []) as unknown as Operacao[]),
       supabase.from('estoque').select('id, insumo_id, quantidade_atual, quantidade_minima_alerta, preco_medio_unitario, insumos(id, nome, tipo, unidade)').then(r => (r.data ?? []) as unknown as Estoque[]),
       supabase.from('alertas').select('id, tipo, titulo, mensagem, nivel, lido, enviado_whatsapp, created_at').then(r => (r.data ?? []) as Alerta[]),
@@ -686,13 +686,17 @@ function FonteLabel({ fonte }: { fonte: string }) {
   return <span className="text-base" title={fonte}>{map[fonte] ?? fonte}</span>
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const s: Record<string, { bg: string; color: string }> = {
+function StatusBadge({ status }: { status: Talhao['status'] }) {
+  // Record completo por Talhao['status']: o compilador barra status novo sem cor
+  // aqui dentro — foi assim que "arrendado" caiu no fallback cinza de "colhido"
+  // e ficou com três cores diferentes (Dashboard, tela de Talhões, rosquinha).
+  const s: Record<Talhao['status'], { bg: string; color: string }> = {
     ativo: { bg: '#EDFAF1', color: '#16A34A' },
     pousio: { bg: '#FFFBEB', color: '#D97706' },
     colhido: { bg: '#F3F4F6', color: '#6B7280' },
+    arrendado: { bg: '#EFF6FF', color: '#2563EB' }, // mesma cor da tela de Talhões
   }
-  const style = s[status] ?? s.colhido
+  const style = s[status]
   return (
     <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ backgroundColor: style.bg, color: style.color }}>
       {status}
