@@ -152,7 +152,7 @@ export default function TalhoesPage() {
   const [formDialog, setFormDialog] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [form, setForm] = useState({
-    nome: '', area_ha: '', cultura_atual: '', status: 'ativo' as Talhao['status'],
+    nome: '', area_ha: '', cultura_atual: '', status: 'ativo' as Talhao['status'], arrendatario: '',
   })
   const [salvando, setSalvando] = useState(false)
   const [formErro, setFormErro] = useState<string | null>(null)
@@ -258,7 +258,7 @@ export default function TalhoesPage() {
   // ── Abrir dialog ──
   function abrirNovo() {
     setEditId(null)
-    setForm({ nome: '', area_ha: '', cultura_atual: '', status: 'ativo' })
+    setForm({ nome: '', area_ha: '', cultura_atual: '', status: 'ativo', arrendatario: '' })
     setFormErro(null)
     setFormDialog(true)
   }
@@ -270,6 +270,7 @@ export default function TalhoesPage() {
       area_ha: String(t.area_ha),
       cultura_atual: t.cultura_atual ?? '',
       status: t.status,
+      arrendatario: t.arrendatario ?? '',
     })
     setFormErro(null)
     setFormDialog(true)
