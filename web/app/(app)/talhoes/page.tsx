@@ -524,7 +524,7 @@ export default function TalhoesPage() {
                     <TableCell className="font-semibold">
                       {t.nome}
                       {t.arrendatario && (
-                        <span className="block text-xs font-normal text-muted-foreground">
+                        <span className="block text-xs font-normal text-muted-foreground whitespace-normal break-words">
                           {t.arrendatario}
                         </span>
                       )}
