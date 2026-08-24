@@ -31,7 +31,8 @@ no estoque, gasto no Financeiro, boleto em Contas a Pagar — sem digitar nada.
 - OCR próprio (a leitura é do Claude, via bloco `document` em base64 — mesmo mecanismo já
   usado em `boletoPdf.ts` e `controle/documentoPdf.ts`).
 - Importação em lote (um PDF por vez).
-- Edição item a item na conferência — ver a decisão "Itens só-leitura" abaixo.
+- Edição de valor e quantidade item a item na conferência — ver a decisão 4 abaixo (o
+  EFEITO do item é editável desde 24/08/2026; valor e quantidade não).
 - Extração de chave de acesso e validação na SEFAZ. O PDF não é documento fiscal; é papel.
 
 ---
@@ -88,15 +89,40 @@ duas gravações com 11 ms de diferença; ver `nfe-corrida-duas-portas`).
 O que nenhuma das três resolve: o PDF e o XML da mesma nota entrando com o número lido
 errado. Só a conferência humana pega esse caso — por isso ela não é opcional.
 
-### 4. Itens só-leitura, com remoção de linha
+### 4. Itens: o dono escolhe o EFEITO, não edita número
 
-Cabeçalho editável (número, fornecedor, CNPJ, data, valor total, modelo). Itens exibidos
-com **botão de remover**, sem edição de campo.
+**Revisado em 24/08/2026, depois da revisão do Apolo.** A decisão original era "itens
+só-leitura, com remoção de linha", pelo motivo abaixo — que continua valendo para valor e
+quantidade. O que mudou: a revisão provou, executando o código, que a mitigação não
+fechava o caso mais caro.
 
-**Motivo:** o que decide estoque é o `CFOP` e o `NCM` de cada item (`efeitoDoCfop`,
-`fronteiraPorNCM`). Deixar o dono editar valor e quantidade, mas não CFOP/NCM, cria a
-ilusão de que ele corrigiu o item quando o efeito no estoque continua vindo de um código
-que ele não viu. Item torto sai da nota; nota torta não entra.
+Cabeçalho editável (número, fornecedor, CNPJ, data, valor total, modelo). Cada item tem
+**um menu de efeito em português** e um **botão de remover**. Valor e quantidade seguem
+só-leitura.
+
+**Por que valor e quantidade continuam travados:** o que decide estoque é o `CFOP` e o
+`NCM` de cada item (`efeitoDoCfop`, `fronteiraPorNCM`). Deixar o dono editar valor, mas
+não o efeito, cria a ilusão de que ele corrigiu o item quando o resultado no estoque
+continua vindo de um código que ele não viu.
+
+**Por que o efeito passou a ser editável:** `efeitoDoCfop('')` devolve *compra*. Com a
+coluna CFOP borrada — comum em DANFE escaneado — uma nota de **entrega de pedido já pago**
+entrava inteira como compra nova: é o mecanismo exato do gasto fantasma de R$ 1,2 mi da
+SYAGRI, reaberto pelo caminho novo. O aviso amarelo não fechava (só disparava com CFOP
+**vazio**, nunca com CFOP lido **errado**), e a única ação oferecida — remover a linha —
+tirava o item do estoque e, quando aplicada a todos, tornava a nota inimportável.
+
+O menu oferece **efeito de negócio, não código fiscal**: "Compra normal", "Entrega de
+pedido que já paguei", "Faturamento — paguei agora, mercadoria vem depois", "Bonificação —
+veio de graça". Ninguém na fazenda sabe o que é 5117; todo mundo sabe o que já pagou. A
+lista mora em `api/src/services/contas/cfop.ts` e chega pronta pela rota — regra fiscal
+tem um dono só neste projeto, e não é o front.
+
+**Gravar fica travado enquanto houver item sem efeito escolhido.** Deixar passar equivale
+a decidir "é compra" por omissão. Para a nota comum existe um atalho explícito ("São todos
+compra normal"), que é escolha do dono, não default calado. CFOP de família que o menu não
+oferece (consignação, remessa sem compra) aparece como código cru e não é trocável —
+substituí-lo por "compra" seria piorar um efeito que já está certo.
 
 Itens que a validação descartou (ilegíveis, valor fora de escala) **aparecem como aviso
 amarelo com a contagem** — nunca somem calados. Mesmo princípio de `itensDescartados` em
@@ -112,7 +138,7 @@ Isto conserta pela metade a dor registrada em `nfe-xml-nao-guardado`: das notas 
 entrarem por PDF, o papel original fica recuperável. A decisão de **não** guardar o XML
 inteiro continua valendo (volume), e não é revista aqui.
 
-Download pela API (`GET /nfe/:id/pdf` → URL assinada, 60 s), não pelo cliente do
+Download pela API (`GET /nfe/:id/arquivo` → URL assinada, 60 s), não pelo cliente do
 navegador: a API usa a chave de serviço e não depende de policy de Storage — o mesmo
 motivo pelo qual as rotas de nota já moram lá.
 
@@ -250,7 +276,7 @@ Sem alteração de RLS: quem lê é a API, com chave de serviço.
    o `processarNFe` mockados: upload falha → nenhuma nota; `processarNFe` lança → casca
    apagada e arquivo removido; sucesso → `arquivo_pdf` e `arquivo_hash` gravados; hash
    repetido → `duplicada-arquivo`.
-5. **Rotas.** `POST /nfe/ler-pdf`, `POST /nfe/importar-pdf`, `GET /nfe/:id/pdf`, mais o
+5. **Rotas.** `POST /nfe/ler-pdf`, `POST /nfe/importar-pdf`, `GET /nfe/:id/arquivo`, mais o
    limite de 15 MB no mount de `/nfe` em `index.ts` (hoje 2 MB — nenhum PDF passa). A
    fazenda vem **sempre** de `req.user.app_metadata.fazenda_ativa_id`, nunca do corpo.
    Testes de rota para cada linha da tabela de erros acima.
