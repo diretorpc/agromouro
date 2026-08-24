@@ -10,8 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { KpiCard } from '@/components/ui/kpi-card'
 import { EmptyState } from '@/components/ui/empty-state'
 import { supabase } from '@/lib/supabase'
-import { normalizarCultura } from '@/lib/cultura'
 import { useFazenda } from '@/context/fazenda-context'
+import { agruparCulturasPorArea } from './culturas-por-area'
 import type { Talhao, Operacao, Estoque, Alerta, LancamentoFinanceiro, Safra, Insumo, Cotacao, ClimaDay } from '@/lib/types'
 
 // ─── helpers ───────────────────────────────────────────────
@@ -170,14 +170,8 @@ export default function DashboardPage() {
   ).map(([tipo, total]) => ({ tipo: tipo.length > 12 ? tipo.slice(0, 12) + '…' : tipo, total }))
     .sort((a, b) => b.total - a.total).slice(0, 7)
 
-  const culturasPorArea = Object.entries(
-    talhoes.reduce<Record<string, number>>((acc, t) => {
-      const c = normalizarCultura(t.cultura_atual) ?? 'Sem cultura'
-      acc[c] = (acc[c] ?? 0) + t.area_ha; return acc
-    }, {})
-  )
-    .map(([name, value], i) => ({ name, value: Math.round(value * 10) / 10, color: getCultureColor(name, i) }))
-    .sort((a, b) => b.value - a.value)
+  const culturasPorArea = agruparCulturasPorArea(talhoes)
+    .map((fatia, i) => ({ ...fatia, color: getCultureColor(fatia.name, i) }))
 
   const totalHaCulturas = culturasPorArea.reduce((s, c) => s + c.value, 0)
 
