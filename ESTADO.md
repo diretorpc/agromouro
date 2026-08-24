@@ -51,8 +51,20 @@ a identificação; rodapé para de dizer "a diferença é frete" quando o dono r
 casca não apagável perde `arquivo_pdf`; limite de 10 MB barrado no navegador;
 `ANTHROPIC_MODEL_NOTA_PDF` no `.env.example`.
 
-**Deixado de fora, de propósito (Achado 9, baixo):** falha de banco na checagem de
-duplicidade do passo 1 joga fora uma leitura de IA já paga. Custa centavos e um reenvio.
+**4 rodadas de revisão no total.** A 2ª pegou um CRÍTICO que o conserto da 1ª criou
+(`tPagNormalizado` catava dígito de dentro de frase: "90 dias" virava tPag 90 = sem
+pagamento, e a nota ficava SEM conta a pagar — pior que o defeito original, que gerava
+boleto a mais). A 4ª fechou sem achado crítico, alto ou médio. **Lição do ramo: revisar o
+conserto não é opcional — duas vezes o conserto virou o problema seguinte.**
+
+**Deixado de fora, de propósito:**
+- (Achado 9, 2ª rodada) falha de banco na checagem de duplicidade do passo 1 joga fora uma
+  leitura de IA já paga. Custa centavos e um reenvio.
+- (4ª rodada, desejáveis) a conta do rodapé da conferência é a única lógica de dinheiro
+  que ficou dentro do componente, sem teste — se divergir do `nfeProcessor`, nada avisa;
+  a tela mostra "Forma de pagamento: 15" sem dizer que 15 é boleto; quando o quadro de
+  pagamento não é impresso (`formaPagamento` e `formaPagamentoLido` nulos) a nota também
+  gera conta e a tela não avisa; e trocar a família some com o CFOP lido da tela.
 
 **Ressalva do Apolo, não verificada:** o XSD da SEFAZ proíbe zero à esquerda em `nNF`
 (NF-e), o que garante que PDF e XML gerem o mesmo `numero`. Ninguém conferiu se a mesma

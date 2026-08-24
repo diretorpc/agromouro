@@ -284,7 +284,14 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
   // é este item"): a tela não sabe se ele conta como compra ou não. Havendo um
   // item assim entre os restantes, nenhuma afirmação quantitativa sobre o
   // lançamento pode ser feita com certeza.
-  const temItemSemFamiliaReconhecida = nota.itens.some(i => !!i.cfop && !i.familia)
+  //
+  // Item SEM CFOP nenhum entra na mesma conta (achado [baixo] da 4ª rodada,
+  // 24/08/2026, medido): a tela o trata como "não conta", mas o backend lê
+  // efeitoDoCfop('') = COMPRA_NORMAL e o soma — R$ 800 de diferença no cenário
+  // medido. Enquanto ele existir, nenhum número é confiável, então a frase cai
+  // no ramo qualitativo. (A trava do botão já impede gravar nesse estado; isto
+  // conserta o que a tela AFIRMA enquanto o dono ainda não escolheu.)
+  const temItemSemFamiliaReconhecida = nota.itens.some(i => !i.familia)
   const itensQueContam = nota.itens.filter(i => {
     const familia = i.familia ? familiaPorChave.get(i.familia) : undefined
     return familia?.contaComoCompra === true
