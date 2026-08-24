@@ -583,7 +583,7 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
-## ⚠️ Talhões: criar talhão estava quebrado — corrigido, NO AR local, NÃO comitado — 24/08/2026
+## ⚠️ Talhões: criar talhão estava quebrado — corrigido e comitado — 24/08/2026
 
 **Causa raiz:** o INSERT de `/talhoes` montava o payload sem `fazenda_id`. A coluna é
 `NOT NULL` (`supabase/migrations/001_multi_fazenda.sql`, passo 5) e a policy
@@ -650,9 +650,11 @@ configurações de policy — as do 009 são MAIS permissivas, não mais estreit
 que as distingue (gravar com `fazenda_id` de outra fazenda) nunca foi exercido. Só a
 consulta ao `pg_policies` decidia.
 
-### Não comitado
+### Comitado, ainda sem PR
 
-Working tree, branch `main`. Rodar antes de comitar:
+Commit `3ae993c` na branch `fix/talhoes-fazenda-id` (11 arquivos, +840/−122).
+Ainda NÃO empurrado para o GitHub e sem PR aberto.
+Comando que mede antes de subir:
 `cd web && npx tsc --noEmit && npx vitest run && npm run build`
 
 ### Fora de escopo, virou chip de tarefa
