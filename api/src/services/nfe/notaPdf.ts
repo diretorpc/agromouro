@@ -210,10 +210,16 @@ export const SCHEMA = {
           cfop: {
             type: ['string', 'null'],
             description:
-              'Coluna CFOP — exatamente 4 dígitos (ex.: "5102", "5117", "5910"). É o código que decide se a ' +
-              'nota é compra, remessa de entrega futura ou bonificação. NÃO invente e NÃO repita o CFOP de ' +
-              'outra linha: cada linha tem o seu, e "compre 20, leve 2" vem com códigos diferentes na mesma ' +
-              'nota. null quando a coluna não estiver legível.',
+              'O número IMPRESSO na coluna CFOP daquela LINHA da tabela DADOS DO PRODUTO/SERVIÇO — exatamente ' +
+              '4 dígitos, copiado, nunca deduzido. A coluna fica entre NCM/SH e a unidade, e a maioria das ' +
+              'notas de compra traz "5102", "5405", "6102" ou "6108". ' +
+              'PROIBIDO deduzir o CFOP da NATUREZA DA OPERAÇÃO impressa no cabeçalho, do nome do produto, do ' +
+              'tipo de fornecedor ou do CFOP de outra linha — cada linha tem o seu, e "compre 20, leve 2" vem ' +
+              'com códigos diferentes na mesma nota. ' +
+              'Em 24/08/2026 uma nota de loja de material de construção (CFOPs 5405 e 5102 impressos) foi lida ' +
+              'como "5922" nos cinco itens: 5922 é faturamento de entrega futura, que faz a mercadoria NÃO ' +
+              'entrar no estoque. Se você não conseguir LER o número na coluna, devolva null — null é tratado ' +
+              'com segurança pelo sistema; um código inventado some com mercadoria do galpão sem avisar ninguém.',
           },
         },
         required: ['descricao', 'quantidade', 'unidade', 'valorUnitario', 'valorTotal', 'ncm', 'cfop'],
@@ -233,9 +239,12 @@ const INSTRUCAO =
   'nunca use os dados da transportadora. ' +
   'Na tabela DADOS DO PRODUTO/SERVIÇO, uma linha impressa = um item, inclusive quando a tabela continua na ' +
   'página seguinte. As colunas NCM/SH e CFOP são as mais importantes de todas: elas decidem se o produto ' +
-  'entra no estoque e se a nota é compra, remessa de entrega futura ou bonificação. Cada linha tem o SEU ' +
-  'CFOP — uma nota de "compre 20, leve 2" traz códigos diferentes na mesma tabela. Se a coluna estiver ' +
-  'ilegível, devolva null: um código inventado vale menos que nenhum código. ' +
+  'entra no estoque e se a nota é compra, remessa de entrega futura ou bonificação. ' +
+  'O CFOP é COPIADO da coluna CFOP daquela linha — nunca deduzido da natureza da operação do cabeçalho, do ' +
+  'nome do produto ou do CFOP de outra linha. Compra comum de loja costuma trazer 5102, 5405, 6102 ou 6108; ' +
+  'códigos como 5922, 5117 e 5910 significam faturamento sem mercadoria, entrega de pedido já pago e ' +
+  'bonificação, e só aparecem quando estão IMPRESSOS na linha. Se a coluna estiver ilegível, devolva null: ' +
+  'um código inventado vale menos que nenhum código, e um 5922 inventado faz a mercadoria sumir do estoque. ' +
   'O valor total é o "V. TOTAL DA NOTA" do quadro CÁLCULO DO IMPOSTO, não o "valor total dos produtos". ' +
   'O quadro FATURA/DUPLICATA vira a lista de duplicatas, uma entrada por parcela; nota sem esse quadro tem ' +
   'lista vazia. ' +

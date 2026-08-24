@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { cfopAposEscolha, podeGravar, type FamiliaItem } from './regras-conferencia'
+import { cfopAposEscolha, podeGravar, precisaConfirmarEfeitoIncomum, type FamiliaItem } from './regras-conferencia'
 
 const COMPRA: FamiliaItem            = { chave: 'compra',           rotulo: 'Compra normal',    cfop: '5102', contaComoCompra: true }
 const ENTREGA_FATURADA: FamiliaItem  = { chave: 'entrega-faturada', rotulo: 'Entrega faturada',  cfop: '5117', contaComoCompra: false }
@@ -75,5 +75,57 @@ describe('podeGravar', () => {
 
   it('familias undefined (mesmo caso da API antiga) tambem nao trava', () => {
     expect(podeGravar({ ...BASE, semCfop: 3, familias: undefined })).toBe(true)
+  })
+})
+
+describe('precisaConfirmarEfeitoIncomum — a nota inteira fora de "compra"', () => {
+  const item = (familia?: string, cfop = '5102') => ({ cfop, familia })
+
+  it('nota normal (tudo compra) NAO pede confirmacao', () => {
+    expect(precisaConfirmarEfeitoIncomum([item('compra'), item('compra')])).toBe(false)
+  })
+
+  it('nota inteira lida como faturamento PEDE confirmacao', () => {
+    // O caso real de 24/08/2026: loja de material de construcao, CFOP 5405 e
+    // 5102 impressos, lidos como 5922 nos cinco itens.
+    expect(precisaConfirmarEfeitoIncomum([
+      item('faturamento', '5922'), item('faturamento', '5922'), item('faturamento', '5922'),
+    ])).toBe(true)
+  })
+
+  it('nota inteira como bonificacao ou entrega ja paga tambem pede', () => {
+    expect(precisaConfirmarEfeitoIncomum([item('bonificacao', '5910')])).toBe(true)
+    expect(precisaConfirmarEfeitoIncomum([item('entrega-faturada', '5117')])).toBe(true)
+  })
+
+  it('nota MISTA nao pede — e o caso legitimo mais comum ("compre 20, leve 2")', () => {
+    expect(precisaConfirmarEfeitoIncomum([item('compra'), item('bonificacao', '5910')])).toBe(false)
+  })
+
+  it('item sem familia reconhecida (consignacao) conta como fora de compra', () => {
+    expect(precisaConfirmarEfeitoIncomum([item(undefined, '5917')])).toBe(true)
+  })
+
+  it('lista vazia nao pede confirmacao — quem barra nota sem item e outra regra', () => {
+    expect(precisaConfirmarEfeitoIncomum([])).toBe(false)
+  })
+})
+
+describe('podeGravar — confirmacao de efeito incomum', () => {
+  const base = {
+    quantidadeItens: 3, semCfop: 0, familias: [{ chave: 'compra' }],
+    duplicataValendo: null, gravando: false,
+  }
+
+  it('trava enquanto o efeito incomum nao for confirmado', () => {
+    expect(podeGravar({ ...base, efeitoIncomumPendente: true })).toBe(false)
+  })
+
+  it('libera depois de confirmado', () => {
+    expect(podeGravar({ ...base, efeitoIncomumPendente: false })).toBe(true)
+  })
+
+  it('sem o campo, comportamento antigo intacto', () => {
+    expect(podeGravar(base)).toBe(true)
   })
 })

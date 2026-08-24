@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
 import { CATEGORIAS_FINANCEIRAS } from '@/lib/centro-custo'
-import { cfopAposEscolha, podeGravar, type FamiliaItem } from './regras-conferencia'
+import { cfopAposEscolha, podeGravar, precisaConfirmarEfeitoIncomum, type FamiliaItem } from './regras-conferencia'
 
 // Toda a UI do modo "Upload PDF" mora aqui, fora de page.tsx (que já passa de
 // 700 linhas). O fluxo tem DOIS passos porque a leitura é da IA, não do dado
@@ -121,6 +121,9 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
   // dígito errado no CNPJ faz o servidor não achar nada e gravar a nota como
   // se fosse nova (achado do Apolo, 24/08/2026).
   const [lidoOriginal, setLidoOriginal] = useState<{ numero: string; emitenteCnpj: string } | null>(null)
+  // Marcado pelo dono quando a nota INTEIRA caiu fora de "compra normal" e ele
+  // confirma que é isso mesmo. Ver precisaConfirmarEfeitoIncomum.
+  const [confirmouEfeito, setConfirmouEfeito] = useState(false)
 
   function escolherArquivo(file: File) {
     setErro(''); setLeitura(null); setNota(null)
@@ -128,6 +131,7 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
     setBase64(null)
     setLidoOriginal(null)
     setIdentidadeEditada(false)
+    setConfirmouEfeito(false)
     if (file.size > LIMITE_BYTES) {
       setErro(`Arquivo grande demais (${(file.size / 1024 / 1024).toFixed(1)} MB). O limite é 10 MB.`)
       return
@@ -344,6 +348,10 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
   const semCfop = nota.itens.filter(i => !i.cfop).length
   // O aviso só vale enquanto o dono não mexer na identificação da nota.
   const duplicataValendo = leitura.jaExiste && !identidadeEditada
+  // A confirmação vale para a composição ATUAL da nota: mudar o efeito de
+  // qualquer item recalcula, e o `confirmouEfeito` só destrava enquanto a
+  // situação continuar a mesma que ele confirmou.
+  const efeitoIncomum = precisaConfirmarEfeitoIncomum(nota.itens)
 
   return (
     <div className="space-y-4">
@@ -369,6 +377,29 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
           Já existe uma nota <strong>{nota.modelo === 'nfe' ? 'de serviço (NFS-e)' : 'de produto (NF-e)'}</strong>{' '}
           com este mesmo número e fornecedor. Confira o campo <strong>Tipo</strong>: se o tipo estiver
           errado, o sistema não reconhece a nota repetida e a compra entra duas vezes.
+        </div>
+      )}
+
+      {efeitoIncomum && (
+        <div className="rounded-md bg-red-50 text-red-700 px-3 py-2 text-sm space-y-2">
+          <p>
+            <strong>Atenção: nenhum item desta nota foi lido como compra normal.</strong>
+            {' '}Isso é raro. Do jeito que está, a mercadoria <strong>não entra no estoque</strong>
+            {' '}(ou entra sem custo, no caso de bonificação).
+          </p>
+          <p>
+            Se esta é uma compra comum, corrija a coluna <strong>"O que é este item"</strong> para
+            "Compra normal". Em 24/08/2026 uma nota de loja de material de construção foi lida
+            assim por engano — o CFOP impresso no papel era outro.
+          </p>
+          <label className="flex items-center gap-2 font-medium">
+            <input
+              type="checkbox"
+              checked={confirmouEfeito}
+              onChange={e => setConfirmouEfeito(e.target.checked)}
+            />
+            Conferi no papel: esta nota é isso mesmo.
+          </label>
         </div>
       )}
 
@@ -625,6 +656,7 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
           disabled={!podeGravar({
             quantidadeItens: nota.itens.length, semCfop, familias: leitura.familias,
             duplicataValendo, gravando,
+            efeitoIncomumPendente: efeitoIncomum && !confirmouEfeito,
           })}
           title={semCfop > 0 && (leitura.familias?.length ?? 0) > 0 ? 'Escolha o que é cada item marcado em amarelo' : undefined}
         >

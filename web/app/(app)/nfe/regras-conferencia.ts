@@ -20,6 +20,23 @@ export type ItemComCfop = {
   familia?: string
 }
 
+// Nota em que NENHUM item é "compra normal" é rara e cara. A leitura de
+// 24/08/2026 (loja de material de construção, CFOPs 5405 e 5102 impressos no
+// papel) voltou com 5922 — faturamento de entrega futura — nos CINCO itens: o
+// dinheiro contou certo por acaso, mas a mesma leitura numa nota de adubo faria
+// a mercadoria NÃO entrar no estoque, calada.
+//
+// O menu de efeito por item existia e não bastou: ele apresenta a leitura como
+// fato consumado, num campo pequeno. Quando a nota inteira cai fora de "compra",
+// a tela precisa PARAR o dono, não sussurrar.
+//
+// Nota MISTA (parte compra, parte bonificação) não dispara: é o caso legítimo
+// mais comum ("compre 20, leve 2").
+export function precisaConfirmarEfeitoIncomum(itens: readonly ItemComCfop[]): boolean {
+  if (itens.length === 0) return false
+  return !itens.some(i => i.familia === 'compra')
+}
+
 // Trocar o efeito de um item grava o CFOP representante daquela família — o
 // dono escolhe "já paguei antes", não "5117". Duas travas, nesta ordem:
 //
@@ -59,10 +76,14 @@ export function podeGravar(params: {
   familias:           readonly unknown[] | null | undefined
   duplicataValendo:   unknown
   gravando:           boolean
+  // true quando a nota inteira caiu fora de "compra normal" E o dono ainda não
+  // confirmou que é isso mesmo. Ver precisaConfirmarEfeitoIncomum.
+  efeitoIncomumPendente?: boolean
 }): boolean {
   if (params.gravando) return false
   if (params.quantidadeItens === 0) return false
   if (params.duplicataValendo) return false
   if (params.semCfop > 0 && (params.familias?.length ?? 0) > 0) return false
+  if (params.efeitoIncomumPendente) return false
   return true
 }
