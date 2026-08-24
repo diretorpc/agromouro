@@ -22,6 +22,38 @@
 
 ---
 
+## 🚧 Adicionar NF em PDF — 24/08/2026 — **ABERTO** (spec aprovado, zero código)
+
+Terceira opção no botão **Adicionar NF** da aba Notas: subir o DANFE (ou NFS-e) em PDF,
+a IA lê, o dono confere na tela e confirma — e a nota entra pelo **mesmo
+`processarNFe`** que o XML usa. Estoque, Financeiro, Contas a Pagar e aviso no WhatsApp
+saem pelo cano que já existe; nada de cano paralelo.
+
+Ramo: `claude/add-pdf-note-option-a586f8` (worktree `reverent-satoshi-2ebab4`).
+Spec: `docs/superpowers/specs/2026-08-24-nfe-pdf-design.md` — 7 tarefas numeradas.
+Plano de implementação: **ainda não escrito**.
+
+Quatro decisões fechadas com o dono nesta sessão:
+1. **Confere antes de gravar** (não grava direto como o XML) — cabeçalho editável.
+2. **Mexe no estoque também**, igual ao XML (CFOP/NCM por item decidem).
+3. **Guarda o PDF** em bucket privado `notas-pdf` + coluna `notas_fiscais.arquivo_pdf`.
+4. **Aceita DANFE e NFS-e**; a IA classifica e o `modelo` fica editável.
+
+**O risco que motivou a conferência:** o PDF é a IA lendo papel, não dado fiscal. Um
+dígito errado no número ou no CNPJ fura `idx_nfe_numero_emitente_fazenda_modelo`, e
+quando a mesma nota chegar pelo Make o estoque e o gasto contam duas vezes, calados —
+o mesmo estrago da nota 58717 (11 ms de diferença, junho/2026). Trava atômica nova:
+índice único parcial sobre `(fazenda_id, arquivo_hash)`.
+
+**Próximo passo concreto:** dono revisar o spec → escrever o plano →
+tarefa 1 (migration `supabase/migrations/013_notas_fiscais_pdf.sql` + bucket), com o
+SQL colado no chat.
+
+**Custo da leitura por nota: NÃO estimado de propósito** — medir na primeira nota real
+e anotar aqui.
+
+---
+
 ## ✅ Talhões arrendados — 24/08/2026 — **NO AR** (PR #66 mergeado)
 
 Área arrendada para a Usina Uberaba: terra própria da família operada por terceiro.
