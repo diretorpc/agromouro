@@ -1297,3 +1297,69 @@ describe('processarNFe — origem manual', () => {
     expect(mensagem.startsWith('💻')).toBe(true)
   })
 })
+
+// ─── O id de volta e o arquivo do PDF no MESMO insert da nota ──────────────
+// O caminho do PDF (services/nfe/gravarNotaDoPdf.ts) precisa das duas coisas:
+// o id, para não reconsultar a nota que acabou de gravar (uma segunda consulta
+// pode achar a nota do OUTRO caminho de entrada numa corrida), e o hash dentro
+// do insert — o índice único idx_nfe_arquivo_hash (migration 013) só protege
+// se o hash chegar ao banco ANTES de o estoque mexer.
+describe('processarNFe — devolve o id da nota e grava o arquivo do PDF', () => {
+  const nfeMinima: NFeData = {
+    numero:         '9001',
+    dataEmissao:    '2026-08-24T10:00:00-03:00',
+    emitenteNome:   'FORNECEDOR TESTE LTDA',
+    emitenteCnpj:   '11222333000144',
+    valorTotal:     1000,
+    items:          [{
+      description:  'ADUBO 20-05-20',
+      quantity:     10,
+      unit:         'TO',
+      unitValue:    100,
+      totalValue:   1000,
+      quantityTrib: 10,
+      unitTrib:     'TO',
+      ncm:          '31052000',
+      cfop:         '5102',
+    }],
+    duplicatas:     [],
+    formaPagamento: null,
+    modelo:         'nfe',
+  }
+
+  beforeEach(() => {
+    chamadas.length = 0
+    estadoBanco.falharUpsertContas = false
+    vi.mocked(enviarMensagem).mockClear()
+  })
+
+  const insertDaNota = () => chamadas.find(c => c.table === 'notas_fiscais' && c.method === 'insert')?.payload
+
+  it('devolve o id da nota gravada', async () => {
+    const id = await processarNFe(nfeMinima, 'manual', 'fazenda-fake-id')
+    expect(id).toBe('nfe-id-fake')
+  })
+
+  it('sem o 4o argumento, arquivo_pdf e arquivo_hash vao nulos', async () => {
+    await processarNFe(nfeMinima, 'manual', 'fazenda-fake-id')
+    expect(insertDaNota().arquivo_pdf).toBeNull()
+    expect(insertDaNota().arquivo_hash).toBeNull()
+  })
+
+  it('com o 4o argumento, os dois campos vao no MESMO insert da nota', async () => {
+    await processarNFe(nfeMinima, 'manual', 'fazenda-fake-id', { pdfPath: 'fz/uma.pdf', hash: 'abc123' })
+    expect(insertDaNota().arquivo_pdf).toBe('fz/uma.pdf')
+    expect(insertDaNota().arquivo_hash).toBe('abc123')
+  })
+
+  it('o insert da nota acontece ANTES de qualquer movimentacao de estoque', async () => {
+    // Se o hash entrasse por update no fim, a trava do arquivo dispararia
+    // depois de o estoque já ter mexido — e desfazer isso viraria rollback
+    // manual. Esta ordem é o que torna o indice unico uma trava de verdade.
+    await processarNFe(nfeMinima, 'manual', 'fazenda-fake-id', { pdfPath: 'fz/uma.pdf', hash: 'abc123' })
+    const posNota    = chamadas.findIndex(c => c.table === 'notas_fiscais' && c.method === 'insert')
+    const posEstoque = chamadas.findIndex(c => c.table === '__rpc__' && c.method === 'incrementar_estoque')
+    expect(posNota).toBeGreaterThanOrEqual(0)
+    expect(posEstoque).toBeGreaterThan(posNota)
+  })
+})

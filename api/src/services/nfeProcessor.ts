@@ -471,7 +471,22 @@ function linhaCobrancaMaiorQueGasto(contas: ContaDeNota[], valorCompra: number):
 }
 
 // ─── Processador principal ────────────────────────────────────────────────────
-export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' | 'manual' = 'webhook', fazenda_id: string): Promise<void> {
+// `arquivo` só chega pelo caminho do PDF (services/nfe/gravarNotaDoPdf.ts).
+// Entra no MESMO insert da nota, e não num update depois, porque o índice
+// único idx_nfe_arquivo_hash (migration 013) só protege se o hash estiver no
+// banco ANTES de o estoque mexer — senão a trava dispara com a mercadoria já
+// somada, e desfazer isso vira rollback manual.
+//
+// O retorno virou o id da nota (era void até 24/08/2026): quem grava pelo PDF
+// precisa dele para não reconsultar a nota que acabou de criar — e uma segunda
+// consulta por (numero, cnpj, fazenda, modelo) pode achar a nota do OUTRO
+// caminho de entrada numa corrida (ver "nfe-corrida-duas-portas").
+export async function processarNFe(
+  nfe: NFeData,
+  origem: 'webhook' | 'email' | 'manual' = 'webhook',
+  fazenda_id: string,
+  arquivo?: { pdfPath: string; hash: string },
+): Promise<string> {
   const { numero, dataEmissao, emitenteNome, emitenteCnpj, valorTotal, items, duplicatas, formaPagamento, modelo } = nfe
 
   const itensSeguros  = items.slice(0, 200)
@@ -494,6 +509,8 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' | '
         status:        'processando',
         forma_pagamento: formaPagamento,
         modelo,
+        arquivo_pdf:  arquivo?.pdfPath ?? null,
+        arquivo_hash: arquivo?.hash    ?? null,
         fazenda_id,
       })
       .select('id')
@@ -864,6 +881,13 @@ export async function processarNFe(nfe: NFeData, origem: 'webhook' | 'email' | '
         errZapi instanceof Error ? errZapi.message : errZapi,
       )
     }
+
+    // A guarda é só para o compilador, mesmo motivo do `if (!nfeId)` do bloco
+    // de boletos acima: `notaFiscal.id` vem de um cliente Supabase sem tipos de
+    // banco, então TypeScript enxerga `nfeId` como `string | null` mesmo depois
+    // da atribuição feita logo após o insert.
+    if (!nfeId) throw new Error('id da nota indisponível após o insert')
+    return nfeId
 
   } catch (err) {
     console.error(`[NFeProcessor] Erro ao processar NF-e ${numero}:`, err instanceof Error ? err.message : err)

@@ -122,6 +122,11 @@ app.use('/cartoes/importar-preview', express.json({ limit: '10mb' }))
 // controleItens.ts): corpo de item é texto/número pequeno, cai no limite
 // GLOBAL de 2mb logo abaixo, igual a `/talhoes`, `/estoque` etc.
 app.use('/controle/documentos', express.json({ limit: '15mb' }))
+// PDF de nota fiscal (DANFE/NFS-e) chega como base64 em POST /nfe/ler-pdf e
+// /nfe/importar-pdf. O leitor recusa acima de 10 MB de arquivo, que viram
+// ~13,7 MB em base64 — 15mb cobre isso mais o resto do JSON. Vale para o
+// prefixo /nfe inteiro (o DELETE não manda corpo, então não perde nada).
+app.use('/nfe', express.json({ limit: '15mb' }))
 app.use(express.json({ limit: '2mb' }))
 
 // ─── Health check — público, sem auth ────────────────────────────────────────

@@ -1,6 +1,10 @@
 import { supabase } from './supabase'
 import { parseXmlNota, nfeJaProcessada, processarNFe } from './nfeProcessor'
 
+// Mesmo bucket de services/nfe/gravarNotaDoPdf.ts — nota que entrou por PDF
+// guarda o arquivo lá, e excluir a nota precisa levar o arquivo junto.
+const BUCKET_NOTAS_PDF = 'notas-pdf'
+
 export type ResultadoImportacao =
   | { status: 'criada'; numero: string; emitenteNome: string; valorTotal: number }
   | { status: 'duplicada'; nota: { id: string; numero: string; data_emissao: string; emitente_nome: string } }
@@ -90,12 +94,40 @@ export type ResultadoExclusao =
 // UMA função no Postgres (migration 009_excluir_nota_fiscal.sql) — ou tudo
 // acontece, ou nada acontece. Esta função só traduz o resultado.
 export async function excluirNotaManual(notaId: string, fazendaId: string): Promise<ResultadoExclusao> {
+  // ACHADO 5 (revisão do Apolo, 24/08/2026): o caminho do PDF (migration 013)
+  // guarda o arquivo no bucket "notas-pdf", e a RPC de exclusão não sabe que
+  // Storage existe — ela apaga movimentação, conta, lançamento, item e nota.
+  // O caminho do objeto só vive na coluna `arquivo_pdf`, que some junto com a
+  // linha: se não for lido ANTES, o DANFE fica órfão no bucket para sempre e
+  // não há como achá-lo depois sem varrer o bucket inteiro. Corrigir leitura
+  // errada excluindo e reimportando é justamente o caso comum aqui.
+  const { data: nota } = await supabase
+    .from('notas_fiscais')
+    .select('arquivo_pdf')
+    .eq('id', notaId)
+    .eq('fazenda_id', fazendaId)
+    .maybeSingle()
+  const arquivoPdf = (nota as { arquivo_pdf?: string | null } | null)?.arquivo_pdf ?? null
+
   const { error } = await supabase.rpc('excluir_nota_fiscal', {
     p_nota_id:    notaId,
     p_fazenda_id: fazendaId,
   })
 
-  if (!error) return { status: 'excluida' }
+  if (!error) {
+    // Best-effort, DEPOIS de o banco confirmar: a linha que apontava para este
+    // objeto já sumiu, então nada mais o referencia. Falhar aqui não desfaz uma
+    // exclusão que deu certo — só deixa um PDF órfão, que não é dinheiro nem
+    // aparece em tela. Fica no log para limpeza manual. Mesma decisão de
+    // controle/excluirDocumentoControle.ts.
+    if (arquivoPdf) {
+      const { error: errStorage } = await supabase.storage.from(BUCKET_NOTAS_PDF).remove([arquivoPdf])
+      if (errStorage) {
+        console.error('[NFeManual] Nota excluída do banco, mas falha ao remover o PDF do Storage:', errStorage.message)
+      }
+    }
+    return { status: 'excluida' }
+  }
 
   const msg = error.message ?? ''
   if (msg.includes('nota_nao_encontrada'))   return { status: 'nao_encontrada' }

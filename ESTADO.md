@@ -22,6 +22,88 @@
 
 ---
 
+## 🚧 Adicionar NF em PDF — 24/08/2026 — **ABERTO** (código pronto e revisado, falta prova ao vivo)
+
+**Tarefas 1 a 6 feitas.** Banco conferido na fonte viva (`arquivo_pdf`, `arquivo_hash`,
+`idx_nfe_arquivo_hash`) e bucket privado `notas-pdf` criado. Falta só a Task 7: subir uma
+nota real e abrir as cinco telas.
+
+Medir a suíte: `cd api && npm test` (era 634 antes desta feature).
+
+**Revisão do Apolo (24/08/2026): 10 achados, nenhum crítico — os 10 tratados.** Os dois
+que mexiam em dinheiro:
+
+1. **`tPag` do PDF não casava com a tabela.** O parser de XML normaliza para dois dígitos
+   (`'3'` → `'03'`); o PDF passava a string crua, e a IA devolve tanto `'3'` quanto
+   `'Cartão de Crédito'`. Efeito medido: nota de cartão COM duplicata criava o boleto mas
+   perdia o aviso "Conferir antes de pagar" nos três lugares (conta, WhatsApp, resumo
+   diário) — os três que existem para o dono não pagar a mesma coisa duas vezes.
+2. **CFOP ilegível virava compra por omissão** (`efeitoDoCfop('')` = compra). Numa nota de
+   entrega de pedido já pago isso conta o gasto de novo — o mecanismo exato dos R$ 1,2 mi
+   da SYAGRI. **Decisão revista com o dono:** cada item ganhou menu de EFEITO em português
+   ("Compra normal", "Entrega de pedido que já paguei", "Faturamento", "Bonificação"), a
+   lista mora em `contas/cfop.ts`, e gravar fica travado enquanto houver item sem escolha.
+
+Os outros 8: excluir nota apaga o PDF do bucket (a RPC da migration 009 não conhece
+Storage); aviso quando existe nota de mesmo número no OUTRO modelo (NF-e × NFS-e fura as
+duas travas de uma vez); aviso de duplicata deixa de travar o botão quando o dono corrige
+a identificação; rodapé para de dizer "a diferença é frete" quando o dono removeu linha;
+casca não apagável perde `arquivo_pdf`; limite de 10 MB barrado no navegador;
+`ANTHROPIC_MODEL_NOTA_PDF` no `.env.example`.
+
+**4 rodadas de revisão no total.** A 2ª pegou um CRÍTICO que o conserto da 1ª criou
+(`tPagNormalizado` catava dígito de dentro de frase: "90 dias" virava tPag 90 = sem
+pagamento, e a nota ficava SEM conta a pagar — pior que o defeito original, que gerava
+boleto a mais). A 4ª fechou sem achado crítico, alto ou médio. **Lição do ramo: revisar o
+conserto não é opcional — duas vezes o conserto virou o problema seguinte.**
+
+**Deixado de fora, de propósito:**
+- (Achado 9, 2ª rodada) falha de banco na checagem de duplicidade do passo 1 joga fora uma
+  leitura de IA já paga. Custa centavos e um reenvio.
+- (4ª rodada, desejáveis) a conta do rodapé da conferência é a única lógica de dinheiro
+  que ficou dentro do componente, sem teste — se divergir do `nfeProcessor`, nada avisa;
+  a tela mostra "Forma de pagamento: 15" sem dizer que 15 é boleto; quando o quadro de
+  pagamento não é impresso (`formaPagamento` e `formaPagamentoLido` nulos) a nota também
+  gera conta e a tela não avisa; e trocar a família some com o CFOP lido da tela.
+
+**Ressalva do Apolo, não verificada:** o XSD da SEFAZ proíbe zero à esquerda em `nNF`
+(NF-e), o que garante que PDF e XML gerem o mesmo `numero`. Ninguém conferiu se a mesma
+proibição vale para `nNFSe`. Se alguém for importar NFS-e pelos dois caminhos, testar antes.
+
+---
+
+### Como estava quando o trabalho começou
+
+Terceira opção no botão **Adicionar NF** da aba Notas: subir o DANFE (ou NFS-e) em PDF,
+a IA lê, o dono confere na tela e confirma — e a nota entra pelo **mesmo
+`processarNFe`** que o XML usa. Estoque, Financeiro, Contas a Pagar e aviso no WhatsApp
+saem pelo cano que já existe; nada de cano paralelo.
+
+Ramo: `claude/add-pdf-note-option-a586f8` (worktree `reverent-satoshi-2ebab4`).
+Spec: `docs/superpowers/specs/2026-08-24-nfe-pdf-design.md` — 7 tarefas numeradas.
+Plano: `docs/superpowers/plans/2026-08-24-nfe-pdf.md` — 7 tarefas numeradas.
+
+Quatro decisões fechadas com o dono nesta sessão:
+1. **Confere antes de gravar** (não grava direto como o XML) — cabeçalho editável.
+2. **Mexe no estoque também**, igual ao XML (CFOP/NCM por item decidem).
+3. **Guarda o PDF** em bucket privado `notas-pdf` + coluna `notas_fiscais.arquivo_pdf`.
+4. **Aceita DANFE e NFS-e**; a IA classifica e o `modelo` fica editável.
+
+**O risco que motivou a conferência:** o PDF é a IA lendo papel, não dado fiscal. Um
+dígito errado no número ou no CNPJ fura `idx_nfe_numero_emitente_fazenda_modelo`, e
+quando a mesma nota chegar pelo Make o estoque e o gasto contam duas vezes, calados —
+o mesmo estrago da nota 58717 (11 ms de diferença, junho/2026). Trava atômica nova:
+índice único parcial sobre `(fazenda_id, arquivo_hash)`.
+
+**Próximo passo concreto:** dono revisar o spec → escrever o plano →
+tarefa 1 (migration `supabase/migrations/013_notas_fiscais_pdf.sql` + bucket), com o
+SQL colado no chat.
+
+**Custo da leitura por nota: NÃO estimado de propósito** — medir na primeira nota real
+e anotar aqui.
+
+---
+
 ## ✅ Talhões arrendados — 24/08/2026 — **NO AR** (PR #66 mergeado)
 
 Área arrendada para a Usina Uberaba: terra própria da família operada por terceiro.

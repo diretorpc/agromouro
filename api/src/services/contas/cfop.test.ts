@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { efeitoDoCfop } from './cfop'
+import { efeitoDoCfop, familiaDoCfop, FAMILIAS_ITEM } from './cfop'
 
 describe('efeitoDoCfop — entrega futura (o caso que originou este trabalho)', () => {
   it('faturamento 5922: conta o gasto e NAO mexe no estoque', () => {
@@ -133,5 +133,60 @@ describe('efeitoDoCfop — imutabilidade (garante que corrupção silenciosa nao
     // Proxima chamada retorna o original intacto
     const e2 = efeitoDoCfop('8888') // outro desconhecido
     expect(e2.contaComoCompra).toBe(contaComoCompra1)
+  })
+})
+
+describe('FAMILIAS_ITEM / familiaDoCfop — o que a tela de conferência oferece', () => {
+  it('cada família representante devolve a própria chave', () => {
+    for (const f of FAMILIAS_ITEM) {
+      expect(familiaDoCfop(f.cfop)).toBe(f.chave)
+    }
+  })
+
+  it('qualquer CFOP da mesma família cai na mesma chave — não é lista de códigos', () => {
+    expect(familiaDoCfop('6117')).toBe('entrega-faturada')
+    expect(familiaDoCfop('5116')).toBe('entrega-faturada')
+    expect(familiaDoCfop('6922')).toBe('faturamento')
+    expect(familiaDoCfop('6910')).toBe('bonificacao')
+  })
+
+  it('CFOP ausente cai em compra — é o que efeitoDoCfop já faz por omissão', () => {
+    expect(familiaDoCfop('')).toBe('compra')
+  })
+
+  it('família que a tela NÃO oferece devolve vazio, em vez de mentir que é compra', () => {
+    // Consignação e remessa sem compra têm efeito próprio; oferecer "compra"
+    // para elas trocaria um efeito certo por um errado.
+    expect(familiaDoCfop('5917')).toBe('')
+    expect(familiaDoCfop('5912')).toBe('')
+  })
+
+  it('escolher a família grava um CFOP que produz exatamente aquele efeito', () => {
+    const entrega = FAMILIAS_ITEM.find(f => f.chave === 'entrega-faturada')!
+    expect(efeitoDoCfop(entrega.cfop).entraNoEstoque).toBe(true)
+    expect(efeitoDoCfop(entrega.cfop).contaComoCompra).toBe(false)
+
+    const bonificacao = FAMILIAS_ITEM.find(f => f.chave === 'bonificacao')!
+    expect(efeitoDoCfop(bonificacao.cfop).custoZero).toBe(true)
+  })
+
+  // Achado [médio] do Apolo, 3ª rodada (24/08/2026): a tela de conferência do
+  // PDF precisa saber, por família, se ela conta como gasto — sem duplicar a
+  // regra fiscal de cabeça (o erro medido: supor que só "compra" conta, quando
+  // "faturamento" — paga agora, entrega depois — também conta). Cada
+  // `contaComoCompra` do FAMILIAS_ITEM tem que bater com o `efeitoDoCfop` do
+  // seu próprio CFOP representante, para as duas fontes nunca divergirem.
+  it('contaComoCompra de cada família bate com efeitoDoCfop do seu cfop representante', () => {
+    for (const f of FAMILIAS_ITEM) {
+      expect(f.contaComoCompra).toBe(efeitoDoCfop(f.cfop).contaComoCompra)
+    }
+  })
+
+  it('doutrina: compra e faturamento contam como gasto; entrega-faturada e bonificacao não', () => {
+    const por = (chave: string) => FAMILIAS_ITEM.find(f => f.chave === chave)!.contaComoCompra
+    expect(por('compra')).toBe(true)
+    expect(por('faturamento')).toBe(true)
+    expect(por('entrega-faturada')).toBe(false)
+    expect(por('bonificacao')).toBe(false)
   })
 })
