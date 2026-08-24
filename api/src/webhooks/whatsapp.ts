@@ -244,6 +244,14 @@ type InsumoResolvido =
   | { ok: true;  insumo_id: string; nome: string; quantidade: number; unidade: string; dose_por_ha: number | null }
   | { ok: false; nome: string; erro: string }
 
+type SaidaProcessada = {
+  nome: string
+  quantidade: number
+  unidade: string
+  novaQuantidade: number | null   // null = sem linha em estoque OU UPDATE que não gravou nenhuma linha
+  minimo: number | null
+}
+
 async function resolverInsumos(
   insumos: InsumoBruto[],
   talhao: { area_ha: number } | null,
@@ -282,6 +290,75 @@ async function resolverInsumos(
       dose_por_ha: dosePorHa,
     }
   }))
+}
+
+// ─── Decrementar estoque após operação com insumos ───────────────────────────
+// export: exercitado direto por whatsapp.test.ts (UPDATE mudo de estoque).
+//
+// 1 SELECT batch pega todos os atuais + mínimos; N UPDATEs em paralelo, cada um
+// filtrado por fazenda_id (última linha de defesa contra insumo_id vazando de
+// outra fazenda — não deveria acontecer após o filtro em buscarInsumo, mas é
+// barato garantir de novo aqui). O Supabase retorna error:null mesmo quando o
+// .eq() não casa NENHUMA linha — por isso o UPDATE usa .select() e conta as
+// linhas retornadas para saber se realmente gravou. Sem essa checagem, a
+// resposta do WhatsApp afirmava um saldo que nunca chegou a ser escrito no banco.
+export async function decrementarEstoque(
+  okItems: Extract<InsumoResolvido, { ok: true }>[],
+  fazendaId: string,
+): Promise<SaidaProcessada[]> {
+  const insumoIds = okItems.map(i => i.insumo_id)
+  const { data: estoqueAtual } = await supabase
+    .from('estoque')
+    .select('insumo_id, quantidade_atual, quantidade_minima_alerta')
+    .eq('fazenda_id', fazendaId)
+    .in('insumo_id', insumoIds)
+
+  const estoqueMap = new Map(
+    (estoqueAtual ?? []).map(e => [
+      e.insumo_id,
+      { atual: Number(e.quantidade_atual ?? 0), minimo: Number(e.quantidade_minima_alerta ?? 0) },
+    ]),
+  )
+
+  return Promise.all(okItems.map(async (item): Promise<SaidaProcessada> => {
+    const linha = estoqueMap.get(item.insumo_id)
+    if (!linha) {
+      console.warn(`[WhatsApp] Sem linha em estoque para ${item.nome} (insumo_id ${item.insumo_id})`)
+      return { nome: item.nome, quantidade: item.quantidade, unidade: item.unidade, novaQuantidade: null, minimo: null }
+    }
+    const nova = linha.atual - item.quantidade
+    const { data: linhasAtualizadas, error: updErr } = await supabase
+      .from('estoque')
+      .update({ quantidade_atual: nova })
+      .eq('insumo_id', item.insumo_id)
+      .eq('fazenda_id', fazendaId)
+      .select('insumo_id')
+    if (updErr) {
+      console.error(`[WhatsApp] Falha ao decrementar estoque de ${item.nome}:`, updErr.message)
+      return { nome: item.nome, quantidade: item.quantidade, unidade: item.unidade, novaQuantidade: null, minimo: linha.minimo }
+    }
+    if (!linhasAtualizadas || linhasAtualizadas.length === 0) {
+      console.error(
+        `[WhatsApp] UPDATE de estoque não casou nenhuma linha — saldo NÃO foi gravado.`,
+        { nome: item.nome, insumo_id: item.insumo_id, fazenda_id: fazendaId },
+      )
+      return { nome: item.nome, quantidade: item.quantidade, unidade: item.unidade, novaQuantidade: null, minimo: linha.minimo }
+    }
+    return { nome: item.nome, quantidade: item.quantidade, unidade: item.unidade, novaQuantidade: nova, minimo: linha.minimo }
+  }))
+}
+
+// ─── Formatar linhas de saída processada para a resposta do WhatsApp ────────
+// export: exercitado direto por whatsapp.test.ts. novaQuantidade: null (sem
+// linha em estoque OU UPDATE que não gravou) nunca pode virar "(estoque: ...)"
+// na mensagem — seria afirmar um saldo que não existe no banco.
+export function formatarSaidas(saidas: SaidaProcessada[]): string {
+  return saidas.map(s => {
+    const restante  = s.novaQuantidade != null ? ` (estoque: ${s.novaQuantidade}${s.unidade})` : ''
+    const abaixoMin = s.novaQuantidade != null && s.minimo != null && s.minimo > 0 && s.novaQuantidade <= s.minimo
+    const aviso     = abaixoMin ? ` ⚠️ abaixo do mín. (${s.minimo}${s.unidade})` : ''
+    return `📦 ${s.nome}: ${s.quantidade}${s.unidade}${restante}${aviso}`
+  }).join('\n')
 }
 
 // ─── Processar mensagem recebida ──────────────────────────────────────────────
@@ -335,13 +412,6 @@ async function processarMensagem(telefone: string, texto: string, fazenda_codigo
       const okItems   = resolvidos.filter((i): i is Extract<InsumoResolvido, { ok: true }>  => i.ok === true)
       const failItems = resolvidos.filter((i): i is Extract<InsumoResolvido, { ok: false }> => i.ok === false)
 
-      type SaidaProcessada = {
-        nome: string
-        quantidade: number
-        unidade: string
-        novaQuantidade: number | null   // null = sem linha em estoque
-        minimo: number | null
-      }
       let saidasProcessadas: SaidaProcessada[] = []
 
       if (okItems.length > 0) {
@@ -378,53 +448,12 @@ async function processarMensagem(telefone: string, texto: string, fazenda_codigo
         }
 
         // Decrementar quantidade_atual em estoque (Passo 6)
-        // 1 SELECT batch pega todos os atuais + mínimos; N UPDATEs em paralelo.
-        // .eq('fazenda_id', ...) aqui também: última linha de defesa contra
-        // insumo_id vazando de outra fazenda (não deveria acontecer após o
-        // filtro em buscarInsumo, mas é barato garantir de novo aqui).
-        const insumoIds = okItems.map(i => i.insumo_id)
-        const { data: estoqueAtual } = await supabase
-          .from('estoque')
-          .select('insumo_id, quantidade_atual, quantidade_minima_alerta')
-          .eq('fazenda_id', fazenda_id)
-          .in('insumo_id', insumoIds)
-
-        const estoqueMap = new Map(
-          (estoqueAtual ?? []).map(e => [
-            e.insumo_id,
-            { atual: Number(e.quantidade_atual ?? 0), minimo: Number(e.quantidade_minima_alerta ?? 0) },
-          ]),
-        )
-
-        saidasProcessadas = await Promise.all(okItems.map(async (item): Promise<SaidaProcessada> => {
-          const linha = estoqueMap.get(item.insumo_id)
-          if (!linha) {
-            console.warn(`[WhatsApp] Sem linha em estoque para ${item.nome} (insumo_id ${item.insumo_id})`)
-            return { nome: item.nome, quantidade: item.quantidade, unidade: item.unidade, novaQuantidade: null, minimo: null }
-          }
-          const nova = linha.atual - item.quantidade
-          const estoqueUpdate = supabase
-            .from('estoque')
-            .update({ quantidade_atual: nova })
-            .eq('insumo_id', item.insumo_id)
-          const { error: updErr } = fazenda_id
-            ? await estoqueUpdate.eq('fazenda_id', fazenda_id)
-            : await estoqueUpdate
-          if (updErr) {
-            console.error(`[WhatsApp] Falha ao decrementar estoque de ${item.nome}:`, updErr.message)
-          }
-          return { nome: item.nome, quantidade: item.quantidade, unidade: item.unidade, novaQuantidade: nova, minimo: linha.minimo }
-        }))
+        saidasProcessadas = await decrementarEstoque(okItems, fazenda_id)
       }
 
       // Compor resposta no WhatsApp
       const nomeLocal = talhao ? `Talhão ${talhao.nome} (${talhao.area_ha}ha)` : 'talhão não identificado'
-      const linhasOk = saidasProcessadas.map(s => {
-        const restante  = s.novaQuantidade != null ? ` (estoque: ${s.novaQuantidade}${s.unidade})` : ''
-        const abaixoMin = s.novaQuantidade != null && s.minimo != null && s.minimo > 0 && s.novaQuantidade <= s.minimo
-        const aviso     = abaixoMin ? ` ⚠️ abaixo do mín. (${s.minimo}${s.unidade})` : ''
-        return `📦 ${s.nome}: ${s.quantidade}${s.unidade}${restante}${aviso}`
-      }).join('\n')
+      const linhasOk = formatarSaidas(saidasProcessadas)
       const linhasFail = failItems.map(f => `❌ ${f.nome}: ${f.erro}`).join('\n')
 
       resposta = `✅ Registrado!\n📍 ${nomeLocal}\n🔧 ${dados.operacao_tipo || 'Operação'}\n📅 ${dados.data || 'hoje'}`

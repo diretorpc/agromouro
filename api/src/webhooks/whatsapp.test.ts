@@ -25,6 +25,11 @@ const { seed, estadoBanco } = vi.hoisted(() => {
     estoque: [
       { insumo_id: 'insumo-glifosato-mg', fazenda_id: 'fazenda-mg', quantidade_atual: 300, quantidade_minima_alerta: 20 },
       { insumo_id: 'insumo-glifosato-mt', fazenda_id: 'fazenda-mt', quantidade_atual: 50, quantidade_minima_alerta: 5 },
+      // Linha "fantasma": existe para o SELECT batch achar (estoqueMap tem a linha),
+      // mas _updateNaoEncontra faz o UPDATE simulado não casar nenhuma linha —
+      // reproduz o cenário que a Tarefa 3 corrige (Supabase retorna error:null
+      // mesmo com 0 linhas afetadas; só contar as linhas do .select() denuncia).
+      { insumo_id: 'insumo-fantasma', fazenda_id: 'fazenda-mg', quantidade_atual: 100, quantidade_minima_alerta: 10, _updateNaoEncontra: true },
     ] as any[],
   }
   return { seed, estadoBanco: JSON.parse(JSON.stringify(seed)) }
@@ -41,6 +46,7 @@ vi.mock('../services/supabase', () => {
     let ilikeCampo: string | undefined
     let ilikeValor: string | undefined
     let limitN: number | undefined
+    let updatePatch: Record<string, any> | undefined
 
     const linhasBase = (): any[] => (estadoBanco as any)[tabela] ?? []
 
@@ -58,6 +64,16 @@ vi.mock('../services/supabase', () => {
       return linhas
     }
 
+    const executaUpdate = (): any[] => {
+      // Linhas com _updateNaoEncontra simulam um UPDATE que não casa nenhuma
+      // linha mesmo a linha existindo (cenário de teste da Tarefa 3 — não
+      // representa um caminho real do código, só o comportamento que ele
+      // precisa tolerar: Supabase retorna error:null mesmo com 0 linhas).
+      const linhas = aplicaFiltros(linhasBase()).filter((row: any) => !row._updateNaoEncontra)
+      linhas.forEach((row: any) => Object.assign(row, updatePatch))
+      return linhas
+    }
+
     const obj: any = {
       select: vi.fn(() => obj),
       eq:     vi.fn((campo: string, valor: any) => { eqFiltros.push([campo, valor]); return obj }),
@@ -69,6 +85,7 @@ vi.mock('../services/supabase', () => {
         return obj
       }),
       limit:  vi.fn((n: number) => { limitN = n; return obj }),
+      update: vi.fn((patch: Record<string, any>) => { updatePatch = patch; return obj }),
       single: vi.fn(async () => {
         const linhas = executaSelect()
         return linhas.length > 0
@@ -77,7 +94,8 @@ vi.mock('../services/supabase', () => {
       }),
       // thenable: cobre os caminhos que fazem `await` direto na cadeia sem .single()
       then: (resolve: any, reject: any) => {
-        return Promise.resolve({ data: executaSelect(), error: null }).then(resolve, reject)
+        const linhas = updatePatch !== undefined ? executaUpdate() : executaSelect()
+        return Promise.resolve({ data: linhas, error: null }).then(resolve, reject)
       },
     }
     return obj
@@ -88,7 +106,7 @@ vi.mock('../services/supabase', () => {
   }
 })
 
-import { buscarTalhao, buscarInsumo, consultarEstoque } from './whatsapp'
+import { buscarTalhao, buscarInsumo, consultarEstoque, decrementarEstoque, formatarSaidas } from './whatsapp'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -154,5 +172,29 @@ describe('consultarEstoque', () => {
     const resposta = await consultarEstoque('glifosato', 'fazenda-mg')
     expect(resposta).toContain('300')
     expect(resposta).not.toContain('50 L')
+  })
+})
+
+describe('decrementarEstoque + formatarSaidas', () => {
+  it('quando o UPDATE não pega nenhuma linha, novaQuantidade fica null e a resposta não mostra "(estoque:"', async () => {
+    const okItems = [
+      { ok: true as const, insumo_id: 'insumo-fantasma', nome: 'Glifosato', quantidade: 2, unidade: 'L', dose_por_ha: null },
+    ]
+    const saidas = await decrementarEstoque(okItems, 'fazenda-mg')
+    expect(saidas[0].novaQuantidade).toBeNull()
+
+    const resposta = formatarSaidas(saidas)
+    expect(resposta).not.toContain('(estoque:')
+  })
+
+  it('quando o UPDATE grava normalmente, a resposta mostra o novo saldo', async () => {
+    const okItems = [
+      { ok: true as const, insumo_id: 'insumo-glifosato-mg', nome: 'Glifosato', quantidade: 2, unidade: 'L', dose_por_ha: null },
+    ]
+    const saidas = await decrementarEstoque(okItems, 'fazenda-mg')
+    expect(saidas[0].novaQuantidade).toBe(298) // 300 - 2
+
+    const resposta = formatarSaidas(saidas)
+    expect(resposta).toContain('(estoque: 298L)')
   })
 })
