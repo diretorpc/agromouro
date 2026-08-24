@@ -197,4 +197,19 @@ describe('prepararTalhao — arrendamento', () => {
       expect(r.payload.arrendatario).toBeNull()
     },
   )
+
+  // Este caminho só passa a ser alcançável pela tela a partir da Tarefa 4, que
+  // é quem cria o campo Arrendatário. Sem zerar na edição, o UPDATE bate na
+  // CHECK `arrendatario is null or status = 'arrendado'` e o produtor leva um
+  // erro sem ter feito nada errado.
+  it('desarrendar na EDIÇÃO zera o arrendatário', () => {
+    const r = prepararTalhao(
+      { ...FORM_BASE, status: 'ativo', arrendatario: 'Usina Uberaba' },
+      FAZENDA, 'talhao-que-era-arrendado',
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.payload.arrendatario).toBeNull()
+    expect(r.payload).not.toHaveProperty('fazenda_id')
+  })
 })
