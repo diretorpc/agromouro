@@ -19,7 +19,7 @@
 - **Migration é colada à mão no SQL Editor do Supabase.** O arquivo `.sql` no repo é registro, não automação. O agente NUNCA aplica migration — entrega o SQL ao dono.
 - **Comando que mede, ao fim de cada tarefa:** `cd web && npx tsc --noEmit && npx vitest run`
 - **Byte-check depois de criar ou mover arquivo com acento:**
-  `python -X utf8 -c "import io;t=io.open('CAMINHO',encoding='utf-8').read();print([i+1 for i,l in enumerate(t.split(chr(10))) if ' ' in l or '�' in l] or 'limpo')"`
+  `python -X utf8 -c "import io;t=io.open('CAMINHO',encoding='utf-8').read();print([i+1 for i,l in enumerate(t.split(chr(10))) if chr(160) in l or chr(65533) in l] or 'limpo')"`  (chr(160)=NBSP, chr(65533)=mojibake; por CODIGO, nunca literal)
 - **`web/CLAUDE.md` avisa que este Next.js tem breaking changes** em relação ao conhecimento de treino. Antes de usar API do Next (rotas, metadata, server actions), ler `node_modules/next/dist/docs/`. Este plano não usa nenhuma — todas as telas tocadas já são `'use client'`.
 
 ---
