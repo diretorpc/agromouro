@@ -113,4 +113,43 @@ describe('POST /webhook/whatsapp — fallback de fazenda_codigo', () => {
     const fromCall = (supabase.from as any).mock.results[0].value
     expect(fromCall.eq).toHaveBeenCalledWith('codigo', 'mt')
   })
+
+  // ─── req.query.fazenda nem sempre é string (Item 1 — regressão da Tarefa 4-lite) ─
+  // Express 4 usa `qs` com extended por padrão: "fazenda=mg&fazenda=mt" vira
+  // ["mg","mt"]; "fazenda[]=mg" vira ["mg"]; "fazenda[a]=1" vira {a:"1"}. Um
+  // `.trim()` direto num array/objeto lança TypeError. Como o handler é async
+  // e o Express 4 não captura rejeição de promise de handler (sem
+  // process.on('unhandledRejection') em api/src), isso derrubava o PROCESSO
+  // inteiro, não só a mensagem — reproduzido de verdade num round anterior
+  // desta correção. O critério aqui é o handler NUNCA rejeitar, não importa a
+  // forma de req.query.fazenda.
+  it('?fazenda=mg&fazenda=mt (array, qs de verdade): NÃO rejeita a promise do handler, cai no fallback com log', async () => {
+    const { req, res, next } = criarReqRes({ fazenda: ['mg', 'mt'] })
+
+    await expect(handler(req, res, next)).resolves.toBeUndefined()
+
+    expect(erroSpy).toHaveBeenCalledTimes(1)
+    const [mensagem] = erroSpy.mock.calls[0]
+    expect(mensagem).toContain("assumindo fazenda 'mg'")
+  })
+
+  it('?fazenda[]=mg (array de 1 item): mesmo comportamento — não rejeita, cai no fallback', async () => {
+    const { req, res, next } = criarReqRes({ fazenda: ['mg'] })
+
+    await expect(handler(req, res, next)).resolves.toBeUndefined()
+
+    expect(erroSpy).toHaveBeenCalledTimes(1)
+    const [mensagem] = erroSpy.mock.calls[0]
+    expect(mensagem).toContain("assumindo fazenda 'mg'")
+  })
+
+  it('?fazenda[a]=1 (objeto): mesmo comportamento — não rejeita, cai no fallback', async () => {
+    const { req, res, next } = criarReqRes({ fazenda: { a: '1' } })
+
+    await expect(handler(req, res, next)).resolves.toBeUndefined()
+
+    expect(erroSpy).toHaveBeenCalledTimes(1)
+    const [mensagem] = erroSpy.mock.calls[0]
+    expect(mensagem).toContain("assumindo fazenda 'mg'")
+  })
 })

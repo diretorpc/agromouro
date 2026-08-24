@@ -497,63 +497,82 @@ whatsappWebhook.post('/', async (req, res) => {
 
   res.status(200).json({ ok: true })
 
-  // Fallback 'mg' proposital, NÃO remover às cegas: hoje existem 3 fazendas
-  // (mg, tejuco, mt) e todo o dado de produção está em mg (18 talhões, 56
-  // insumos, 55 linhas de estoque — tejuco e mt vazias). Se a URL do webhook
-  // configurada na Z-API não passar ?fazenda=, qualquer mensagem de qualquer
-  // fazenda cairia sempre em mg, e cairia CERTA por coincidência (é o único
-  // banco com dado) — não daria pra perceber pelo comportamento do bot. Ainda
-  // não sabemos se a URL configurada passa o parâmetro (o .env local não tem
-  // ZAPI_CLIENT_TOKEN para consultar a config em produção). O fallback continua
-  // ligado por segurança (não pode derrubar o bot), mas grita em log toda vez
-  // que precisar adivinhar. Sai assim que o log confirmar que a URL passa
-  // ?fazenda= de verdade.
-  const fazendaQuery = (req.query.fazenda as string | undefined)?.trim()
-  if (!fazendaQuery) {
-    console.error(
-      `[WhatsApp] assumindo fazenda 'mg' por falta do parâmetro ?fazenda= na URL do webhook`,
-      { telefone: `...${normalizarPhone(phone).slice(-4)}` },
+  // Tudo a partir daqui roda DEPOIS do res.status(200).json() já ter saído —
+  // o handler é async e o Express 4 não captura rejeição de promise de
+  // handler (não existe process.on('unhandledRejection') em api/src). Sem
+  // este try/catch, qualquer throw aqui dentro (inclusive erro de rede no
+  // .single() de fazendas, pré-existente) derruba o PROCESSO INTEIRO, não só
+  // a mensagem. Foi exatamente assim que req.query.fazenda como array
+  // (?fazenda=mg&fazenda=mt, que o `qs` do Express produz de verdade) crashou
+  // o serviço num round anterior desta correção.
+  try {
+    // Fallback 'mg' proposital, NÃO remover às cegas: hoje existem 3 fazendas
+    // (mg, tejuco, mt) e todo o dado de produção está em mg (18 talhões, 56
+    // insumos, 55 linhas de estoque — tejuco e mt vazias). Se a URL do webhook
+    // configurada na Z-API não passar ?fazenda=, qualquer mensagem de qualquer
+    // fazenda cairia sempre em mg, e cairia CERTA por coincidência (é o único
+    // banco com dado) — não daria pra perceber pelo comportamento do bot. Ainda
+    // não sabemos se a URL configurada passa o parâmetro (o .env local não tem
+    // ZAPI_CLIENT_TOKEN para consultar a config em produção). O fallback continua
+    // ligado por segurança (não pode derrubar o bot), mas grita em log toda vez
+    // que precisar adivinhar. Sai assim que o log confirmar que a URL passa
+    // ?fazenda= de verdade.
+    //
+    // req.query.fazenda NÃO é sempre string — Express 4 usa `qs` com extended
+    // por padrão: "fazenda=mg&fazenda=mt" vira ["mg","mt"], "fazenda[]=mg" vira
+    // ["mg"], "fazenda[a]=1" vira {a:"1"}. Só o caso `typeof === 'string'` é
+    // válido; qualquer outra forma cai no fallback em vez de chamar .trim() num
+    // array/objeto.
+    const rawFazenda = req.query.fazenda
+    const fazendaQuery = typeof rawFazenda === 'string' ? rawFazenda.trim() : undefined
+    if (!fazendaQuery) {
+      console.error(
+        `[WhatsApp] assumindo fazenda 'mg' por falta (ou formato inválido) do parâmetro ?fazenda= na URL do webhook`,
+        { telefone: `...${normalizarPhone(phone).slice(-4)}`, valorRecebido: rawFazenda },
+      )
+    }
+    const fazenda_codigo = fazendaQuery || 'mg'
+
+    const { data: fazenda } = await supabase
+      .from('fazendas')
+      .select('id, codigo')
+      .eq('codigo', fazenda_codigo)
+      .single()
+
+    if (!fazenda) {
+      console.warn(`[WA] Fazenda não encontrada: ${fazenda_codigo}`)
+      return
+    }
+
+    // Prefixo de ativação — calculado antes da proteção anti-loop porque mensagens
+    // do próprio número COM o prefixo são propositais (uso single-tenant), não loop
+    const prefix     = (process.env.WHATSAPP_TRIGGER_PREFIX || '').trim().toLowerCase()
+    const rawMessage = text.message.trim()
+    const hasExplicitTrigger = prefix.length > 0 && rawMessage.toLowerCase().startsWith(prefix)
+
+    // Anti-loop: ignorar mensagens do próprio bot SALVO quando começam com o prefixo
+    // (no setup single-tenant o agricultor manda pra própria conta com "!agro …")
+    const botPhone = normalizarPhone(process.env[`ZAPI_PHONE_${fazenda_codigo.toUpperCase()}`] ?? process.env.ZAPI_PHONE ?? '')
+    if (normalizarPhone(phone) === botPhone && !hasExplicitTrigger) {
+      return
+    }
+
+    const authorizedPhones = getAuthorizedPhones(fazenda_codigo)
+
+    // Whitelist: só números autorizados acionam o bot
+    if (!isAuthorized(phone, authorizedPhones)) return
+
+    // Prefixo obrigatório (quando configurado)
+    if (prefix && !hasExplicitTrigger) return
+
+    // Strip do prefixo antes de passar ao Claude
+    const texto = (prefix ? rawMessage.slice(prefix.length).trim() : rawMessage).slice(0, 1000)
+    if (!texto) return
+
+    processarMensagem(phone, texto, fazenda_codigo, fazenda.id).catch((err) =>
+      console.error('[WhatsApp] Erro inesperado em background:', err instanceof Error ? err.message : err)
     )
+  } catch (err) {
+    console.error('[WhatsApp] Erro inesperado no handler do webhook:', err instanceof Error ? err.message : err)
   }
-  const fazenda_codigo = fazendaQuery || 'mg'
-
-  const { data: fazenda } = await supabase
-    .from('fazendas')
-    .select('id, codigo')
-    .eq('codigo', fazenda_codigo)
-    .single()
-
-  if (!fazenda) {
-    console.warn(`[WA] Fazenda não encontrada: ${fazenda_codigo}`)
-    return
-  }
-
-  // Prefixo de ativação — calculado antes da proteção anti-loop porque mensagens
-  // do próprio número COM o prefixo são propositais (uso single-tenant), não loop
-  const prefix     = (process.env.WHATSAPP_TRIGGER_PREFIX || '').trim().toLowerCase()
-  const rawMessage = text.message.trim()
-  const hasExplicitTrigger = prefix.length > 0 && rawMessage.toLowerCase().startsWith(prefix)
-
-  // Anti-loop: ignorar mensagens do próprio bot SALVO quando começam com o prefixo
-  // (no setup single-tenant o agricultor manda pra própria conta com "!agro …")
-  const botPhone = normalizarPhone(process.env[`ZAPI_PHONE_${fazenda_codigo.toUpperCase()}`] ?? process.env.ZAPI_PHONE ?? '')
-  if (normalizarPhone(phone) === botPhone && !hasExplicitTrigger) {
-    return
-  }
-
-  const authorizedPhones = getAuthorizedPhones(fazenda_codigo)
-
-  // Whitelist: só números autorizados acionam o bot
-  if (!isAuthorized(phone, authorizedPhones)) return
-
-  // Prefixo obrigatório (quando configurado)
-  if (prefix && !hasExplicitTrigger) return
-
-  // Strip do prefixo antes de passar ao Claude
-  const texto = (prefix ? rawMessage.slice(prefix.length).trim() : rawMessage).slice(0, 1000)
-  if (!texto) return
-
-  processarMensagem(phone, texto, fazenda_codigo, fazenda.id).catch((err) =>
-    console.error('[WhatsApp] Erro inesperado em background:', err instanceof Error ? err.message : err)
-  )
 })
