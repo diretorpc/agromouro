@@ -166,12 +166,18 @@ async function consultarEstoque(nomeInsumo: string): Promise<string> {
 }
 
 // ─── Buscar talhão por nome/número ───────────────────────────────────────────
-async function buscarTalhao(nomeTalhao: string) {
+// export: exercitado direto por whatsapp.test.ts (trava de área arrendada).
+export async function buscarTalhao(nomeTalhao: string) {
   const nomeSanitizado = nomeTalhao.trim().slice(0, 100)
 
   const { data } = await supabase
     .from('talhoes')
     .select('id, nome, area_ha')
+    // Área arrendada é operada pela Usina Uberaba, não pela família — não pode
+    // receber operação por NENHUMA porta (WhatsApp, form web, API direta).
+    // Sem este filtro, "apliquei glifosato no Gogo" podia casar com um talhão
+    // arrendado de nome parecido (ilike frouxo, sem .order() = ordem indefinida).
+    .neq('status', 'arrendado')
     .ilike('nome', `%${nomeSanitizado}%`)
     .limit(1)
     .single()

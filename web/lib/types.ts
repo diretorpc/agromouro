@@ -3,7 +3,9 @@ export interface Talhao {
   nome: string
   area_ha: number
   cultura_atual: string | null
-  status: 'ativo' | 'pousio' | 'colhido'
+  status: 'ativo' | 'pousio' | 'colhido' | 'arrendado'
+  /** Só preenchido quando `status === 'arrendado'` — o banco impõe isso. */
+  arrendatario: string | null
   coordenadas?: [number, number][] | null
 }
 

@@ -389,6 +389,11 @@ export default function OperacoesPage() {
     : '—'
   const tiposDistintos = new Set(operacoesFiltradas.map(o => o.tipo)).size
 
+  // Área arrendada é operada pela usina, não por nós. Deixá-la no seletor
+  // permitiria lançar operação e gasto em terra que não trabalhamos — e o custo
+  // por hectare de TODOS os talhões ficaria mais barato do que é.
+  const talhoesOperaveis = talhoes.filter(t => t.status !== 'arrendado')
+
   function abrirNovaOperacao() {
     setEditingOp(null)
     setErroSalvar(null)
@@ -665,7 +670,7 @@ export default function OperacoesPage() {
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {talhoes.map(t => (
+                  {talhoesOperaveis.map(t => (
                     <SelectItem key={t.id} value={t.id}>
                       {t.nome} — {t.area_ha} ha
                     </SelectItem>

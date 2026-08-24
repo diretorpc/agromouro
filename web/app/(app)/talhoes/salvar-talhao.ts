@@ -1,4 +1,5 @@
 import { mensagemErroBanco, type ErroSupabase } from '@/lib/erros-supabase'
+import { normalizarCultura } from '@/lib/cultura'
 import { parseNumeroBR } from '@/lib/numeros-br'
 import type { Talhao } from '@/lib/types'
 
@@ -13,6 +14,7 @@ export interface FormTalhao {
   area_ha: string
   cultura_atual: string
   status: Talhao['status']
+  arrendatario: string
 }
 
 export interface PayloadTalhao {
@@ -20,6 +22,7 @@ export interface PayloadTalhao {
   area_ha: number
   status: Talhao['status']
   cultura_atual: string | null
+  arrendatario: string | null
   fazenda_id?: string
 }
 
@@ -49,7 +52,10 @@ export function prepararTalhao(
     nome,
     area_ha: area,
     status: form.status,
-    cultura_atual: form.cultura_atual.trim() || null,
+    cultura_atual: normalizarCultura(form.cultura_atual),
+    // Só `.trim()`, sem minusculizar: nome próprio. E zerado fora do status
+    // arrendado, senão o INSERT bate na CHECK do banco.
+    arrendatario: form.status === 'arrendado' ? (form.arrendatario.trim() || null) : null,
   }
 
   // Edição NÃO repassa fazenda_id: reescrevê-lo com a fazenda ativa moveria o

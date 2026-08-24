@@ -17,6 +17,8 @@ import { KpiCard } from '@/components/ui/kpi-card'
 import { supabase } from '@/lib/supabase'
 import { useFazenda } from '@/context/fazenda-context'
 import { mensagemErroBanco, ehFalhaDeConexao } from '@/lib/erros-supabase'
+import { normalizarCultura } from '@/lib/cultura'
+import { resumirAreas } from './resumo-areas'
 import {
   prepararTalhao, mensagemErroSalvar, mensagemErroExcluir, gravouNada,
 } from './salvar-talhao'
@@ -25,12 +27,15 @@ import type { Talhao } from '@/lib/types'
 // Leaflet não funciona com SSR — importação dinâmica obrigatória
 const MapaTalhoes = dynamic(() => import('@/components/mapa-talhoes'), { ssr: false })
 
-const STATUS_OPTIONS: Talhao['status'][] = ['ativo', 'pousio', 'colhido']
+const STATUS_OPTIONS: Talhao['status'][] = ['ativo', 'pousio', 'colhido', 'arrendado']
 
 const STATUS_STYLE: Record<Talhao['status'], { bg: string; color: string }> = {
-  ativo:   { bg: '#EDFAF1', color: '#16A34A' },
-  pousio:  { bg: '#FFFBEB', color: '#D97706' },
-  colhido: { bg: '#F3F4F6', color: '#6B7280' },
+  ativo:     { bg: '#EDFAF1', color: '#16A34A' },
+  pousio:    { bg: '#FFFBEB', color: '#D97706' },
+  colhido:   { bg: '#F3F4F6', color: '#6B7280' },
+  // Azul: distinto dos três acima, que são verde/âmbar/cinza. Área arrendada
+  // não é estado de lavoura — é regime de posse, e a cor precisa dizer isso.
+  arrendado: { bg: '#EFF6FF', color: '#2563EB' },
 }
 
 const SELECT_CLASS = 'flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring'
@@ -148,7 +153,7 @@ export default function TalhoesPage() {
   const [formDialog, setFormDialog] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [form, setForm] = useState({
-    nome: '', area_ha: '', cultura_atual: '', status: 'ativo' as Talhao['status'],
+    nome: '', area_ha: '', cultura_atual: '', status: 'ativo' as Talhao['status'], arrendatario: '',
   })
   const [salvando, setSalvando] = useState(false)
   const [formErro, setFormErro] = useState<string | null>(null)
@@ -167,7 +172,7 @@ export default function TalhoesPage() {
     // vencida". Sem repassá-lo, a tela diagnostica rede em erro de servidor.
     const { data, error, status } = await supabase
       .from('talhoes')
-      .select('id, nome, area_ha, cultura_atual, status, coordenadas')
+      .select('id, nome, area_ha, cultura_atual, status, arrendatario, coordenadas')
       .order('nome')
 
     // Resposta atrasada não pode sobrescrever a mais recente. Com sinal ruim o
@@ -254,7 +259,7 @@ export default function TalhoesPage() {
   // ── Abrir dialog ──
   function abrirNovo() {
     setEditId(null)
-    setForm({ nome: '', area_ha: '', cultura_atual: '', status: 'ativo' })
+    setForm({ nome: '', area_ha: '', cultura_atual: '', status: 'ativo', arrendatario: '' })
     setFormErro(null)
     setFormDialog(true)
   }
@@ -266,6 +271,7 @@ export default function TalhoesPage() {
       area_ha: String(t.area_ha),
       cultura_atual: t.cultura_atual ?? '',
       status: t.status,
+      arrendatario: t.arrendatario ?? '',
     })
     setFormErro(null)
     setFormDialog(true)
@@ -315,9 +321,13 @@ export default function TalhoesPage() {
   }
 
   // ── Métricas ──
-  const talhoesAtivos  = talhoes.filter(t => t.status === 'ativo')
-  const areaTotal      = talhoes.reduce((s, t) => s + (t.area_ha ?? 0), 0)
-  const culturas       = [...new Set(talhoes.map(t => t.cultura_atual).filter(Boolean))]
+  const resumo         = resumirAreas(talhoes)
+  // Culturas ignora arrendados: a cultura plantada lá é da usina, não nossa.
+  const culturas       = [...new Set(
+    talhoes.filter(t => t.status !== 'arrendado')
+           .map(t => normalizarCultura(t.cultura_atual))
+           .filter(Boolean),
+  )]
   const comMapa        = talhoes.filter(t => t.coordenadas && t.coordenadas.length > 2)
 
   // Erro de carregamento tem DOIS casos com tratamento oposto:
@@ -344,15 +354,23 @@ export default function TalhoesPage() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <KpiCard
           label="Talhões Cadastrados"
-          value={erroSemDados ? '—' : talhoes.length}
-          sub={erroSemDados ? 'não foi possível carregar' : `${talhoesAtivos.length} ativo${talhoesAtivos.length !== 1 ? 's' : ''}`}
+          value={erroSemDados ? '—' : resumo.qtdTotal}
+          sub={erroSemDados
+            ? 'não foi possível carregar'
+            : resumo.qtdArrendados > 0
+              ? `${resumo.qtdEmOperacao} em operação · ${resumo.qtdArrendados} arrendado${resumo.qtdArrendados !== 1 ? 's' : ''}`
+              : `${resumo.qtdEmOperacao} em operação`}
           icon={<MapPin className="h-5 w-5" />}
           iconBg="#EEF5E5" iconColor="#5B8C2A"
         />
         <KpiCard
           label="Área Total"
-          value={erroSemDados ? '—' : `${areaTotal.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} ha`}
-          sub={erroSemDados ? 'não foi possível carregar' : `${talhoes.length} talh${talhoes.length !== 1 ? 'ões' : 'ão'}`}
+          value={erroSemDados ? '—' : `${resumo.total.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} ha`}
+          sub={erroSemDados
+            ? 'não foi possível carregar'
+            : resumo.arrendada > 0
+              ? `${resumo.qtdTotal} talh${resumo.qtdTotal !== 1 ? 'ões' : 'ão'} · sendo ${resumo.arrendada.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} ha arrendados`
+              : `${resumo.qtdTotal} talh${resumo.qtdTotal !== 1 ? 'ões' : 'ão'}`}
           icon={<Layers className="h-5 w-5" />}
           iconBg="#EEF5E5" iconColor="#5B8C2A"
         />
@@ -503,7 +521,14 @@ export default function TalhoesPage() {
               <TableBody>
                 {talhoes.map(t => (
                   <TableRow key={t.id}>
-                    <TableCell className="font-semibold">{t.nome}</TableCell>
+                    <TableCell className="font-semibold">
+                      {t.nome}
+                      {t.arrendatario && (
+                        <span className="block text-xs font-normal text-muted-foreground whitespace-normal break-words">
+                          {t.arrendatario}
+                        </span>
+                      )}
+                    </TableCell>
                     <TableCell>{t.area_ha.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</TableCell>
                     <TableCell className="text-muted-foreground capitalize">
                       {t.cultura_atual ?? <span className="text-muted-foreground/50 italic">—</span>}
@@ -570,6 +595,16 @@ export default function TalhoesPage() {
                 ))}
               </select>
             </div>
+            {form.status === 'arrendado' && (
+              <div className="space-y-1.5">
+                <Label>Arrendatário <span className="text-muted-foreground font-normal">(opcional)</span></Label>
+                <Input placeholder="ex: Usina Uberaba" value={form.arrendatario}
+                  onChange={e => setForm(f => ({ ...f, arrendatario: e.target.value }))} />
+                <p className="text-xs text-muted-foreground">
+                  Esta área não aparece em Operações nem entra no custo por hectare.
+                </p>
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label>Cultura Atual <span className="text-muted-foreground font-normal">(opcional)</span></Label>
               <Input placeholder="ex: soja" value={form.cultura_atual}

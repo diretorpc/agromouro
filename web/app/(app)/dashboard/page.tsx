@@ -11,6 +11,7 @@ import { KpiCard } from '@/components/ui/kpi-card'
 import { EmptyState } from '@/components/ui/empty-state'
 import { supabase } from '@/lib/supabase'
 import { useFazenda } from '@/context/fazenda-context'
+import { agruparCulturasPorArea } from './culturas-por-area'
 import type { Talhao, Operacao, Estoque, Alerta, LancamentoFinanceiro, Safra, Insumo, Cotacao, ClimaDay } from '@/lib/types'
 
 // ─── helpers ───────────────────────────────────────────────
@@ -28,6 +29,11 @@ const CULTURE_PALETTE: Record<string, string> = {
   sorgo:         '#06B6D4',
   pasto:         '#84CC16',
   'sem cultura': '#9CA3AF',
+  // Fatia de área arrendada: cor FIXA, não fallback por índice — sem entrada
+  // própria a cor mudaria conforme a posição da fatia na ordenação por área.
+  // Tom neutro escuro de propósito: não é operação nossa. Distinto do cinza
+  // claro de "sem cultura".
+  arrendado:     '#475569',
 }
 const CULTURE_FALLBACK = ['#22C55E','#EAB308','#F97316','#3B82F6','#8B5CF6','#06B6D4','#84CC16','#F43F5E']
 
@@ -57,7 +63,7 @@ export default function DashboardPage() {
     desdeCotacoes.setDate(desdeCotacoes.getDate() - 7)
 
     Promise.all([
-      supabase.from('talhoes').select('id, nome, area_ha, cultura_atual, status').then(r => (r.data ?? []) as Talhao[]),
+      supabase.from('talhoes').select('id, nome, area_ha, cultura_atual, status, arrendatario').then(r => (r.data ?? []) as Talhao[]),
       supabase.from('operacoes').select('id, talhao_id, safra_id, tipo, data, descricao, fonte, talhoes(nome)').then(r => (r.data ?? []) as unknown as Operacao[]),
       supabase.from('estoque').select('id, insumo_id, quantidade_atual, quantidade_minima_alerta, preco_medio_unitario, insumos(id, nome, tipo, unidade)').then(r => (r.data ?? []) as unknown as Estoque[]),
       supabase.from('alertas').select('id, tipo, titulo, mensagem, nivel, lido, enviado_whatsapp, created_at').then(r => (r.data ?? []) as Alerta[]),
@@ -169,14 +175,8 @@ export default function DashboardPage() {
   ).map(([tipo, total]) => ({ tipo: tipo.length > 12 ? tipo.slice(0, 12) + '…' : tipo, total }))
     .sort((a, b) => b.total - a.total).slice(0, 7)
 
-  const culturasPorArea = Object.entries(
-    talhoes.reduce<Record<string, number>>((acc, t) => {
-      const c = t.cultura_atual ?? 'Sem cultura'
-      acc[c] = (acc[c] ?? 0) + t.area_ha; return acc
-    }, {})
-  )
-    .map(([name, value], i) => ({ name, value: Math.round(value * 10) / 10, color: getCultureColor(name, i) }))
-    .sort((a, b) => b.value - a.value)
+  const culturasPorArea = agruparCulturasPorArea(talhoes)
+    .map((fatia, i) => ({ ...fatia, color: getCultureColor(fatia.name, i) }))
 
   const totalHaCulturas = culturasPorArea.reduce((s, c) => s + c.value, 0)
 
@@ -686,13 +686,17 @@ function FonteLabel({ fonte }: { fonte: string }) {
   return <span className="text-base" title={fonte}>{map[fonte] ?? fonte}</span>
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const s: Record<string, { bg: string; color: string }> = {
+function StatusBadge({ status }: { status: Talhao['status'] }) {
+  // Record completo por Talhao['status']: o compilador barra status novo sem cor
+  // aqui dentro — foi assim que "arrendado" caiu no fallback cinza de "colhido"
+  // e ficou com três cores diferentes (Dashboard, tela de Talhões, rosquinha).
+  const s: Record<Talhao['status'], { bg: string; color: string }> = {
     ativo: { bg: '#EDFAF1', color: '#16A34A' },
     pousio: { bg: '#FFFBEB', color: '#D97706' },
     colhido: { bg: '#F3F4F6', color: '#6B7280' },
+    arrendado: { bg: '#EFF6FF', color: '#2563EB' }, // mesma cor da tela de Talhões
   }
-  const style = s[status] ?? s.colhido
+  const style = s[status]
   return (
     <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ backgroundColor: style.bg, color: style.color }}>
       {status}

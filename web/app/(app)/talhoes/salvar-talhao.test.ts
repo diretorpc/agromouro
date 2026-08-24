@@ -9,6 +9,7 @@ const FORM_BASE: FormTalhao = {
   area_ha: '450',
   cultura_atual: 'cana',
   status: 'ativo',
+  arrendatario: '',
 }
 
 const FAZENDA = 'fazenda-mg-uuid'
@@ -30,6 +31,7 @@ describe('prepararTalhao — criação', () => {
       area_ha: 450,
       status: 'ativo',
       cultura_atual: 'cana',
+      arrendatario: null,
       fazenda_id: FAZENDA,
     })
   })
@@ -39,6 +41,13 @@ describe('prepararTalhao — criação', () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.payload.cultura_atual).toBeNull()
+  })
+
+  it('cultura é gravada normalizada — "Cana" não pode virar uma 2ª cultura', () => {
+    const r = prepararTalhao({ ...FORM_BASE, cultura_atual: ' Cana ' }, FAZENDA, null)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.payload.cultura_atual).toBe('cana')
   })
 
   it('sem fazenda ativa não deixa nem tentar gravar — barra com mensagem clara', () => {
@@ -137,5 +146,70 @@ describe('gravouNada', () => {
 
   it('não dispara quando já existe erro explícito (esse tem mensagem própria)', () => {
     expect(gravouNada({ code: '23502' }, [])).toBe(false)
+  })
+})
+
+describe('prepararTalhao — arrendamento', () => {
+  it('grava o arrendatário aparado quando o status é arrendado', () => {
+    const r = prepararTalhao(
+      { ...FORM_BASE, status: 'arrendado', arrendatario: '  Usina Uberaba  ' },
+      FAZENDA, null,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.payload.arrendatario).toBe('Usina Uberaba')
+  })
+
+  // NÃO minusculiza: é nome próprio, e a exibição usa CSS `capitalize`, que
+  // transformaria "usina de uberaba" em "Usina De Uberaba".
+  it('preserva a caixa do nome — não é normalizado como a cultura', () => {
+    const r = prepararTalhao(
+      { ...FORM_BASE, status: 'arrendado', arrendatario: 'Usina de Uberaba' },
+      FAZENDA, null,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.payload.arrendatario).toBe('Usina de Uberaba')
+  })
+
+  it('arrendatário vazio vira null, nunca string vazia', () => {
+    const r = prepararTalhao(
+      { ...FORM_BASE, status: 'arrendado', arrendatario: '   ' },
+      FAZENDA, null,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.payload.arrendatario).toBeNull()
+  })
+
+  // O usuário pode digitar o arrendatário e DEPOIS trocar o status. Sem esta
+  // limpeza o INSERT bate na CHECK `arrendatario is null or status = 'arrendado'`
+  // e o produtor leva um erro que não fez por merecer.
+  it.each(['ativo', 'pousio', 'colhido'] as const)(
+    'status %s zera o arrendatário mesmo se o formulário trouxer texto',
+    (status) => {
+      const r = prepararTalhao(
+        { ...FORM_BASE, status, arrendatario: 'Usina Uberaba' },
+        FAZENDA, null,
+      )
+      expect(r.ok).toBe(true)
+      if (!r.ok) return
+      expect(r.payload.arrendatario).toBeNull()
+    },
+  )
+
+  // Este caminho só passa a ser alcançável pela tela a partir da Tarefa 4, que
+  // é quem cria o campo Arrendatário. Sem zerar na edição, o UPDATE bate na
+  // CHECK `arrendatario is null or status = 'arrendado'` e o produtor leva um
+  // erro sem ter feito nada errado.
+  it('desarrendar na EDIÇÃO zera o arrendatário', () => {
+    const r = prepararTalhao(
+      { ...FORM_BASE, status: 'ativo', arrendatario: 'Usina Uberaba' },
+      FAZENDA, 'talhao-que-era-arrendado',
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.payload.arrendatario).toBeNull()
+    expect(r.payload).not.toHaveProperty('fazenda_id')
   })
 })
