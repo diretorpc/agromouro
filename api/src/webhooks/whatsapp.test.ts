@@ -14,7 +14,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const { seed, estadoBanco } = vi.hoisted(() => {
   const seed = {
     talhoes: [
-      { id: 'talhao-gogo-1', nome: 'Gogo I', area_ha: 50, status: 'ativo', fazenda_id: 'fazenda-mg' },
+      // Ordem de declaração DE PROPÓSITO não-alfabética (III, II, I): sem
+      // .order('nome') no código de produção, o mock devolve os talhões nesta
+      // mesma ordem "de banco" — o .limit(1) pegaria "Gogo III" para a busca
+      // "Gogo I", que é exatamente o defeito medido em produção (Postgres sem
+      // ORDER BY tem ordem indefinida; aqui fixamos numa ordem ERRADA de
+      // propósito, em vez de embaralhar aleatoriamente, para o teste nunca
+      // ser flaky — o objetivo é provar que o código pede a ordem certa, não
+      // simular aleatoriedade de verdade).
+      { id: 'talhao-gogo-3', nome: 'Gogo III', area_ha: 76.38, status: 'ativo', fazenda_id: 'fazenda-mg' },
+      { id: 'talhao-gogo-2', nome: 'Gogo II', area_ha: 101.07, status: 'ativo', fazenda_id: 'fazenda-mg' },
+      { id: 'talhao-gogo-1', nome: 'Gogo I', area_ha: 136.56, status: 'ativo', fazenda_id: 'fazenda-mg' },
       { id: 'talhao-gogo-usina', nome: 'Gogo Usina', area_ha: 80, status: 'arrendado', fazenda_id: 'fazenda-mg' },
       { id: 'talhao-mt-gogo-1', nome: 'Gogo I', area_ha: 30, status: 'ativo', fazenda_id: 'fazenda-mt' },
     ] as any[],
@@ -50,6 +60,7 @@ vi.mock('../services/supabase', () => {
     let ilikeCampo: string | undefined
     let ilikeValor: string | undefined
     let limitN: number | undefined
+    let ordenarCampo: string | undefined
     let updatePatch: Record<string, any> | undefined
 
     const linhasBase = (): any[] => (estadoBanco as any)[tabela] ?? []
@@ -64,6 +75,20 @@ vi.mock('../services/supabase', () => {
 
     const executaSelect = (): any[] => {
       let linhas = aplicaFiltros(linhasBase())
+      // .order() de verdade: se o código chamou, ordena pelo campo pedido. Se
+      // NÃO chamou, devolve na ordem "de banco" (a ordem de declaração do
+      // seed) — que para os talhões "Gogo" é deliberadamente NÃO-alfabética,
+      // então um buscarTalhao sem .order('nome') pega o talhão errado e o
+      // teste denuncia. Sem isto o mock antigo sempre devolvia a ordem do
+      // seed disfarçada de determinismo, e nenhum teste pegava .order()
+      // ausente (achado do Apolo).
+      if (ordenarCampo) {
+        linhas = [...linhas].sort((a, b) => {
+          const va = String(a[ordenarCampo!] ?? '')
+          const vb = String(b[ordenarCampo!] ?? '')
+          return va < vb ? -1 : va > vb ? 1 : 0
+        })
+      }
       if (limitN != null) linhas = linhas.slice(0, limitN)
       return linhas
     }
@@ -95,6 +120,7 @@ vi.mock('../services/supabase', () => {
         return obj
       }),
       limit:  vi.fn((n: number) => { limitN = n; return obj }),
+      order:  vi.fn((campo: string) => { ordenarCampo = campo; return obj }),
       update: vi.fn((patch: Record<string, any>) => { updatePatch = patch; return obj }),
       single: vi.fn(async () => {
         const linhas = executaSelect()
@@ -173,6 +199,24 @@ describe('buscarTalhao', () => {
     const talhaoMt = await buscarTalhao('Gogo I', 'fazenda-mt')
     expect(talhaoMt?.id).toBe('talhao-mt-gogo-1')
     expect(talhaoMt?.id).not.toBe('talhao-gogo-1')
+  })
+
+  // ─── Item 4 — .order('nome') dá determinismo a irmãos de nome parecido ─────
+  // Medido em produção (18 talhões): "Alvorada I"/"Alvorada II" e "Gogo
+  // I"/"Gogo II"/"Gogo III" colidem por ilike frouxo. Sem ORDER BY, o Postgres
+  // tem ordem indefinida — "pulverizei o Gogo I" podia registrar no Gogo III
+  // (erro de até 44% na baixa de estoque, calculada sobre a área errada, com
+  // "✅ Registrado!" na resposta). O seed acima declara Gogo III, II, I NESSA
+  // ordem (não-alfabética) de propósito: sem .order('nome') no código, o mock
+  // devolve nessa mesma ordem "de banco" e .limit(1) pega o talhão errado.
+  it('buscarTalhao("Gogo I") devolve Gogo I — não II nem III, mesmo com o seed em ordem embaralhada', async () => {
+    const talhao = await buscarTalhao('Gogo I', 'fazenda-mg')
+    expect(talhao?.id).toBe('talhao-gogo-1')
+  })
+
+  it('buscarTalhao("Gogo II") devolve Gogo II — "gogo iii" contém "gogo ii" como substring, caso real', async () => {
+    const talhao = await buscarTalhao('Gogo II', 'fazenda-mg')
+    expect(talhao?.id).toBe('talhao-gogo-2')
   })
 })
 

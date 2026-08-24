@@ -177,7 +177,7 @@ export async function consultarEstoque(nomeInsumo: string, fazendaId: string): P
 // fazendaId é obrigatório: o cliente supabase daqui usa SERVICE_KEY (bypassa RLS
 // por completo — as policies dependem de auth.uid(), que não existe no backend).
 // Sem .eq('fazenda_id', ...), "talhão 5" da fazenda A podia casar com um talhão
-// de nome idêntico na fazenda B (ilike frouxo, sem .order() = ordem indefinida).
+// de nome idêntico na fazenda B.
 export async function buscarTalhao(nomeTalhao: string, fazendaId: string) {
   const nomeSanitizado = nomeTalhao.trim().slice(0, 100)
 
@@ -188,9 +188,23 @@ export async function buscarTalhao(nomeTalhao: string, fazendaId: string) {
     // Área arrendada é operada pela Usina Uberaba, não pela família — não pode
     // receber operação por NENHUMA porta (WhatsApp, form web, API direta).
     // Sem este filtro, "apliquei glifosato no Gogo" podia casar com um talhão
-    // arrendado de nome parecido (ilike frouxo, sem .order() = ordem indefinida).
+    // arrendado de nome parecido.
     .neq('status', 'arrendado')
     .ilike('nome', `%${nomeSanitizado}%`)
+    // .order('nome') dá DETERMINISMO ao ilike frouxo — medido em produção (18
+    // talhões): "Alvorada I"/"Alvorada II" e "Gogo I"/"Gogo II"/"Gogo III" são
+    // 4 pares que colidem por substring, e sem ordem o Postgres podia devolver
+    // qualquer um dos 3 "Gogo" para a busca "Gogo I" (decrementava a área
+    // errada — erro de até 44% no consumo por hectare, com "✅ Registrado!"
+    // na resposta). "Gogo I" < "Gogo II" < "Gogo III" alfabeticamente resolve
+    // os 4 pares de hoje, mas é SORTE da nomenclatura atual (nome mais curto =
+    // prefixo do mais longo), NÃO fuzzy match de verdade. Se um dia existir
+    // "Gogo 0" e "Gogo I" no mesmo talhão, ou dois talhões com nomes que não
+    // ordenam na ordem que o agricultor quer dizer, isto volta a colidir.
+    // Desambiguação de verdade (perguntar ao agricultor qual talhão) é feature
+    // nova, fora de escopo — muda o fluxo de conversa do WhatsApp e precisa de
+    // spec própria antes de entrar.
+    .order('nome')
     .limit(1)
     .single()
 
