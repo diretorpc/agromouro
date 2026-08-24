@@ -231,9 +231,16 @@ describe('validarNotaLida — forma de pagamento sai no MESMO formato do XML', (
   // descrição impressa no DANFE, nao casa com nada — e a nota de cartao COM
   // duplicata perde o aviso "Conferir antes de pagar" nos tres lugares onde ele
   // deveria aparecer.
-  it('um digito ganha o zero da frente, igual ao padStart do parser de XML', () => {
+  it('um digito NAO ganha zero da frente e vira null — e o valor de indPag "A PRAZO" no papel', () => {
+    // Achado [médio] do Apolo, 3ª rodada (24/08/2026), medido: o DANFE imprime
+    // `indPag` com UM dígito no quadro de fatura ('1' = A PRAZO — a nota que
+    // TEM boleto). Um padStart aqui transformaria '1' em '01' = "dinheiro à
+    // vista", exatamente o oposto do que o papel diz, calando o aviso na nota
+    // que mais precisa dele. Perder um código de 1 dígito custa um boleto A
+    // MAIS (o dono dispensa num toque, lado seguro); aceitá-lo sem saber se é
+    // tPag ou indPag custaria um boleto A MENOS — o erro caro.
     const r = validarNotaLida(lida({ formaPagamento: '3' }), HOJE)
-    expect(r.status === 'nota' && r.nota.formaPagamento).toBe('03')
+    expect(r.status === 'nota' && r.nota.formaPagamento).toBeNull()
   })
 
   it('dois digitos passam intactos', () => {
@@ -282,10 +289,37 @@ describe('validarNotaLida — forma de pagamento sai no MESMO formato do XML', (
     }
   })
 
-  it('codigos validos da tabela continuam passando', () => {
-    for (const [entrada, esperado] of [['3', '03'], ['15', '15'], ['90', '90']]) {
+  it('codigos validos de dois digitos da tabela continuam passando', () => {
+    for (const [entrada, esperado] of [['03', '03'], ['15', '15'], ['90', '90']]) {
       const r = validarNotaLida(lida({ formaPagamento: entrada }), HOJE)
       expect(r.status === 'nota' && r.nota.formaPagamento).toBe(esperado)
+    }
+  })
+})
+
+describe('validarNotaLida — formaPagamentoLido guarda o texto cru, para a tela', () => {
+  // Achado [alto] do Apolo, 3ª rodada (24/08/2026): quando tPagNormalizado
+  // recusa o texto ("03 - Cartao de Credito" não é código puro) e
+  // formaPagamento vira null, a tela de conferência não tinha como mostrar ao
+  // dono O QUE sumiu — a conta nascia sem a tarja "Conferir antes de pagar" e
+  // sem explicação nenhuma. formaPagamentoLido preserva o texto que a IA leu,
+  // ANTES da normalização, só para a tela.
+  it('guarda o texto cru mesmo quando formaPagamento normalizado vira null', () => {
+    const r = validarNotaLida(lida({ formaPagamento: '03 - Cartao de Credito' }), HOJE)
+    expect(r.status === 'nota' && r.nota.formaPagamento).toBeNull()
+    expect(r.status === 'nota' && r.nota.formaPagamentoLido).toBe('03 - Cartao de Credito')
+  })
+
+  it('guarda o texto cru mesmo quando formaPagamento normalizado passa (dois digitos validos)', () => {
+    const r = validarNotaLida(lida({ formaPagamento: '15' }), HOJE)
+    expect(r.status === 'nota' && r.nota.formaPagamento).toBe('15')
+    expect(r.status === 'nota' && r.nota.formaPagamentoLido).toBe('15')
+  })
+
+  it('e null quando o campo nao veio', () => {
+    for (const entrada of [null, '', '   ']) {
+      const r = validarNotaLida(lida({ formaPagamento: entrada }), HOJE)
+      expect(r.status === 'nota' && r.nota.formaPagamentoLido).toBeNull()
     }
   })
 })
@@ -308,6 +342,13 @@ describe('converterParaNFeData', () => {
   it('modelo desconhecido cai em nfe, nunca em nfse', () => {
     const r = validarNotaLida(lida({ modelo: 'PDF' }), HOJE)
     expect(r.status === 'nota' && r.nota.modelo).toBe('nfe')
+  })
+
+  it('formaPagamentoLido NAO vaza pro NFeData — e so pra tela, processarNFe nunca o consome', () => {
+    const r = validarNotaLida(lida({ formaPagamento: '03 - Cartao de Credito' }), HOJE)
+    if (r.status !== 'nota') throw new Error('fixture deveria validar')
+    const nfe = converterParaNFeData(r.nota)
+    expect(nfe).not.toHaveProperty('formaPagamentoLido')
   })
 
   it('campos vao pros nomes que processarNFe espera', () => {

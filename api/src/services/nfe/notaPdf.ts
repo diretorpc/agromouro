@@ -73,6 +73,15 @@ export type NotaLidaDoPdf = {
   dataEmissao:    string
   valorTotal:     number
   formaPagamento: string | null
+  // O texto CRU que a IA leu no quadro de pagamento, ANTES de tPagNormalizado
+  // recusar tudo que não é código puro. Achado [alto] do Apolo, 3ª rodada
+  // (24/08/2026): quando `formaPagamento` vira null (ex.: "03 - Cartão de
+  // Crédito", que tPagNormalizado recusa por doutrina), a tela de conferência
+  // não tinha como mostrar ao dono o que sumiu — ele via a conta nascer sem a
+  // tarja "Conferir antes de pagar" e sem explicação nenhuma. Só para a tela:
+  // converterParaNFeData NÃO repassa este campo pro NFeData (processarNFe
+  // nunca precisa saber o que a IA leu antes da normalização).
+  formaPagamentoLido: string | null
   duplicatas:     DuplicataLida[]
   itens:          ItemNotaLido[]
 }
@@ -265,9 +274,17 @@ function numeroDaNota(v: unknown): string | null {
 // observação da conta, a mensagem do WhatsApp e o resumo diário). Pelo XML esse
 // mesmo papel avisa; pelo PDF calava.
 //
-// Códigos tPag válidos da NF-e (Nota Técnica 2020.006): tudo que NÃO está
-// aqui é lido errado, não é forma de pagamento nova.
-const TPAG_VALIDOS = new Set([
+// Códigos tPag válidos da NF-e (Nota Técnica 2023.004 — acrescentou '20', '21'
+// e '22': PIX estático, crédito em loja e pagamento eletrônico não informado;
+// citação conferida em 24/08/2026, contas/deNotaFiscal.ts já chama o '20' de
+// "PIX estático"): tudo que NÃO está aqui é lido errado, não é forma de
+// pagamento nova.
+// Exportada só para teste-guarda: deNotaFiscal.test.ts varre '00'..'99' e
+// confere que todo código para o qual motivoSemBoletoDaNota() devolve algo
+// diferente de null está dentro desta tabela — protege contra alguém mapear
+// um código novo em MOTIVO_SEM_BOLETO (contas/deNotaFiscal.ts) e o caminho do
+// PDF ignorar esse código calado por não reconhecê-lo aqui.
+export const TPAG_VALIDOS = new Set([
   '01', '02', '03', '04', '05', '10', '11', '12', '13', '14', '15',
   '16', '17', '18', '19', '20', '21', '22', '90', '99',
 ])
@@ -286,11 +303,21 @@ const TPAG_VALIDOS = new Set([
 // ganha um boleto A MAIS para o dono dispensar num toque — é o erro barato,
 // de propósito, porque o erro caro (perder um boleto real) vence sem ninguém
 // avisar.
+//
+// EXIGE dois dígitos, sem padStart — achado [médio] do Apolo, 3ª rodada
+// (24/08/2026), medido: o DANFE imprime `indPag` no quadro de fatura com UM
+// dígito ('0' = à vista, '1' = A PRAZO — a nota que TEM boleto, '2' = outros),
+// e um `padStart` aqui transformava '1' em '01' = "dinheiro à vista" no mapa
+// de tPag: exatamente o oposto de "a prazo", calando o aviso justo na nota que
+// mais precisa dele. O padStart do parser de XML (nfeProcessor.ts) é
+// caminho DIFERENTE, que lê tPag (não indPag) já como número do XML — este
+// comentário não se aplica a ele, e ele continua padded. Aqui, no papel, tPag
+// sempre vem impresso com dois dígitos; um dígito só é indPag vazando, nunca
+// tPag de verdade.
 function tPagNormalizado(v: unknown): string | null {
   const s = String(v ?? '').trim()
-  if (!/^\d{1,2}$/.test(s)) return null // frase inteira != código -> "não li"
-  const codigo = s.padStart(2, '0')
-  return TPAG_VALIDOS.has(codigo) ? codigo : null
+  if (!/^\d{2}$/.test(s)) return null // frase inteira, ou 1 dígito (indPag), != código -> "não li"
+  return TPAG_VALIDOS.has(s) ? s : null
 }
 
 function dataNaJanela(v: unknown, hojeISO: string, diasPassado: number, diasFuturo: number): string | null {
@@ -406,6 +433,7 @@ export function validarNotaLida(bruto: unknown, hojeISO: string): ValidacaoNota 
       dataEmissao,
       valorTotal,
       formaPagamento: tPagNormalizado(b.formaPagamento),
+      formaPagamentoLido: texto(b.formaPagamento),
       duplicatas,
       itens,
     },

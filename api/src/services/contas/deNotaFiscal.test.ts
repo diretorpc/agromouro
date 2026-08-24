@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
-  contasDaNota, motivoSemBoleto, motivoVencidoPelaDuplicata, parcelasDescartadasDaNota,
+  contasDaNota, motivoSemBoleto, motivoSemBoletoDaNota, motivoVencidoPelaDuplicata, parcelasDescartadasDaNota,
   observacaoDeServicoSemRecorrenciaConferida, PREFIXO_CONFERIR,
   type DadosParaConta,
 } from './deNotaFiscal'
+import { TPAG_VALIDOS } from '../nfe/notaPdf'
 
 const base: DadosParaConta = {
   numero:         '4516',
@@ -55,6 +56,23 @@ describe('motivoSemBoleto', () => {
     expect(motivoSemBoleto('16')).toBeNull()
     expect(motivoSemBoleto('19')).toBeNull()
     expect(motivoSemBoleto('21')).toBeNull()
+  })
+})
+
+// Teste-guarda sugerido na 3ª revisão do Apolo (24/08/2026): protege contra
+// alguém acrescentar um código novo em MOTIVO_SEM_BOLETO sem também acrescentá-lo
+// em TPAG_VALIDOS (notaPdf.ts) — nesse caso o caminho do XML avisaria o dono
+// normalmente, mas o caminho do PDF recusaria o código na leitura (tPagNormalizado
+// devolve null pra código fora da tabela) e a nota de PDF perderia o aviso calada,
+// exatamente o defeito que motivou a 3ª rodada inteira.
+describe('TPAG_VALIDOS cobre todo codigo que MOTIVO_SEM_BOLETO conhece', () => {
+  it('varre 00..99: todo codigo com motivo real esta em TPAG_VALIDOS', () => {
+    for (let n = 0; n <= 99; n++) {
+      const codigo = String(n).padStart(2, '0')
+      if (motivoSemBoletoDaNota(codigo, false) !== null) {
+        expect(TPAG_VALIDOS.has(codigo)).toBe(true)
+      }
+    }
   })
 })
 

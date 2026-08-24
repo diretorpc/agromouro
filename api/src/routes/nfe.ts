@@ -214,7 +214,14 @@ nfeRoutes.post('/ler-pdf', async (req, res, next) => {
       // seja "compra": preencher aqui faria a tela mostrar "Compra normal" já
       // escolhido para um item que ninguém leu — escondendo justamente o caso
       // que o dono precisa decidir.
-      itens: nota.itens.map(i => ({ ...i, familia: i.cfop ? familiaDoCfop(i.cfop) : '' })),
+      //
+      // `cfopLido` (achado [baixo] do Apolo, 3ª rodada, 24/08/2026): o CFOP tal
+      // como a IA leu, congelado aqui — o mesmo padrão do `lidoOriginal` da
+      // tela para número/CNPJ. Sem isto, um item sem CFOP em que o dono escolhe
+      // "Compra normal" (grava 5102) imprimia "CFOP 5102" embaixo do select,
+      // idêntico ao que teria sido lido de verdade — o dono não tinha como
+      // distinguir leitura de escolha própria.
+      itens: nota.itens.map(i => ({ ...i, familia: i.cfop ? familiaDoCfop(i.cfop) : '', cfopLido: i.cfop })),
     }
 
     res.status(200).json({

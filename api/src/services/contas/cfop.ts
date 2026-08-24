@@ -102,16 +102,24 @@ export function efeitoDoCfop(cfop: string): EfeitoItem {
 // Mora AQUI, e não no front, de propósito: regra fiscal tem um dono só neste
 // projeto. A rota devolve esta lista pronta para a tela desenhar.
 export type FamiliaItem = {
-  readonly chave:  string
-  readonly rotulo: string   // o que o dono lê na tela
-  readonly cfop:   string   // código representante, gravado quando ele escolhe
+  readonly chave:           string
+  readonly rotulo:          string    // o que o dono lê na tela
+  readonly cfop:            string    // código representante, gravado quando ele escolhe
+  // Se esta família conta como GASTO no Financeiro — mesmo campo que
+  // efeitoDoCfop() decide para o lançamento real (nfeProcessor.ts, seção 3).
+  // Calculado a partir do CFOP representante, não digitado à mão: a tela de
+  // conferência soma "R$ X vão virar gasto" em cima disto (achado [médio] do
+  // Apolo, 3ª rodada, 24/08/2026) — duplicar a regra ali, escrita de cabeça,
+  // já rendeu engano ('faturamento' PARECE que não devia contar como compra,
+  // mas conta: é a nota que cobra na hora e entrega depois).
+  readonly contaComoCompra: boolean
 }
 
 export const FAMILIAS_ITEM: readonly FamiliaItem[] = Object.freeze([
-  Object.freeze({ chave: 'compra',            rotulo: 'Compra normal (entra no estoque e conta como gasto)', cfop: '5102' }),
-  Object.freeze({ chave: 'entrega-faturada',  rotulo: 'Entrega de pedido que já paguei (entra no estoque, sem gasto novo)', cfop: '5117' }),
-  Object.freeze({ chave: 'faturamento',       rotulo: 'Faturamento — paguei agora, mercadoria vem depois (gasto, sem estoque)', cfop: '5922' }),
-  Object.freeze({ chave: 'bonificacao',       rotulo: 'Bonificação — veio de graça (entra no estoque com custo zero)', cfop: '5910' }),
+  Object.freeze({ chave: 'compra',            rotulo: 'Compra normal (entra no estoque e conta como gasto)', cfop: '5102', contaComoCompra: efeitoDoCfop('5102').contaComoCompra }),
+  Object.freeze({ chave: 'entrega-faturada',  rotulo: 'Entrega de pedido que já paguei (entra no estoque, sem gasto novo)', cfop: '5117', contaComoCompra: efeitoDoCfop('5117').contaComoCompra }),
+  Object.freeze({ chave: 'faturamento',       rotulo: 'Faturamento — paguei agora, mercadoria vem depois (gasto, sem estoque)', cfop: '5922', contaComoCompra: efeitoDoCfop('5922').contaComoCompra }),
+  Object.freeze({ chave: 'bonificacao',       rotulo: 'Bonificação — veio de graça (entra no estoque com custo zero)', cfop: '5910', contaComoCompra: efeitoDoCfop('5910').contaComoCompra }),
 ])
 
 // Qual família descreve o CFOP que a IA leu. Comparação pelo EFEITO, não pelo

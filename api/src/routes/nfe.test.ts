@@ -196,6 +196,28 @@ describe('POST /nfe/ler-pdf', () => {
     expect(res.body.nota.itens[0].familia).toBe('entrega-faturada')
   })
 
+  it('devolve cfopLido — o CFOP tal como a IA leu, congelado pra tela distinguir leitura de escolha do dono', async () => {
+    // Achado [baixo] do Apolo, 3ª rodada (24/08/2026): sem isto, um item sem
+    // CFOP em que o dono escolhe "Compra normal" (grava 5102) imprimia
+    // "CFOP 5102" embaixo do select, idêntico ao que teria sido lido de
+    // verdade — o `lidoOriginal` do commit anterior existe justamente para
+    // separar leitura de edição, e este achado era a mesma brecha no item.
+    lerNotaPdfMock.mockResolvedValue({ status: 'nota', nota: NOTA_LIDA, itensDescartados: 0, duplicatasDescartadas: 0 })
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA, body: corpoValido })
+    await handler(req, res, next)
+
+    expect(res.body.nota.itens[0].cfopLido).toBe(NOTA_LIDA.itens[0].cfop)
+  })
+
+  it('cfopLido continua vazio quando o item veio sem CFOP', async () => {
+    const semCfop = { ...NOTA_LIDA, itens: [{ ...NOTA_LIDA.itens[0], cfop: '' }] }
+    lerNotaPdfMock.mockResolvedValue({ status: 'nota', nota: semCfop, itensDescartados: 0, duplicatasDescartadas: 0 })
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA, body: corpoValido })
+    await handler(req, res, next)
+
+    expect(res.body.nota.itens[0].cfopLido).toBe('')
+  })
+
   it('cada recusa de conteudo vira 422 com mensagem em portugues', async () => {
     for (const status of ['nao-nota', 'sem-identidade', 'sem-itens', 'grande-demais']) {
       lerNotaPdfMock.mockResolvedValue({ status })

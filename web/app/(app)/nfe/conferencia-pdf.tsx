@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
+import { cfopAposEscolha, podeGravar, type FamiliaItem } from './regras-conferencia'
 
 // Toda a UI do modo "Upload PDF" mora aqui, fora de page.tsx (que já passa de
 // 700 linhas). O fluxo tem DOIS passos porque a leitura é da IA, não do dado
@@ -29,24 +30,37 @@ type ItemLido = {
   // (contas/cfop.ts). Vazia quando o CFOP não foi lido — aí o dono escolhe.
   // Só existe na tela: o servidor reconstrói o item a partir do `cfop`.
   familia?:       string
+  // O CFOP tal como a IA leu, ANTES de qualquer escolha do dono — congelado
+  // pela rota no instante da leitura (routes/nfe.ts). Achado [baixo] do
+  // Apolo, 3ª rodada (24/08/2026): sem isto, um item sem CFOP em que o dono
+  // escolhe "Compra normal" (grava 5102) imprimia "CFOP 5102" embaixo do
+  // select, idêntico ao que teria sido lido de verdade — a tela não tinha
+  // como distinguir leitura de edição, o mesmo papel que `lidoOriginal` já
+  // cumpre para número/CNPJ.
+  cfopLido?:      string
 }
 
-// Efeitos que a tela oferece, em português de produtor. Vêm prontos da API —
-// regra fiscal tem um dono só neste projeto, e não é o front.
-type FamiliaItem = { chave: string; rotulo: string; cfop: string }
+// Efeitos que a tela oferece, em português de produtor, e o tipo `FamiliaItem`
+// (com `contaComoCompra`) moram em regras-conferencia.ts — as mesmas duas
+// funções puras que fazem a conta de CFOP e a trava do botão.
 
 type DuplicataLida = { numero: string; vencimento: string | null; valor: number | null }
 
 type NotaLida = {
-  modelo:         'nfe' | 'nfse'
-  numero:         string
-  emitenteNome:   string
-  emitenteCnpj:   string
-  dataEmissao:    string
-  valorTotal:     number
-  formaPagamento: string | null
-  duplicatas:     DuplicataLida[]
-  itens:          ItemLido[]
+  modelo:             'nfe' | 'nfse'
+  numero:             string
+  emitenteNome:       string
+  emitenteCnpj:       string
+  dataEmissao:        string
+  valorTotal:         number
+  formaPagamento:     string | null
+  // O texto CRU que a IA leu no quadro de pagamento, antes da normalização
+  // que recusa tudo que não é código puro (notaPdf.ts). Achado [alto] do
+  // Apolo, 3ª rodada (24/08/2026): quando `formaPagamento` vira null, a tela
+  // não tinha como mostrar ao dono O QUE sumiu.
+  formaPagamentoLido: string | null
+  duplicatas:         DuplicataLida[]
+  itens:              ItemLido[]
 }
 
 type NotaNoBanco = { id: string; numero: string; data_emissao: string; emitente_nome: string }
@@ -170,12 +184,11 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
   }
 
   // Trocar o efeito de um item grava o CFOP representante daquela família —
-  // o dono escolhe "já paguei antes", não "5117". MAS: se a família escolhida
-  // é a MESMA que o item já tinha e ele já veio com um CFOP lido, não
-  // reescrever — só quando a família muda de verdade ou o CFOP original
-  // estava vazio. Sem essa trava, confirmar a família de um item 6117
-  // (interestadual) gravava 5117 (interno) — um código que a nota nunca
-  // imprimiu, só porque o dono confirmou o que a IA já tinha acertado.
+  // o dono escolhe "já paguei antes", não "5117". A conta fica em
+  // regras-conferencia.ts (cfopAposEscolha): mantém o CFOP lido quando a
+  // família escolhida é a mesma de antes, e preserva o dígito de estado
+  // (5xxx/6xxx) quando muda — um item interestadual não pode virar código
+  // interno só porque o dono trocou o efeito.
   function escolherFamilia(indice: number, chave: string) {
     if (!nota) return
     const familia = leitura?.familias?.find(f => f.chave === chave)
@@ -184,8 +197,7 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
       ...nota,
       itens: nota.itens.map((item, n) => {
         if (n !== indice) return item
-        const mantemCfopOriginal = item.familia === chave && !!item.cfop
-        return { ...item, cfop: mantemCfopOriginal ? item.cfop : familia.cfop, familia: familia.chave }
+        return { ...item, cfop: cfopAposEscolha(item, familia), familia: familia.chave }
       }),
     })
   }
@@ -256,6 +268,48 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
 
   // ─── Passo 2: conferir o que a IA leu e gravar ────────────────────────────
   const somaItens = nota.itens.reduce((s, i) => s + i.valorTotal, 0)
+
+  // A soma que o rodapé pode honestamente prometer PARA O LANÇAMENTO é a dos
+  // itens que CONTAM COMO GASTO — não a soma de todos os itens (`somaItens`
+  // acima, usado só como comparação genérica com o total impresso, mais
+  // abaixo). Achado [médio] do Apolo, 3ª rodada (24/08/2026), medido: nota com
+  // 2 itens de compra (R$ 1.000 cada) + 1 bonificação (R$ 200) fazia a tela
+  // imprimir R$ 2.200 exatamente no cenário em que o lançamento real
+  // (processarNFe, nfeProcessor.ts) vai ser R$ 2.000. `contaComoCompra` vem
+  // PRONTO de cada família (contas/cfop.ts, via a rota) — a tela não duplica a
+  // regra fiscal de cabeça.
+  const familiaPorChave = new Map((leitura.familias ?? []).map(f => [f.chave, f]))
+  // Item com CFOP lido mas SEM família reconhecida (código de efeito próprio —
+  // consignação, remessa sem compra — mostrado como texto cru na coluna "O que
+  // é este item"): a tela não sabe se ele conta como compra ou não. Havendo um
+  // item assim entre os restantes, nenhuma afirmação quantitativa sobre o
+  // lançamento pode ser feita com certeza.
+  const temItemSemFamiliaReconhecida = nota.itens.some(i => !!i.cfop && !i.familia)
+  const itensQueContam = nota.itens.filter(i => {
+    const familia = i.familia ? familiaPorChave.get(i.familia) : undefined
+    return familia?.contaComoCompra === true
+  })
+  const somaCompra = itensQueContam.reduce((s, i) => s + i.valorTotal, 0)
+  const todosOsRestantesContam = !temItemSemFamiliaReconhecida && nota.itens.length > 0
+    && itensQueContam.length === nota.itens.length
+  const algumRestanteConta = itensQueContam.length > 0
+
+  // Espelha valorCompra de nfeProcessor.ts (seção 3): todosSaoCompra usa o
+  // TOTAL da nota (frete/imposto incluso); algumECompra usa a soma só de quem
+  // conta; sem NENHUM item de compra, o lançamento pode ainda existir se a
+  // nota trouxer cobrança real (duplicata) mesmo sem item de compra — a tela
+  // não tem esse dado replicado aqui de propósito (é regra de
+  // contas/deNotaFiscal.ts, duplicataEhReal), então esse ramo fica só na
+  // regra qualitativa. Nunca afirma o ramo `temCobrancaReal`: número errado
+  // numa tela de dinheiro é pior que número ausente.
+  const mensagemLancamentoAposRemocao = temItemSemFamiliaReconhecida
+    ? 'O valor que vai para o Financeiro depende do CFOP de cada linha restante — confira o lançamento depois de gravar.'
+    : todosOsRestantesContam
+      ? `O lançamento de gasto mantém o total impresso na nota (${brl(nota.valorTotal)}), porque todas as linhas restantes contam como compra.`
+      : algumRestanteConta
+        ? `O lançamento de gasto passa a ser a soma só das linhas que contam como compra (${brl(somaCompra)}) — bonificação e entrega já paga não entram.`
+        : 'Nenhuma linha restante conta como compra nova: o lançamento de gasto pode não ser criado, a menos que a nota traga cobrança real (duplicata) mesmo sem item de compra — confira depois de gravar.'
+
   const semCfop = nota.itens.filter(i => !i.cfop).length
   // O aviso só vale enquanto o dono não mexer na identificação da nota.
   const duplicataValendo = leitura.jaExiste && !identidadeEditada
@@ -415,8 +469,13 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
                             6906 (retirada de depósito, problema aberto no backlog: conta
                             como gasto novo sem ser). O select já preenchido some com essa
                             pista; manter o código impresso, discreto, é o que deixa o dono
-                            notar um CFOP que o sistema classificou como compra sem ser. */}
-                        {item.cfop && (
+                            notar um CFOP que o sistema classificou como compra sem ser.
+                            SÓ imprime quando o código ainda É o que foi LIDO (cfopLido) —
+                            achado [baixo] do Apolo, 3ª rodada (24/08/2026): um item que
+                            veio sem CFOP e recebeu o representante da família escolhida
+                            pelo dono (ex.: 5102 de "Compra normal") imprimia "CFOP 5102"
+                            com a MESMA cara de um código lido de verdade. */}
+                        {item.cfop && item.cfop === item.cfopLido && (
                           <span className="block text-[10px] text-muted-foreground">CFOP {item.cfop}</span>
                         )}
                       </>
@@ -443,11 +502,8 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
         {itensRemovidos > 0 ? (
           <p className="text-xs text-amber-700 mt-1">
             Você removeu {itensRemovidos} linha(s). Remover linha tira o item do estoque
-            <strong> e</strong> da lista do Financeiro. O lançamento de gasto só mantém o
-            total impresso na nota ({brl(nota.valorTotal)}) quando todas as linhas restantes
-            forem compra — havendo bonificação ou entrega já paga entre elas, o lançamento
-            passa a ser a soma dos itens ({brl(somaItens)}), e os dois totais podem ficar
-            diferentes. Não use isto para descontar valor da nota.
+            <strong> e</strong> da lista do Financeiro. {mensagemLancamentoAposRemocao}{' '}
+            Não use isto para descontar valor da nota.
           </p>
         ) : Math.abs(somaItens - nota.valorTotal) > 0.01 && (
           <p className="text-xs text-muted-foreground mt-1">
@@ -456,6 +512,24 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
           </p>
         )}
       </div>
+
+      {/* Achado [alto] do Apolo, 3ª rodada (24/08/2026): a tarja
+          "Conferir antes de pagar" (PREFIXO_CONFERIR, contas/deNotaFiscal.ts)
+          some da conta quando a forma de pagamento vira null — e a tela nunca
+          mostrava o que a IA tinha lido. Sem isto, uma nota de cartão COM
+          duplicata gera a conta calada, sem o dono ter como reagir. */}
+      {(nota.formaPagamento || nota.formaPagamentoLido) && (
+        <p className="text-xs">
+          {nota.formaPagamento ? (
+            <span className="text-muted-foreground">Forma de pagamento: {nota.formaPagamento}</span>
+          ) : (
+            <span className="text-amber-700">
+              Forma de pagamento: a IA leu «{nota.formaPagamentoLido}» e não reconheceu o código —
+              esta nota vai gerar conta a pagar. Confira antes de pagar.
+            </span>
+          )}
+        </p>
+      )}
 
       {nota.duplicatas.length > 0 && (
         <div>
@@ -485,7 +559,10 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
             deixava o dono sem nenhum caminho para gravar a nota). */}
         <Button
           onClick={gravar}
-          disabled={gravando || nota.itens.length === 0 || !!duplicataValendo || (semCfop > 0 && (leitura.familias?.length ?? 0) > 0)}
+          disabled={!podeGravar({
+            quantidadeItens: nota.itens.length, semCfop, familias: leitura.familias,
+            duplicataValendo, gravando,
+          })}
           title={semCfop > 0 && (leitura.familias?.length ?? 0) > 0 ? 'Escolha o que é cada item marcado em amarelo' : undefined}
         >
           {gravando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
