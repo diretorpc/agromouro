@@ -583,7 +583,7 @@ O achado fora do escopo desta obra — `GET /estoque` não filtrava por `fazenda
 
 # 2. ABERTO — o que precisa de decisão ou de trabalho
 
-## ⚠️ Talhões: criar talhão estava quebrado — corrigido e comitado — 24/08/2026
+## ✅ Talhões: criar talhão estava quebrado — NO AR (PR #65 mergeado) — 24/08/2026
 
 **Causa raiz:** o INSERT de `/talhoes` montava o payload sem `fazenda_id`. A coluna é
 `NOT NULL` (`supabase/migrations/001_multi_fazenda.sql`, passo 5) e a policy
@@ -650,12 +650,18 @@ configurações de policy — as do 009 são MAIS permissivas, não mais estreit
 que as distingue (gravar com `fazenda_id` de outra fazenda) nunca foi exercido. Só a
 consulta ao `pg_policies` decidia.
 
-### Comitado, ainda sem PR
+### Mergeado
 
-Commit `3ae993c` na branch `fix/talhoes-fazenda-id` (11 arquivos, +840/−122).
-Ainda NÃO empurrado para o GitHub e sem PR aberto.
-Comando que mede antes de subir:
-`cd web && npx tsc --noEmit && npx vitest run && npm run build`
+PR #65 — https://github.com/diretorpc/agromouro/pull/65 — MERGED (squash) na `main`
+como `78a5163`. Branch `fix/talhoes-fazenda-id` apagada nos dois lados.
+Vercel faz o deploy sozinho a partir da `main`.
+Comando que mede: `cd web && npx tsc --noEmit && npx vitest run && npm run build`
+
+`CLAUDE.md` atualizado no mesmo PR: a cana passou a constar como cultura permanente
+da propriedade (sempre existiu, sempre vai existir), com o registro MEDIDO de que ela
+é desigual no sistema — tem cor no Dashboard e linha no `seed.sql`, mas
+`api/src/jobs/cotacoes.ts` só conhece soja, milho e trigo. **Não existe cotação de
+cana.**
 
 ### Fora de escopo, virou chip de tarefa
 
