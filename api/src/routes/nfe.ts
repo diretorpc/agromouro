@@ -191,7 +191,22 @@ nfeRoutes.post('/ler-pdf', async (req, res, next) => {
         ?? { id: '', numero: nota.numero, data_emissao: '', emitente_nome: nota.emitenteNome }
     }
 
-    res.status(200).json({ status: 'nota', nota, itensDescartados, duplicatasDescartadas, jaExiste })
+    // Achado 6 do Apolo (24/08/2026): errar o `modelo` fura as DUAS travas de
+    // uma vez. `modelo` faz parte da chave de duplicidade (migration 011), então
+    // um DANFE classificado como 'nfse' não acha a nota que o Make gravou como
+    // 'nfe' — nem na checagem acima, nem no índice único. A mesma nota entra
+    // duas vezes, e a segunda entra SEM estoque (converterParaNFeData marca
+    // servico:true em NFS-e), divergência que nenhuma tela mostra. Uma consulta
+    // a mais, sem custo de IA, e a tela avisa em vez de deixar passar.
+    const outroModelo = nota.modelo === 'nfe' ? 'nfse' : 'nfe'
+    const existeNoOutroModelo = jaExiste
+      ? null
+      : await notaNoBanco(nota.numero, nota.emitenteCnpj, fazendaId, outroModelo)
+
+    res.status(200).json({
+      status: 'nota', nota, itensDescartados, duplicatasDescartadas, jaExiste,
+      existeNoOutroModelo,
+    })
   } catch (err) {
     next(err)
   }

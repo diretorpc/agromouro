@@ -49,6 +49,10 @@ type RespostaLeitura = {
   itensDescartados: number
   duplicatasDescartadas: number
   jaExiste: NotaNoBanco | null
+  // Nota com o mesmo número e CNPJ gravada no OUTRO modelo (NF-e x NFS-e).
+  // Aviso, não bloqueio: se a IA classificou errado, as duas travas de
+  // duplicidade procuram no modelo errado e a compra entra duas vezes.
+  existeNoOutroModelo?: NotaNoBanco | null
 }
 
 type RespostaGravacao = {
@@ -57,6 +61,12 @@ type RespostaGravacao = {
 }
 
 const SELECT_CLASS = 'flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring'
+
+// Mesmo teto do leitor (LIMITE_MB em api/src/services/nfe/notaPdf.ts) e do
+// bucket. Barrar AQUI é o que dá mensagem em português: acima de ~11,3 MB o
+// corpo estoura o body-parser da API antes de a rota rodar, e o dono lê
+// "Erro interno do servidor" (achado do Apolo, 24/08/2026).
+const LIMITE_BYTES = 10 * 1024 * 1024
 
 const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 const ddmmaaaa = (iso: string) => (iso ? iso.slice(0, 10).split('-').reverse().join('/') : '')
@@ -70,11 +80,23 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
   const [erro, setErro] = useState('')
   const [leitura, setLeitura] = useState<RespostaLeitura | null>(null)
   const [nota, setNota] = useState<NotaLida | null>(null)
+  // Quantas linhas o dono tirou à mão — muda o que o rodapé pode afirmar sobre
+  // a diferença entre a soma dos itens e o total da nota.
+  const [itensRemovidos, setItensRemovidos] = useState(0)
+  // O aviso "esta nota já existe" vale para o número/CNPJ/tipo que a IA LEU.
+  // Se o dono corrigir qualquer um dos três, o aviso envelheceu e não pode
+  // continuar travando o botão (achado do Apolo, 24/08/2026: número lido errado
+  // que casava com nota existente deixava a nota real sem caminho de entrada).
+  const [identidadeEditada, setIdentidadeEditada] = useState(false)
 
   function escolherArquivo(file: File) {
     setErro(''); setLeitura(null); setNota(null)
     setNomeArquivo(file.name)
     setBase64(null)
+    if (file.size > LIMITE_BYTES) {
+      setErro(`Arquivo grande demais (${(file.size / 1024 / 1024).toFixed(1)} MB). O limite é 10 MB.`)
+      return
+    }
     const reader = new FileReader()
     reader.onload = e => {
       // readAsDataURL devolve "data:application/pdf;base64,XXXX" — a API quer
@@ -126,10 +148,12 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
   function removerItem(indice: number) {
     if (!nota) return
     setNota({ ...nota, itens: nota.itens.filter((_, n) => n !== indice) })
+    setItensRemovidos(n => n + 1)
   }
 
   function editar<K extends keyof NotaLida>(campo: K, valor: NotaLida[K]) {
     if (!nota) return
+    if (campo === 'numero' || campo === 'emitenteCnpj' || campo === 'modelo') setIdentidadeEditada(true)
     setNota({ ...nota, [campo]: valor })
   }
 
@@ -181,14 +205,32 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
   // ─── Passo 2: conferir o que a IA leu e gravar ────────────────────────────
   const somaItens = nota.itens.reduce((s, i) => s + i.valorTotal, 0)
   const semCfop = nota.itens.filter(i => !i.cfop).length
+  // O aviso só vale enquanto o dono não mexer na identificação da nota.
+  const duplicataValendo = leitura.jaExiste && !identidadeEditada
 
   return (
     <div className="space-y-4">
-      {leitura.jaExiste && (
+      {duplicataValendo && (
         <div className="rounded-md bg-red-50 text-red-700 px-3 py-2 text-sm">
           <strong>Esta nota já está no sistema</strong>
-          {leitura.jaExiste.data_emissao ? ` (entrou em ${ddmmaaaa(leitura.jaExiste.data_emissao)})` : ''}.
+          {leitura.jaExiste?.data_emissao ? ` (entrou em ${ddmmaaaa(leitura.jaExiste.data_emissao)})` : ''}.
           {' '}Gravar de novo somaria estoque e gasto duas vezes.
+          {' '}Se o número ou o CNPJ estiverem lidos errado, corrija abaixo — o aviso sai.
+        </div>
+      )}
+
+      {leitura.jaExiste && identidadeEditada && (
+        <div className="rounded-md bg-amber-50 text-amber-800 px-3 py-2 text-sm">
+          Você corrigiu a identificação da nota. A conferência de duplicidade é refeita no
+          servidor ao gravar — se ainda for a mesma nota, ela é recusada lá.
+        </div>
+      )}
+
+      {leitura.existeNoOutroModelo && (
+        <div className="rounded-md bg-amber-50 text-amber-800 px-3 py-2 text-sm">
+          Já existe uma nota <strong>{nota.modelo === 'nfe' ? 'de serviço (NFS-e)' : 'de produto (NF-e)'}</strong>{' '}
+          com este mesmo número e fornecedor. Confira o campo <strong>Tipo</strong>: se o tipo estiver
+          errado, o sistema não reconhece a nota repetida e a compra entra duas vezes.
         </div>
       )}
 
@@ -291,7 +333,16 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
             </tbody>
           </table>
         </div>
-        {Math.abs(somaItens - nota.valorTotal) > 0.01 && (
+        {/* Duas frases diferentes de propósito: com item removido, dizer "a
+            diferença é frete e imposto" seria mentira — e é justamente a frase
+            que faria o dono não desconfiar (achado do Apolo, 24/08/2026). */}
+        {itensRemovidos > 0 ? (
+          <p className="text-xs text-amber-700 mt-1">
+            Você removeu {itensRemovidos} linha(s). O gasto lançado continua sendo o
+            <strong> total impresso na nota</strong> ({brl(nota.valorTotal)}), não a soma das
+            linhas que sobraram ({brl(somaItens)}) — remover linha tira do estoque, não do dinheiro.
+          </p>
+        ) : Math.abs(somaItens - nota.valorTotal) > 0.01 && (
           <p className="text-xs text-muted-foreground mt-1">
             Soma dos itens: {brl(somaItens)} — diferente do total da nota ({brl(nota.valorTotal)}).
             A diferença normalmente é frete e imposto, que o total já inclui.
@@ -319,7 +370,7 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
 
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={onCancelar}>Cancelar</Button>
-        <Button onClick={gravar} disabled={gravando || nota.itens.length === 0 || !!leitura.jaExiste}>
+        <Button onClick={gravar} disabled={gravando || nota.itens.length === 0 || !!duplicataValendo}>
           {gravando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
           {gravando ? 'Gravando…' : 'Confirmar e gravar'}
         </Button>

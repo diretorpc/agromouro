@@ -6,7 +6,7 @@ vi.mock('./nfeProcessor', () => ({
   processarNFe:    vi.fn(),
 }))
 
-const { estadoBanco, chamadasRpc } = vi.hoisted(() => ({
+const { estadoBanco, chamadasRpc, removeMock } = vi.hoisted(() => ({
   estadoBanco: {
     // Resposta do único SELECT em notas_fiscais que este arquivo mocka —
     // reaproveitado pelas duas buscas de importarXmlManual (nota duplicada
@@ -17,6 +17,7 @@ const { estadoBanco, chamadasRpc } = vi.hoisted(() => ({
     rpcErro:    null as any,
   },
   chamadasRpc: [] as { fn: string; args: any }[],
+  removeMock: vi.fn(),
 }))
 
 vi.mock('./supabase', () => {
@@ -35,6 +36,7 @@ vi.mock('./supabase', () => {
         chamadasRpc.push({ fn, args })
         return Promise.resolve({ error: estadoBanco.rpcErro })
       }),
+      storage: { from: vi.fn(() => ({ remove: removeMock })) },
     },
   }
 })
@@ -131,7 +133,49 @@ describe('importarXmlManual', () => {
 describe('excluirNotaManual', () => {
   beforeEach(() => {
     estadoBanco.rpcErro = null
+    estadoBanco.notaSelect = { data: null, error: null }
     chamadasRpc.length = 0
+    removeMock.mockReset()
+    removeMock.mockResolvedValue({ error: null })
+  })
+
+  // ACHADO 5 do Apolo (24/08/2026): a RPC apaga tudo no banco e nao sabe que
+  // Storage existe. O caminho do PDF so vive na coluna arquivo_pdf, que some
+  // junto com a linha — sem ler ANTES, o DANFE fica orfao para sempre.
+  it('nota que veio de PDF: apaga tambem o arquivo do bucket', async () => {
+    estadoBanco.notaSelect = { data: { arquivo_pdf: 'fazenda-1/abc.pdf' }, error: null }
+
+    const resultado = await excluirNotaManual('nota-1', 'fazenda-1')
+
+    expect(resultado.status).toBe('excluida')
+    expect(removeMock).toHaveBeenCalledWith(['fazenda-1/abc.pdf'])
+  })
+
+  it('nota sem PDF (XML, e-mail, webhook): nao chama o Storage', async () => {
+    estadoBanco.notaSelect = { data: { arquivo_pdf: null }, error: null }
+
+    await excluirNotaManual('nota-1', 'fazenda-1')
+
+    expect(removeMock).not.toHaveBeenCalled()
+  })
+
+  it('RPC recusou: o arquivo NAO e apagado — a nota continua la, apontando pra ele', async () => {
+    estadoBanco.notaSelect = { data: { arquivo_pdf: 'fazenda-1/abc.pdf' }, error: null }
+    estadoBanco.rpcErro = { message: 'boleto_ja_pago' }
+
+    const resultado = await excluirNotaManual('nota-1', 'fazenda-1')
+
+    expect(resultado.status).toBe('boleto_pago')
+    expect(removeMock).not.toHaveBeenCalled()
+  })
+
+  it('falha ao remover do Storage nao desfaz a exclusao ja confirmada no banco', async () => {
+    estadoBanco.notaSelect = { data: { arquivo_pdf: 'fazenda-1/abc.pdf' }, error: null }
+    removeMock.mockResolvedValue({ error: { message: 'storage fora do ar' } })
+
+    const resultado = await excluirNotaManual('nota-1', 'fazenda-1')
+
+    expect(resultado.status).toBe('excluida')
   })
 
   it('RPC sem erro: devolve excluida', async () => {

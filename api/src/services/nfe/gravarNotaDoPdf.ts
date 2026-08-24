@@ -134,6 +134,19 @@ export async function gravarNotaDoPdf(
         // Não é para acontecer (nota recém-criada não tem boleto pago), mas se
         // acontecer, falha ruidosamente no log em vez de mascarar a original.
         console.error('[GravarNotaDoPdf] Falha ao limpar a casca da nota:', errLimpeza.message)
+
+        // ACHADO 10 (revisão do Apolo, 24/08/2026): o arquivo do Storage JÁ foi
+        // removido lá em cima. Se a casca sobreviveu, ela ficou apontando para
+        // um objeto que não existe mais — e "Baixar PDF" nessa nota responderia
+        // 500. Zerar a coluna deixa a casca feia, mas honesta.
+        const { error: errZerar } = await supabase
+          .from('notas_fiscais')
+          .update({ arquivo_pdf: null, arquivo_hash: null })
+          .eq('id', casca.id)
+          .eq('fazenda_id', fazendaId)
+        if (errZerar) {
+          console.error('[GravarNotaDoPdf] Falha ao zerar arquivo_pdf da casca:', errZerar.message)
+        }
       }
     }
 

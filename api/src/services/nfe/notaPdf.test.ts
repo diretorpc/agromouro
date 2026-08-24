@@ -225,6 +225,42 @@ describe('validarNotaLida — descarta a linha, nunca a nota', () => {
   })
 })
 
+describe('validarNotaLida — forma de pagamento sai no MESMO formato do XML', () => {
+  // Achado [alto] do Apolo (24/08/2026): motivoSemBoletoDaNota e
+  // motivoVencidoPelaDuplicata comparam tPag com dois dígitos. Um '3' cru, ou a
+  // descrição impressa no DANFE, nao casa com nada — e a nota de cartao COM
+  // duplicata perde o aviso "Conferir antes de pagar" nos tres lugares onde ele
+  // deveria aparecer.
+  it('um digito ganha o zero da frente, igual ao padStart do parser de XML', () => {
+    const r = validarNotaLida(lida({ formaPagamento: '3' }), HOJE)
+    expect(r.status === 'nota' && r.nota.formaPagamento).toBe('03')
+  })
+
+  it('dois digitos passam intactos', () => {
+    for (const [entrada, esperado] of [['03', '03'], ['15', '15'], ['90', '90']]) {
+      const r = validarNotaLida(lida({ formaPagamento: entrada }), HOJE)
+      expect(r.status === 'nota' && r.nota.formaPagamento).toBe(esperado)
+    }
+  })
+
+  it('codigo com descricao junto ainda entrega so o codigo', () => {
+    const r = validarNotaLida(lida({ formaPagamento: '03 - Cartao de Credito' }), HOJE)
+    expect(r.status === 'nota' && r.nota.formaPagamento).toBe('03')
+  })
+
+  it('descricao sem digito nenhum vira null, nao string que finge ser codigo', () => {
+    for (const entrada of ['Boleto Bancario', 'Dinheiro', '', null]) {
+      const r = validarNotaLida(lida({ formaPagamento: entrada }), HOJE)
+      expect(r.status === 'nota' && r.nota.formaPagamento).toBeNull()
+    }
+  })
+
+  it('numero com digitos demais vira null — nao existe tPag de 3 digitos', () => {
+    const r = validarNotaLida(lida({ formaPagamento: '1503' }), HOJE)
+    expect(r.status === 'nota' && r.nota.formaPagamento).toBeNull()
+  })
+})
+
 describe('converterParaNFeData', () => {
   it('NFS-e marca servico:true em todo item — servico nunca e estocavel', () => {
     const r = validarNotaLida(lida({ modelo: 'nfse' }), HOJE)

@@ -141,6 +141,30 @@ describe('POST /nfe/ler-pdf', () => {
     expect(res.body.jaExiste.id).toBe('ja')
   })
 
+  it('nota com o mesmo numero no OUTRO modelo vira aviso, nao bloqueio', async () => {
+    // Achado 6 do Apolo: `modelo` entra na chave de duplicidade (migration 011).
+    // Um DANFE classificado como NFS-e nao acha a nota que o Make gravou como
+    // NF-e — nem aqui, nem no indice unico — e a compra entra duas vezes.
+    lerNotaPdfMock.mockResolvedValue({ status: 'nota', nota: NOTA_LIDA, itensDescartados: 0, duplicatasDescartadas: 0 })
+    nfeJaProcessadaMock.mockResolvedValue(false)
+    estado.nota = { id: 'gemea', numero: '58717', data_emissao: '2026-08-10', emitente_nome: 'SOLOS' }
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA, body: corpoValido })
+    await handler(req, res, next)
+    expect(res.statusCode).toBe(200)
+    expect(res.body.jaExiste).toBeNull()
+    expect(res.body.existeNoOutroModelo.id).toBe('gemea')
+  })
+
+  it('quando a nota ja existe no MESMO modelo, nao repete o aviso do outro', async () => {
+    lerNotaPdfMock.mockResolvedValue({ status: 'nota', nota: NOTA_LIDA, itensDescartados: 0, duplicatasDescartadas: 0 })
+    nfeJaProcessadaMock.mockResolvedValue(true)
+    estado.nota = { id: 'ja', numero: '58717', data_emissao: '2026-06-08', emitente_nome: 'SOLOS' }
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA, body: corpoValido })
+    await handler(req, res, next)
+    expect(res.body.jaExiste.id).toBe('ja')
+    expect(res.body.existeNoOutroModelo).toBeNull()
+  })
+
   it('cada recusa de conteudo vira 422 com mensagem em portugues', async () => {
     for (const status of ['nao-nota', 'sem-identidade', 'sem-itens', 'grande-demais']) {
       lerNotaPdfMock.mockResolvedValue({ status })

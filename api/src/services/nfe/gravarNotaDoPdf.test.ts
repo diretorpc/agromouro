@@ -4,8 +4,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // processarNFe que o XML usa e precisa limpar TUDO quando o caminho quebra no
 // meio. Cada teste aqui é um jeito de quebrar.
 
-const { estado, uploadMock, removeMock, rpcMock, processarNFeMock, nfeJaProcessadaMock } = vi.hoisted(() => ({
+const { estado, updates, uploadMock, removeMock, rpcMock, processarNFeMock, nfeJaProcessadaMock } = vi.hoisted(() => ({
   estado: { notaExistente: null as any },
+  updates: [] as any[],
   uploadMock: vi.fn(),
   removeMock: vi.fn(),
   rpcMock: vi.fn(),
@@ -19,13 +20,16 @@ vi.mock('../nfeProcessor', () => ({
 }))
 
 vi.mock('../supabase', () => {
-  // Cadeia .from().select().eq().eq()...maybeSingle() — devolve sempre a nota
-  // que o teste plantou em estado.notaExistente.
+  // Cadeia .from().select().eq()...maybeSingle() — devolve sempre a nota que o
+  // teste plantou em estado.notaExistente. O update() registra o que tentou
+  // gravar e é "thenable", como o cliente real.
   function builder(): any {
     const obj: any = {
       select:      () => obj,
       eq:          () => obj,
+      update:      (payload: any) => { updates.push(payload); return obj },
       maybeSingle: async () => ({ data: estado.notaExistente, error: null }),
+      then:        (resolve: any) => resolve({ error: null }),
     }
     return obj
   }
@@ -62,6 +66,7 @@ function notaLida(over: Partial<NotaLidaDoPdf> = {}): NotaLidaDoPdf {
 beforeEach(() => {
   vi.clearAllMocks()
   estado.notaExistente = null
+  updates.length = 0
   uploadMock.mockResolvedValue({ error: null })
   removeMock.mockResolvedValue({ error: null })
   rpcMock.mockResolvedValue({ error: null })
@@ -166,6 +171,27 @@ describe('gravarNotaDoPdf — recusa e limpeza', () => {
     expect(r.status).toBe('erro')
     expect(rpcMock).not.toHaveBeenCalled()
     expect(removeMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('casca que nao pode ser apagada fica sem apontar pro arquivo que ja foi removido', async () => {
+    // ACHADO 10 do Apolo: o arquivo do Storage ja foi removido; se a casca
+    // sobrevive apontando pra ele, "Baixar PDF" nessa nota responde 500.
+    processarNFeMock.mockRejectedValue(new Error('estourou no meio'))
+    estado.notaExistente = { id: 'casca-1', numero: '58717', data_emissao: '2026-08-10', emitente_nome: 'SOLOS' }
+    rpcMock.mockResolvedValue({ error: { message: 'nota_em_processamento' } })
+
+    await gravarNotaDoPdf(notaLida(), PDF, 'fazenda-1')
+
+    expect(updates).toContainEqual({ arquivo_pdf: null, arquivo_hash: null })
+  })
+
+  it('casca apagada com sucesso nao precisa de update nenhum', async () => {
+    processarNFeMock.mockRejectedValue(new Error('estourou no meio'))
+    estado.notaExistente = { id: 'casca-1', numero: '58717', data_emissao: '2026-08-10', emitente_nome: 'SOLOS' }
+
+    await gravarNotaDoPdf(notaLida(), PDF, 'fazenda-1')
+
+    expect(updates).toEqual([])
   })
 
   it('erro do Supabase (objeto puro, sem instanceof Error) ainda vira mensagem legivel', async () => {

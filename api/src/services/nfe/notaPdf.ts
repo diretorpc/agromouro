@@ -255,6 +255,24 @@ function numeroDaNota(v: unknown): string | null {
   return digitos.length > 0 ? digitos : null
 }
 
+// tPag TEM que sair daqui com dois dígitos ('03', '15', '90') — é assim que o
+// parser de XML grava (`String(primeiroPag.tPag).padStart(2, '0')`, ver
+// nfeProcessor.ts) e é assim que motivoSemBoletoDaNota/
+// motivoVencidoPelaDuplicata comparam. Achado [alto] do Apolo em 24/08/2026,
+// provado executando: com '3', 'Cartão de Crédito' ou '03 - Cartão de Crédito',
+// NENHUM dos dois casa — e a nota de cartão COM duplicata perde o aviso
+// "Conferir antes de pagar" nos três lugares onde ele deveria aparecer (a
+// observação da conta, a mensagem do WhatsApp e o resumo diário). Pelo XML esse
+// mesmo papel avisa; pelo PDF calava.
+//
+// Descrição sem dígito nenhum ("Boleto Bancário") vira null de propósito: null
+// é a resposta honesta ("não li o código"), e não uma string que finge ser
+// código e nunca casa com nada.
+function tPagNormalizado(v: unknown): string | null {
+  const digitos = String(v ?? '').replace(/\D/g, '')
+  return digitos.length === 1 || digitos.length === 2 ? digitos.padStart(2, '0') : null
+}
+
 function dataNaJanela(v: unknown, hojeISO: string, diasPassado: number, diasFuturo: number): string | null {
   if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v) || !dataExiste(v)) return null
   const dias = diasEntre(hojeISO, v)
@@ -367,7 +385,7 @@ export function validarNotaLida(bruto: unknown, hojeISO: string): ValidacaoNota 
       emitenteCnpj: cnpj,
       dataEmissao,
       valorTotal,
-      formaPagamento: texto(b.formaPagamento),
+      formaPagamento: tPagNormalizado(b.formaPagamento),
       duplicatas,
       itens,
     },
