@@ -22,6 +22,117 @@
 
 ---
 
+## 🔧 "O importar PDF não funcionou" — 25/08/2026 — **PRONTO, aguardando merge**
+
+Ramo `fix/nfe-cfop-lido-errado-e-filtro-mes`. Começou como bug relatado e terminou
+em três coisas, sendo que **a queixa original não era bug**.
+
+**O que o Matheus viu:** importou a nota 289122 (RURALCENTRO) por PDF; ela não
+apareceu na aba NF-e nem no Financeiro, só em Contas a pagar.
+
+**O que era:** a nota estava íntegra no banco. Ela é de **04/07/2026** — data
+confirmada pela chave de acesso do DANFE (`3126 07…`, AAMM = 2607), não é leitura
+errada. A aba NF-e ordena por data de emissão e carregava tudo: a nota caiu na
+posição 69. O Financeiro abre filtrado no mês corrente. Contas a pagar ordena por
+vencimento (23/08), por isso apareceu. **Nada foi perdido; ninguém disse para onde
+a nota tinha ido.**
+
+**O bug de verdade, que estava escondido atrás da queixa:** os 19 itens entraram
+com **CFOP 5922** (faturamento de entrega futura) quando o papel imprime 5102 e
+5405 — conferido em duas leituras independentes do PDF, batendo linha por linha.
+5922 tem `entraNoEstoque: false`: **nenhum item entrou no estoque**. O dinheiro
+ficou certo por acaso (as duas famílias contam como compra).
+
+É **reincidência**: o mesmo erro de leitura já estava documentado no prompt de
+`api/src/services/nfe/notaPdf.ts` (caso de 24/08/2026). O aviso vermelho de
+`precisaConfirmarEfeitoIncomum` DISPAROU e foi dispensado pela caixa "conferi no
+papel" — porque o conserto de verdade eram 19 dropdowns, um a um, e a dispensa era
+um clique. **Lição de desenho:** quando a tela sabe qual é o conserto certo, ela
+tem que oferecer o conserto, não só o aviso e uma saída fácil.
+
+**O que foi feito**
+
+1. **Dado corrigido** — `supabase/correcoes/2026-08-25_cfop_nota_289122.sql`,
+   executado pelo Matheus em 25/08/2026. Pasta nova, separada de `migrations/` de
+   propósito: quem reconstruir o banco do zero não deve rodar correção de dado.
+   **Não cria estoque retroativo** — `UPDATE` não faz o `processarNFe` rodar de
+   novo, e o estoque de veterinária não é controlado aqui. Para item ESTOCÁVEL o
+   caminho é outro (apagar a nota e reimportar), e o cabeçalho do arquivo diz isso.
+2. **Botão "São todos compra normal"** no aviso vermelho da conferência de PDF.
+   Conserta a nota inteira num clique, preservando o dígito de estado (6102 num
+   item interestadual) e **sem tocar** em item de remessa/consignação, que a tela
+   trava de propósito. A caixa "conferi no papel" continua, agora em letra pequena.
+3. **Filtro de mês na aba NF-e** (pedido do Matheus). Três travas para ele não
+   repetir o sumiço que veio consertar: abre no mês mais recente **com nota** (não
+   no do calendário); depois de importar — PDF, XML ou manual — a lista **salta**
+   para o mês da nota; e **a busca desliga o filtro de mês**, com aviso na tela.
+
+**Achados do Apolo corrigidos neste mesmo ramo** (a revisão pegou dois [altos] que
+eu mesmo tinha criado, e nenhum teste de função pura pegaria — os dois nasceram no
+acoplamento entre a função e o componente):
+
+- `aplicarFamiliaATodos` passava por cima da trava de item read-only e transformava
+  remessa de depósito (5905) em compra nova, com estoque e gasto. Predicado virou
+  função única (`itemTrancado`), usada pelos DOIS lados.
+- Busca e mês estavam em E lógico: procurar a nota sumida pelo número devolvia zero.
+- SQL confirmava sozinho antes da conferência (`SELECT` dentro da transação).
+- **Financeiro** montava o mês padrão com `toISOString()` (UTC): das 21h do dia 31
+  até a virada, a tela do dinheiro abria num mês vazio. Helper único em
+  `web/lib/mes.ts`, usado pelas duas telas. Ganhou também guarda de nulo em
+  `data_emissao` (a coluna aceita nulo no schema).
+- `importarXmlManual` passou a devolver `dataEmissao` — o site adivinhava a nota
+  pelo número na lista recarregada.
+
+**O que continua aberto**
+
+- **A leitura do CFOP erra na MAIORIA das notas em PDF, e o prompt endurecido não
+  segurou.** Medido em 25/08/2026, depois do conserto da 289122: das **4** notas
+  que entraram por PDF, **3** vieram com a nota inteira em 5922 — 289122 (19 itens,
+  corrigida), **288911** (1 item) e **289134** (4 itens), as duas ainda por
+  corrigir. A quarta (12728, ZAMPIERI) só está certa porque foi corrigida à mão na
+  importação. Nenhuma dessas notas pôs nada no estoque. Dinheiro certo nas três.
+  O botão conserta na hora da importação; ninguém conserta a leitura.
+  Opção discutida e **não** implementada: segunda leitura só da coluna CFOP quando
+  nenhum item vier como compra, marcando como ilegível quando as duas discordarem.
+  Para achar as próximas, use a segunda consulta do bloco SQL abaixo.
+- **`cartoes/page.tsx` ainda usa `toISOString()`** para data padrão e mês do filtro
+  — mesmo bug que o Financeiro acabou de perder. Fora do escopo deste ramo.
+- **KPIs do topo da aba NF-e continuam globais** com a lista mensal: "1 pendente"
+  sem nenhuma pendente na lista do mês. Sugestão do Apolo (não feita): KPI clicável
+  que joga o filtro para "todos os meses" + o status correspondente.
+- **`loadNotas` faz `.select('*')` sem `.limit()`.** Não é regressão deste ramo, mas
+  se as notas passarem do teto do PostgREST os meses truncados somem do dropdown
+  sem avisar — o mesmo tipo de teto que apareceu em Cartões.
+
+**Verificado na tela** (login feito pelo Matheus, dev server local contra a API de
+produção): filtro de mês cortando a lista, troca de mês, e a busca por `289122` com
+o filtro em agosto trazendo a nota de julho com o aviso "a busca está olhando todos
+os meses". **NÃO verificado na tela:** o aviso vermelho com o botão novo — depende
+de um PDF lido como não-compra, e o navegador desta sessão não anexa arquivo. Está
+coberto por teste de mesa, inclusive o caso do item de remessa.
+
+Comandos que medem (nunca copie o número para cá):
+```bash
+cd web && npx vitest run && npx tsc --noEmit && npx next build
+cd api && npx vitest run && npx tsc --noEmit
+```
+```sql
+-- a nota 289122 continua honesta? (esperado: 5102 e 5405, nenhum 5922)
+select cfop, count(*) from itens_nfe
+ where nota_fiscal_id = 'ab80e71b-0e0a-4bf1-8f31-759678195725'
+ group by cfop order by cfop;
+
+-- outras notas que entraram por PDF com a nota INTEIRA em 5922 — suspeitas do
+-- mesmo erro de leitura
+select n.numero, n.emitente_nome, n.data_emissao, count(*) as itens
+  from itens_nfe i join notas_fiscais n on n.id = i.nota_fiscal_id
+ where n.arquivo_pdf is not null
+ group by n.id, n.numero, n.emitente_nome, n.data_emissao
+having bool_and(i.cfop = '5922');
+```
+
+---
+
 ## ✅ Exportar Excel na aba Cartões — 25/08/2026 — **NO AR** (PR #71)
 
 Botão "Exportar Excel" no cabeçalho de `/cartoes`. Exporta o que está na tela

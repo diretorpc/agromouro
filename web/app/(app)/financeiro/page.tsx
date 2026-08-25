@@ -32,6 +32,7 @@ import { supabase } from '@/lib/supabase'
 import { useFazenda } from '@/context/fazenda-context'
 import { CATEGORIAS_FINANCEIRAS, normalizarCategoria, categoriaLabel } from '@/lib/centro-custo'
 import { useColumnWidths } from '@/lib/use-column-widths'
+import { mesCorrente } from '@/lib/mes'
 import { ColumnResizeHandle } from '@/components/ui/column-resize-handle'
 
 type ItemFinanceiro = {
@@ -346,7 +347,12 @@ function FormFields({ form, setForm }: { form: FormData; setForm: React.Dispatch
 // que continua sendo um valor à parte, escolhido pelo usuário. Achado da
 // revisão final do branch: confundir os dois fazia "Limpar" jogar a tela
 // pro histórico inteiro, e "Todos os meses" não sobrevivia a um F5.
-const MES_PADRAO = new Date().toISOString().slice(0, 7)
+//
+// `mesCorrente()` e não `toISOString().slice(0,7)`: o segundo converte para UTC,
+// e das 21h do dia 31 até a virada ele já devolve o mês SEGUINTE — a tela do
+// dinheiro abria num mês vazio nas últimas 3 horas de todo mês (achado [médio]
+// do Apolo, 25/08/2026, na revisão do filtro de mês da aba NF-e).
+const MES_PADRAO = mesCorrente()
 
 // Larguras de partida das colunas redimensionáveis — os mesmos valores que já
 // existiam fixos em `w-[Npx]` antes desta mudança (Task 4 do plano de
@@ -837,7 +843,9 @@ export default function FinanceiroPage() {
   const itensFiltrados = itens
     .filter(i => {
       const okCentro = filtroCentro === 'todos' || i.centro_custo === filtroCentro
-      const okMes    = filtroMes === 'todos' || i.data_emissao.startsWith(filtroMes)
+      // `?? ''` porque notas_fiscais.data_emissao aceita nulo no schema — sem a
+      // guarda, uma única linha sem data derruba a tela inteira.
+      const okMes    = filtroMes === 'todos' || (i.data_emissao ?? '').startsWith(filtroMes)
       const okOrigem = filtroOrigem === 'todos' || i.origem === filtroOrigem || (filtroOrigem === 'nfe' && (i.origem === 'nfe' || i.origem === null))
       return okCentro && okMes && okOrigem
     })

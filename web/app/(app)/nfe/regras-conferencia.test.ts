@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { cfopAposEscolha, podeGravar, precisaConfirmarEfeitoIncomum, type FamiliaItem } from './regras-conferencia'
+import { aplicarFamiliaATodos, itemTrancado, cfopAposEscolha, podeGravar, precisaConfirmarEfeitoIncomum, type FamiliaItem } from './regras-conferencia'
 
 const COMPRA: FamiliaItem            = { chave: 'compra',           rotulo: 'Compra normal',    cfop: '5102', contaComoCompra: true }
 const ENTREGA_FATURADA: FamiliaItem  = { chave: 'entrega-faturada', rotulo: 'Entrega faturada',  cfop: '5117', contaComoCompra: false }
@@ -127,5 +127,115 @@ describe('podeGravar — confirmacao de efeito incomum', () => {
 
   it('sem o campo, comportamento antigo intacto', () => {
     expect(podeGravar(base)).toBe(true)
+  })
+})
+
+describe('aplicarFamiliaATodos — o conserto de 1 clique da nota lida errado', () => {
+  it('nota inteira lida como 5922 vira compra normal (5102) em todos os itens', () => {
+    // O caso real de 25/08/2026: nota 289122 da RURALCENTRO, 19 itens, CFOP
+    // 5102 e 5405 impressos no papel, TODOS lidos como 5922. Nenhum item
+    // entrou no estoque.
+    const itens = [
+      { cfop: '5922', familia: 'faturamento' },
+      { cfop: '5922', familia: 'faturamento' },
+    ]
+    expect(aplicarFamiliaATodos(itens, COMPRA)).toEqual([
+      { cfop: '5102', familia: 'compra' },
+      { cfop: '5102', familia: 'compra' },
+    ])
+  })
+
+  it('item interestadual (6922) vira 6102, nunca 5102 — o dígito de estado é preservado', () => {
+    expect(aplicarFamiliaATodos([{ cfop: '6922', familia: 'faturamento' }], COMPRA))
+      .toEqual([{ cfop: '6102', familia: 'compra' }])
+  })
+
+  it('item que JÁ era compra mantém o CFOP impresso na nota (5405 não vira 5102)', () => {
+    // 5405 é compra normal e não está na tabela de efeitos especiais. Reescrever
+    // para 5102 gravaria um código que a nota nunca imprimiu.
+    expect(aplicarFamiliaATodos([{ cfop: '5405', familia: 'compra' }], COMPRA))
+      .toEqual([{ cfop: '5405', familia: 'compra' }])
+  })
+
+  it('item sem CFOP legível também é resolvido pelo mesmo clique', () => {
+    expect(aplicarFamiliaATodos([{ cfop: '', familia: '' }], COMPRA))
+      .toEqual([{ cfop: '5102', familia: 'compra' }])
+  })
+
+  it('não encosta nos outros campos do item (centro de custo, descrição)', () => {
+    const itens = [{ cfop: '5922', familia: 'faturamento', centroCusto: 'tejuco', descricao: 'REMEDIO BAYCOX 1000ML' }]
+    expect(aplicarFamiliaATodos(itens, COMPRA)).toEqual([
+      { cfop: '5102', familia: 'compra', centroCusto: 'tejuco', descricao: 'REMEDIO BAYCOX 1000ML' },
+    ])
+  })
+
+  it('não muta a lista original — o React precisa ver referência nova', () => {
+    const itens = [{ cfop: '5922', familia: 'faturamento' }]
+    const saida = aplicarFamiliaATodos(itens, COMPRA)
+    expect(itens[0].cfop).toBe('5922')
+    expect(saida).not.toBe(itens)
+  })
+
+  it('lista vazia devolve lista vazia', () => {
+    expect(aplicarFamiliaATodos([], COMPRA)).toEqual([])
+  })
+
+  it('serve para qualquer família, não só compra', () => {
+    expect(aplicarFamiliaATodos([{ cfop: '5102', familia: 'compra' }], BONIFICACAO))
+      .toEqual([{ cfop: '5910', familia: 'bonificacao' }])
+  })
+})
+
+describe('itemTrancado — o item que a tela não deixa trocar de efeito', () => {
+  it('CFOP lido de família fora das quatro (remessa, consignação) fica trancado', () => {
+    expect(itemTrancado({ cfop: '5905', familia: '' })).toBe(true)
+    expect(itemTrancado({ cfop: '5912', familia: undefined })).toBe(true)
+    expect(itemTrancado({ cfop: '5917', familia: '' })).toBe(true)
+  })
+
+  it('CFOP de família conhecida NÃO está trancado — o dono escolhe no select', () => {
+    expect(itemTrancado({ cfop: '5922', familia: 'faturamento' })).toBe(false)
+    expect(itemTrancado({ cfop: '5102', familia: 'compra' })).toBe(false)
+  })
+
+  it('item sem CFOP nenhum NÃO está trancado — é justamente quem precisa de escolha', () => {
+    expect(itemTrancado({ cfop: '', familia: '' })).toBe(false)
+  })
+})
+
+describe('aplicarFamiliaATodos — o botão não passa por cima da trava', () => {
+  it('item de remessa (5905) sobrevive intacto ao "são todos compra normal"', () => {
+    // Achado [alto] do Apolo (25/08/2026): 5905 tem entraNoEstoque=false e
+    // contaComoCompra=false. Virar 5102 criaria gasto novo E entrada de estoque
+    // com um clique — a mesma classe do gasto fantasma de R$ 1,06 mi da SYAGRI.
+    // Pior: irreversível na tela, porque o select só oferece as quatro famílias.
+    const itens = [
+      { cfop: '5905', familia: '' },
+      { cfop: '5922', familia: 'faturamento' },
+    ]
+    expect(aplicarFamiliaATodos(itens, COMPRA)).toEqual([
+      { cfop: '5905', familia: '' },
+      { cfop: '5102', familia: 'compra' },
+    ])
+  })
+
+  it('nota inteira de remessa não muda nada — o botão fica sem efeito, e é o certo', () => {
+    const itens = [{ cfop: '5912', familia: '' }, { cfop: '5920', familia: '' }]
+    expect(aplicarFamiliaATodos(itens, COMPRA)).toEqual(itens)
+  })
+
+  it('o item trancado volta por REFERÊNCIA — nada nele foi reescrito', () => {
+    const trancado = { cfop: '5917', familia: '' }
+    expect(aplicarFamiliaATodos([trancado], COMPRA)[0]).toBe(trancado)
+  })
+
+  it('a nota 289122 real: 5922 vira 5102, e não 5405 — o botão não sabe o que o papel diz', () => {
+    // Achado [médio] do Apolo: o teste do "5405 não vira 5102" cobre o item que
+    // a IA ACERTOU. No caso que o botão existe para consertar, a IA errou tudo,
+    // e o representante da família é o único código disponível. Sem efeito em
+    // dinheiro nem estoque (5102 e 5405 são os dois COMPRA_NORMAL), mas o botão
+    // não pode PROMETER fidelidade ao papel — por isso este teste existe.
+    expect(aplicarFamiliaATodos([{ cfop: '5922', familia: 'faturamento' }], COMPRA))
+      .toEqual([{ cfop: '5102', familia: 'compra' }])
   })
 })

@@ -133,7 +133,9 @@ export interface Cartao {
 }
 
 export type ResultadoImportacaoXml =
-  | { status: 'criada'; numero: string; emitenteNome: string; valorTotal: number }
+  // `dataEmissao` pode vir vazia (XML sem dhEmi/dEmi) e pode não vir de uma API
+  // antiga — por isso opcional, e a tela trata os dois casos.
+  | { status: 'criada'; numero: string; emitenteNome: string; valorTotal: number; dataEmissao?: string }
   | { status: 'duplicada'; nota: { id: string; numero: string; data_emissao: string; emitente_nome: string } }
 
 export interface ItemDocumentoControle {

@@ -61,6 +61,46 @@ export function cfopAposEscolha(item: ItemComCfop, familiaEscolhida: FamiliaItem
   return familiaEscolhida.cfop
 }
 
+// Item cujo efeito a tela NÃO deixa trocar: veio com CFOP lido, mas de uma
+// família fora das quatro oferecidas (remessa sem compra 5905/5912/5920…,
+// consignação 5917). A coluna "O que é este item" imprime o código cru para
+// esses, sem select, porque trocá-los por "compra" seria piorar.
+//
+// Mora aqui, e não dentro do componente, porque DOIS lugares precisam da mesma
+// resposta: o que decide se renderiza select e o que aplica família em massa.
+// Quando essa pergunta existia só no JSX, o botão de conserto em massa passou
+// por cima da trava e transformou remessa de depósito em compra nova — achado
+// [alto] do Apolo, 25/08/2026.
+export function itemTrancado(item: ItemComCfop): boolean {
+  return !!item.cfop && !item.familia
+}
+
+// Aplica UMA família a TODOS os itens de uma vez, item por item, com a mesma
+// regra de `cfopAposEscolha` — inclusive a preservação do dígito de estado e a
+// de não reescrever um CFOP que já é daquela família.
+//
+// Item trancado (ver `itemTrancado`) fica INTOCADO: o botão conserta o que a
+// tela deixaria consertar à mão, nunca mais que isso.
+//
+// Existe porque o aviso de `precisaConfirmarEfeitoIncomum` não bastou: em
+// 25/08/2026 a nota 289122 (RURALCENTRO, 19 itens, CFOP 5102 e 5405 impressos)
+// voltou com 5922 em TODAS as linhas. O aviso vermelho apareceu na tela e foi
+// dispensado pela caixa "conferi no papel" — porque o conserto de verdade eram
+// 19 dropdowns, um a um, e a caixa era um clique. Nenhum item entrou no estoque.
+//
+// Regra de UX que este caso ensina: quando a tela sabe qual é o conserto certo,
+// ela tem que oferecer o conserto — não só o aviso e uma caixa de dispensa.
+export function aplicarFamiliaATodos<T extends ItemComCfop>(
+  itens: readonly T[],
+  familia: FamiliaItem,
+): T[] {
+  return itens.map(item => (
+    itemTrancado(item)
+      ? item
+      : { ...item, cfop: cfopAposEscolha(item, familia), familia: familia.chave }
+  ))
+}
+
 // A condição que HABILITA o botão "Confirmar e gravar" — devolve `true`
 // quando pode gravar, o INVERSO do que o componente usa em `disabled`.
 //

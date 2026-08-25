@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
 import { CATEGORIAS_FINANCEIRAS } from '@/lib/centro-custo'
-import { cfopAposEscolha, podeGravar, precisaConfirmarEfeitoIncomum, type FamiliaItem } from './regras-conferencia'
+import { aplicarFamiliaATodos, cfopAposEscolha, itemTrancado, podeGravar, precisaConfirmarEfeitoIncomum, type FamiliaItem } from './regras-conferencia'
 
 // Toda a UI do modo "Upload PDF" mora aqui, fora de page.tsx (que já passa de
 // 700 linhas). O fluxo tem DOIS passos porque a leitura é da IA, não do dado
@@ -98,7 +98,9 @@ const LIMITE_BYTES = 10 * 1024 * 1024
 const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 const ddmmaaaa = (iso: string) => (iso ? iso.slice(0, 10).split('-').reverse().join('/') : '')
 
-export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => void; onCancelar: () => void }) {
+export function ConferenciaPdf(
+  { onGravada, onCancelar }: { onGravada: (dataEmissao: string) => void; onCancelar: () => void },
+) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [base64, setBase64] = useState<string | null>(null)
   const [nomeArquivo, setNomeArquivo] = useState<string | null>(null)
@@ -177,7 +179,11 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
         setErro('Este mesmo PDF já foi importado antes.')
         return
       }
-      onGravada()
+      // A data de emissão vai junto: quem chama usa ela para levar a lista até o
+      // mês da nota. Sem isso, uma nota de mês passado nasce fora da vista —
+      // foi assim que a nota 289122 (emitida em 04/07, importada em 25/08)
+      // pareceu ter sumido.
+      onGravada(nota.dataEmissao)
     } catch (err) {
       setErro(err instanceof Error ? err.message : 'Erro ao gravar a nota.')
     } finally {
@@ -201,6 +207,11 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
     if (!nota) return
     const familia = leitura?.familias?.find(f => f.chave === chave)
     if (!familia) return
+    // Mexer na composição da nota derruba a confirmação de efeito incomum: ela
+    // valia para o conjunto que o dono conferiu, não para este novo. O
+    // comentário do `confirmouEfeito` já afirmava isso, mas nada zerava o
+    // estado — a caixa marcada sobrevivia a qualquer mudança posterior.
+    setConfirmouEfeito(false)
     setNota({
       ...nota,
       itens: nota.itens.map((item, n) => {
@@ -208,6 +219,22 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
         return { ...item, cfop: cfopAposEscolha(item, familia), familia: familia.chave }
       }),
     })
+  }
+
+  // O conserto de 1 clique da nota lida errado: joga TODOS os itens para
+  // "compra normal". Diferente de `marcarRestantesComoCompra`, que só preenche
+  // os itens SEM CFOP, este reescreve os que vieram com um CFOP lido errado —
+  // o caso da nota 289122 (25/08/2026), em que 19 linhas de 5102/5405 viraram
+  // 5922 e a mercadoria não entrou no estoque.
+  //
+  // A conta continua em `cfopAposEscolha`: item interestadual vira 6102, e um
+  // item que já era compra mantém o código impresso na nota (5405 não vira 5102).
+  function marcarTodosComoCompra() {
+    if (!nota) return
+    const compra = leitura?.familias?.find(f => f.chave === 'compra')
+    if (!compra) return
+    setConfirmouEfeito(false)
+    setNota({ ...nota, itens: aplicarFamiliaATodos(nota.itens, compra) })
   }
 
   // Atalho para a nota comum (tudo é compra) — evita 30 cliques quando a coluna
@@ -352,6 +379,13 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
   // qualquer item recalcula, e o `confirmouEfeito` só destrava enquanto a
   // situação continuar a mesma que ele confirmou.
   const efeitoIncomum = precisaConfirmarEfeitoIncomum(nota.itens)
+  // API antiga não manda `familias`: sem a lista não há como oferecer o conserto,
+  // e um botão que não conserta nada é pior que nenhum botão.
+  const temFamiliaCompra = (leitura.familias ?? []).some(f => f.chave === 'compra')
+  // O botão só mexe no que a tela deixaria mexer à mão. Contar a nota inteira
+  // no rótulo prometeria um conserto que ele não faz.
+  const itensQueOBotaoMuda = nota.itens.filter(i => !itemTrancado(i)).length
+  const itensTrancados     = nota.itens.length - itensQueOBotaoMuda
 
   return (
     <div className="space-y-4">
@@ -388,17 +422,47 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
             {' '}(ou entra sem custo, no caso de bonificação).
           </p>
           <p>
-            Se esta é uma compra comum, corrija a coluna <strong>"O que é este item"</strong> para
-            "Compra normal". Em 24/08/2026 uma nota de loja de material de construção foi lida
-            assim por engano — o CFOP impresso no papel era outro.
+            Quase sempre é erro de leitura: já aconteceu em 24/08/2026 (loja de material de
+            construção) e de novo em 25/08/2026 (nota de 19 itens) — nas duas o CFOP impresso
+            no papel era de compra comum. Se for este o caso, conserte a nota inteira aqui:
           </p>
-          <label className="flex items-center gap-2 font-medium">
+          {temFamiliaCompra && itensQueOBotaoMuda > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={marcarTodosComoCompra}
+                className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400"
+              >
+                São todos compra normal — corrigir {itensQueOBotaoMuda} {itensQueOBotaoMuda === 1 ? 'item' : 'itens'}
+              </button>
+              {/* O botão grava o código representante da família (5102, ou 6102
+                  num item interestadual). Ele NÃO sabe o que está impresso no
+                  papel: numa nota cujo CFOP real é 5405, o gravado será 5102 —
+                  mesmo efeito de estoque e de gasto, código fiscal diferente.
+                  Dizer isso aqui é mais honesto que deixar o rótulo prometer
+                  fidelidade que não existe (achado [médio] do Apolo). */}
+              <p className="text-xs">
+                Grava 5102 (compra comum) em cada linha — o efeito certo no estoque e no gasto,
+                ainda que o código impresso na nota seja outro da mesma família.
+                {itensTrancados > 0 && (
+                  <> {itensTrancados} {itensTrancados === 1 ? 'linha fica' : 'linhas ficam'} como está:
+                  {' '}são remessa ou consignação, que a tela não deixa virar compra.</>
+                )}
+              </p>
+            </>
+          )}
+          {/* A caixa continua existindo para a nota que É mesmo incomum (uma
+              remessa de verdade, uma bonificação inteira). Mas ela deixou de ser
+              o caminho mais fácil da tela: em 25/08/2026 o conserto certo eram 19
+              dropdowns um a um e a dispensa era um clique — o dono marcou a caixa,
+              e nenhum item entrou no estoque. */}
+          <label className="flex items-center gap-2 text-xs">
             <input
               type="checkbox"
               checked={confirmouEfeito}
               onChange={e => setConfirmouEfeito(e.target.checked)}
             />
-            Conferi no papel: esta nota é isso mesmo.
+            Não é erro de leitura: conferi no papel e esta nota é isso mesmo.
           </label>
         </div>
       )}
@@ -528,7 +592,11 @@ export function ConferenciaPdf({ onGravada, onCancelar }: { onGravada: () => voi
                       Família fora da lista (consignação, remessa sem compra) aparece
                       como código cru: trocá-la por "compra" seria piorar. */}
                   <td className={`p-2 ${item.cfop ? '' : 'bg-amber-50'}`}>
-                    {item.cfop && !item.familia ? (
+                    {/* `itemTrancado` mora em regras-conferencia.ts porque o
+                        botão de conserto em massa precisa da MESMA resposta.
+                        Quando esta pergunta vivia só aqui, o botão passou por
+                        cima da trava (achado [alto] do Apolo, 25/08/2026). */}
+                    {itemTrancado(item) ? (
                       <span title="CFOP com efeito próprio — não mexa sem motivo">CFOP {item.cfop}</span>
                     ) : (
                       <>

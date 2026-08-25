@@ -6,7 +6,12 @@ import { parseXmlNota, nfeJaProcessada, processarNFe } from './nfeProcessor'
 const BUCKET_NOTAS_PDF = 'notas-pdf'
 
 export type ResultadoImportacao =
-  | { status: 'criada'; numero: string; emitenteNome: string; valorTotal: number }
+  // `dataEmissao` existe para a tela levar a lista até o mês da nota que acabou
+  // de entrar. Sem ela o site tinha que adivinhar a nota pelo número na lista
+  // recarregada, e desistia calado quando dois fornecedores usavam o mesmo
+  // número (achado [baixo] do Apolo, 25/08/2026). Vem como veio do XML: string
+  // vazia é possível quando a nota não traz dhEmi/dEmi.
+  | { status: 'criada'; numero: string; emitenteNome: string; valorTotal: number; dataEmissao: string }
   | { status: 'duplicada'; nota: { id: string; numero: string; data_emissao: string; emitente_nome: string } }
   | { status: 'invalida' }
   | { status: 'erro'; mensagem: string }
@@ -37,7 +42,11 @@ export async function importarXmlManual(xml: string, fazenda_id: string): Promis
 
   try {
     await processarNFe(nfe, 'manual', fazenda_id)
-    return { status: 'criada', numero: nfe.numero, emitenteNome: nfe.emitenteNome, valorTotal: nfe.valorTotal }
+    return {
+      status: 'criada',
+      numero: nfe.numero, emitenteNome: nfe.emitenteNome, valorTotal: nfe.valorTotal,
+      dataEmissao: nfe.dataEmissao,
+    }
   } catch (err) {
     const mensagem = err instanceof Error ? err.message : 'Erro desconhecido'
 
