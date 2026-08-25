@@ -87,11 +87,12 @@ acoplamento entre a função e o componente):
 
 - **A leitura do CFOP erra na MAIORIA das notas em PDF, e o prompt endurecido não
   segurou.** Medido em 25/08/2026, depois do conserto da 289122: das **4** notas
-  que entraram por PDF, **3** vieram com a nota inteira em 5922 — 289122 (19 itens,
-  corrigida), **288911** (1 item) e **289134** (4 itens), as duas ainda por
-  corrigir. A quarta (12728, ZAMPIERI) só está certa porque foi corrigida à mão na
-  importação. Nenhuma dessas notas pôs nada no estoque. Dinheiro certo nas três.
-  O botão conserta na hora da importação; ninguém conserta a leitura.
+  que entraram por PDF, **3** vieram com a nota inteira em 5922 — 289122 (19
+  itens), 288911 (1 item) e 289134 (4 itens). A quarta (12728, ZAMPIERI) só está
+  certa porque foi corrigida à mão na importação. **As três já foram corrigidas**
+  (dois arquivos em `supabase/correcoes/`, os dois conferidos em duas leituras
+  independentes de cada PDF). Nenhuma delas pôs nada no estoque; dinheiro certo nas
+  três. O botão conserta na hora da importação; ninguém conserta a leitura.
   Opção discutida e **não** implementada: segunda leitura só da coluna CFOP quando
   nenhum item vier como compra, marcando como ilegível quando as duas discordarem.
   Para achar as próximas, use a segunda consulta do bloco SQL abaixo.
