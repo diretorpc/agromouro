@@ -22,6 +22,43 @@
 
 ---
 
+## 🔨 Exportar Excel na aba Cartões — 25/08/2026 — **PRONTO, não commitado**
+
+Botão "Exportar Excel" no cabeçalho de `/cartoes`. Exporta o que está na tela
+(respeita filtro de mês e de cartão), como `.xlsx` de verdade: data como data,
+valor como número, cabeçalho congelado e autofiltro.
+
+Gerador próprio em `web/lib/xlsx.ts`, montando os XMLs do OOXML sobre o `jszip`
+que já era dependência. **Não** foi instalada biblioteca de planilha: a `SheetJS`
+publicada no npm carrega CVE-2023-30533 e a `exceljs` custa ~2 MB no bundle do
+navegador. O preço dessa escolha é código artesanal — por isso `xlsx.test.ts`
+existe, incluindo um teste que força o caminho de codificação do NAVEGADOR
+(`support.nodebuffer = false`), porque o vitest roda em Node e o `jszip` usa
+codificador diferente em cada ambiente.
+
+**Teto de 1000 lançamentos revelado, não removido.** A consulta da página sempre
+parou em 1000 e, ao estourar, descartava as notas mais antigas em silêncio — com
+KPI, gráfico e (agora) arquivo todos concordando com a versão truncada. Passou a
+vir `count: 'exact'` junto — e o alarme tem DUAS testemunhas, porque `count`
+pode voltar nulo: bater no teto também dispara. A tela ganha faixa de aviso e o
+arquivo sai com `parcial` no nome.
+
+Comandos que medem (nunca copie o número para cá):
+```bash
+cd web && npx vitest run && npx tsc --noEmit && npm run build
+```
+```sql
+-- quão perto do teto de 1000 estamos
+select count(*) from lancamentos_financeiros where origem in ('cartao','manual');
+```
+
+**Ficou de fora, de propósito (fora do escopo):** `page.tsx` monta a data padrão do
+lançamento manual e o "mês atual" do filtro com `new Date().toISOString()`, que é
+UTC — depois das 21h no Brasil o formulário nasce com o dia seguinte, e num dia 31
+joga o gasto para o mês errado. Bug pré-existente, achado na revisão do Apolo.
+
+---
+
 ## ✅ Adicionar NF em PDF — 24/08/2026 — **NO AR** (PRs #67, #68 e #69)
 
 Subir o DANFE em PDF na aba Notas, conferir na tela e gravar pelo MESMO `processarNFe`

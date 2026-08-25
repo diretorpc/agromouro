@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { CreditCard, Upload, Plus, Pencil, Trash2, Filter } from 'lucide-react'
+import { CreditCard, Upload, Download, Plus, Pencil, Trash2, Filter } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -22,20 +22,13 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip,
   Cell, LabelList, ResponsiveContainer,
 } from 'recharts'
+import { useFazenda } from '@/context/fazenda-context'
+import { gerarXlsx, baixarBlob } from '@/lib/xlsx'
+import { colunasExport, nomeArquivoExport } from './exportar'
 import type { Cartao } from '@/lib/types'
+import type { LancamentoCartao } from './exportar'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-type LancamentoCartao = {
-  id: string
-  data: string
-  descricao: string
-  valor: number
-  categoria: string | null
-  origem: 'cartao' | 'manual'
-  cartao_id: string | null
-  cartoes: { apelido: string } | null
-}
 
 type TransacaoPreview = {
   dedupHash: string
@@ -118,6 +111,11 @@ const CAT_COLOR: Record<string, string> = {
 }
 
 const FORM_CARTAO_VAZIO: CartaoForm = { apelido: '', bandeira: '', responsavel: '' }
+
+// Teto da consulta de lançamentos. Mora numa constante porque é lido em DOIS
+// lugares — o `.limit()` e a detecção de truncamento — e os dois têm que
+// concordar: se um mudar sozinho, a tela para de avisar que está incompleta.
+const LIMITE_LANCAMENTOS = 1000
 
 // ─── Categoria Chart ──────────────────────────────────────────────────────────
 
@@ -215,10 +213,13 @@ function mesLabel(iso: string) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CartoesPage() {
+  const { fazendaAtiva }          = useFazenda()
   const [cartoes, setCartoes]     = useState<Cartao[]>([])
   const [lancamentos, setLancamentos] = useState<LancamentoCartao[]>([])
+  const [totalNoBanco, setTotalNoBanco] = useState(0)
   const [loading, setLoading]     = useState(true)
   const [uploadando, setUploadando] = useState(false)
+  const [exportando, setExportando] = useState(false)
   const [confirmando, setConfirmando] = useState(false)
   const [salvando, setSalvando]   = useState(false)
   const [erroGeral, setErroGeral] = useState<string | null>(null)
@@ -267,15 +268,24 @@ export default function CartoesPage() {
         api.get<Cartao[]>('/cartoes'),
         supabase
           .from('lancamentos_financeiros')
-          .select('id, data, descricao, valor, categoria, origem, cartao_id, cartoes(apelido)')
+          // `count: 'exact'` não traz linha nenhuma a mais — só o total que a
+          // consulta TERIA. É o que revela o teto abaixo sendo atingido.
+          .select('id, data, descricao, valor, categoria, origem, cartao_id, cartoes(apelido)', { count: 'exact' })
           .in('origem', ['cartao', 'manual'])
           .order('data', { ascending: false })
-          .limit(1000),
+          .limit(LIMITE_LANCAMENTOS),
       ])
       if (lancResult.error) throw lancResult.error
       setCartoes(cartoesData)
-      setLancamentos((lancResult.data ?? []) as unknown as LancamentoCartao[])
-    } catch {
+      const carregados = (lancResult.data ?? []) as unknown as LancamentoCartao[]
+      setLancamentos(carregados)
+      // Passando de 1000, a consulta devolve as MAIS NOVAS e descarta as
+      // velhas em silêncio. Os KPIs somam só o que veio, então tela e arquivo
+      // concordam entre si e a conferência cruzada não acusa nada — o mês mais
+      // antigo simplesmente some. Só este total denuncia.
+      setTotalNoBanco(lancResult.count ?? carregados.length)
+    } catch (err) {
+      console.error('[Cartões] Erro ao carregar dados:', err)
       setErroGeral('Erro ao carregar dados. Recarregue a página.')
     } finally {
       setLoading(false)
@@ -328,6 +338,42 @@ export default function CartoesPage() {
     const file = e.target.files?.[0]
     if (file) handleFileSelect(file)
     e.target.value = ''
+  }
+
+  // ─── Exportar para Excel ────────────────────────────────────────────────────
+
+  // Exporta o que está NA TELA — os mesmos filtros de mês e cartão. Sem filtro
+  // aplicado, sai tudo. Duas telas mostrando números diferentes do "mesmo"
+  // relatório é confusão garantida na hora de conferir gasto.
+  async function handleExportar() {
+    if (lancFiltrados.length === 0) return
+    setExportando(true)
+    setErroGeral(null)
+    try {
+      const apelido = filtroCartao === 'todos'
+        ? null
+        : (cartoes.find(c => c.id === filtroCartao)?.apelido ?? null)
+      const blob = await gerarXlsx(
+        colunasExport(cat => CAT_LABEL[cat] ?? cat),
+        lancFiltrados,
+        'Lançamentos',
+      )
+      baixarBlob(blob, nomeArquivoExport({
+        filtroMes,
+        apelidoCartao: apelido,
+        fazenda: fazendaAtiva?.codigo ?? null,
+        parcial: truncado,
+      }))
+    } catch (err) {
+      // Sem este log, a falha mais provável em campo — o pedaço do jszip não
+      // baixar numa conexão ruim — vira "Tente novamente" para sempre, e
+      // tentar de novo refaz o mesmo download que falhou. Ninguém diagnostica
+      // isso por telefone.
+      console.error('[Cartões] Erro ao gerar planilha:', err)
+      setErroGeral('Erro ao gerar a planilha. Tente novamente.')
+    } finally {
+      setExportando(false)
+    }
   }
 
   // ─── Preview actions ────────────────────────────────────────────────────────
@@ -529,6 +575,19 @@ export default function CartoesPage() {
 
   // ─── Derived values ─────────────────────────────────────────────────────────
 
+  // A consulta para no teto. Se o banco tem mais, TUDO nesta tela é um recorte
+  // dos mais recentes — KPIs, gráfico e o arquivo exportado.
+  //
+  // DUAS testemunhas, não uma. O `count` é a boa: diz o total exato. Mas ele
+  // pode voltar nulo (proxy que corta o header `Content-Range`, resposta
+  // parcial do PostgREST) e aí o `?? carregados.length` iguala os dois números
+  // e o alarme se desliga sozinho — justo na hora em que ninguém sabe se é
+  // tudo. Bater no teto é a segunda testemunha, e essa não depende de header
+  // nenhum: se vieram exatamente 1000 linhas, ou o banco tem 1000 na régua ou
+  // tem mais. Avisar à toa uma vez custa muito menos que calar quando importa.
+  const truncado =
+    totalNoBanco > lancamentos.length || lancamentos.length >= LIMITE_LANCAMENTOS
+
   const mesAtual = new Date().toISOString().slice(0, 7)
 
   const meses = Array.from(
@@ -601,6 +660,23 @@ export default function CartoesPage() {
           </Button>
           <Button
             size="sm"
+            variant="outline"
+            onClick={handleExportar}
+            // Espera a fazenda carregar: exportar antes disso geraria um
+            // arquivo SEM o código da fazenda no nome, indistinguível do de
+            // outra propriedade na pasta de Downloads.
+            disabled={exportando || lancFiltrados.length === 0 || !fazendaAtiva}
+            title={
+              lancFiltrados.length === 0
+                ? 'Nada para exportar com os filtros atuais'
+                : `Baixar ${lancFiltrados.length} lançamentos em Excel`
+            }
+          >
+            <Download className="h-4 w-4 mr-1.5" aria-hidden="true" />
+            {exportando ? 'Gerando…' : 'Exportar Excel'}
+          </Button>
+          <Button
+            size="sm"
             onClick={() => { setCartaoForm(FORM_CARTAO_VAZIO); setAddCartaoDialog(true) }}
           >
             <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
@@ -612,6 +688,19 @@ export default function CartoesPage() {
       {erroGeral && (
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
           {erroGeral}
+        </p>
+      )}
+
+      {truncado && (
+        <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+          Esta tela mostra os <strong>{lancamentos.length.toLocaleString('pt-BR')}</strong> lançamentos
+          mais recentes
+          {/* Só cita o total quando ele veio de verdade: com `count` nulo os
+              dois números são iguais e "1.000 de 1.000" não diria nada. */}
+          {totalNoBanco > lancamentos.length
+            ? <> de <strong>{totalNoBanco.toLocaleString('pt-BR')}</strong> no total</>
+            : <> — o limite da consulta</>}
+          . Os mais antigos ficaram de fora: dos totais, do gráfico e do arquivo exportado.
         </p>
       )}
 
