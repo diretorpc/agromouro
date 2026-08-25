@@ -843,8 +843,16 @@ export default function FinanceiroPage() {
   const itensFiltrados = itens
     .filter(i => {
       const okCentro = filtroCentro === 'todos' || i.centro_custo === filtroCentro
-      // `?? ''` porque notas_fiscais.data_emissao aceita nulo no schema — sem a
-      // guarda, uma única linha sem data derruba a tela inteira.
+      // `?? ''` é cinto de segurança, não conserto: `data_emissao` já chega
+      // coalescido da origem (`?? row.data_manual ?? ''`, na montagem da lista),
+      // então nulo não chega até aqui hoje.
+      //
+      // O que continua ABERTO e não é resolvido por esta linha: item com data
+      // VAZIA some de todos os meses e fica fora do total — enquanto a aba NF-e
+      // decidiu o contrário para a mesma pergunta ("nota sem data aparece em
+      // qualquer mês", ver filtro-mes.ts). As duas telas discordam; alinhar é
+      // decisão a tomar, não conserto para fazer de passagem (achado [baixo] do
+      // Apolo, 25/08/2026). Latente: a coluna é `date` e recusaria string vazia.
       const okMes    = filtroMes === 'todos' || (i.data_emissao ?? '').startsWith(filtroMes)
       const okOrigem = filtroOrigem === 'todos' || i.origem === filtroOrigem || (filtroOrigem === 'nfe' && (i.origem === 'nfe' || i.origem === null))
       return okCentro && okMes && okOrigem

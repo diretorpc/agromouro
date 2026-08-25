@@ -89,13 +89,23 @@ acoplamento entre a função e o componente):
   segurou.** Medido em 25/08/2026, depois do conserto da 289122: das **4** notas
   que entraram por PDF, **3** vieram com a nota inteira em 5922 — 289122 (19
   itens), 288911 (1 item) e 289134 (4 itens). A quarta (12728, ZAMPIERI) só está
-  certa porque foi corrigida à mão na importação. **As três já foram corrigidas**
-  (dois arquivos em `supabase/correcoes/`, os dois conferidos em duas leituras
-  independentes de cada PDF). Nenhuma delas pôs nada no estoque; dinheiro certo nas
-  três. O botão conserta na hora da importação; ninguém conserta a leitura.
+  certa porque foi corrigida à mão na importação. **As três foram corrigidas e os
+  dois arquivos de `supabase/correcoes/` FORAM EXECUTADOS em 25/08/2026** — checado
+  depois por consulta direta: nenhum item com cfop 5922 restou no sistema. Cada PDF
+  foi conferido em duas leituras independentes antes do SQL. Nenhuma delas pôs nada
+  no estoque; dinheiro certo nas três. O botão conserta na hora da importação;
+  ninguém conserta a leitura.
   Opção discutida e **não** implementada: segunda leitura só da coluna CFOP quando
   nenhum item vier como compra, marcando como ilegível quando as duas discordarem.
   Para achar as próximas, use a segunda consulta do bloco SQL abaixo.
+- **Nota lida PARCIALMENTE errada escapa dos dois lados.** Se a IA acertar uma
+  linha e errar as outras 18, `precisaConfirmarEfeitoIncomum` não dispara (ele exige
+  que NENHUM item seja compra), então o aviso vermelho e o botão **não aparecem** —
+  e a varredura com `bool_and` também não acha a nota. É o formato que a leitura vai
+  produzir assim que acertar uma linha. A varredura já foi trocada para `bool_or`;
+  o lado da tela continua aberto (gatilho por "algum item fora de compra" custa
+  ruído em nota mista legítima, tipo "compre 20 leve 2" — decisão do Matheus).
+  Achado [médio] da 2ª rodada do Apolo.
 - **`cartoes/page.tsx` ainda usa `toISOString()`** para data padrão e mês do filtro
   — mesmo bug que o Financeiro acabou de perder. Fora do escopo deste ramo.
 - **KPIs do topo da aba NF-e continuam globais** com a lista mensal: "1 pendente"
@@ -123,13 +133,16 @@ select cfop, count(*) from itens_nfe
  where nota_fiscal_id = 'ab80e71b-0e0a-4bf1-8f31-759678195725'
  group by cfop order by cfop;
 
--- outras notas que entraram por PDF com a nota INTEIRA em 5922 — suspeitas do
--- mesmo erro de leitura
-select n.numero, n.emitente_nome, n.data_emissao, count(*) as itens
+-- notas de PDF contaminadas por 5922. bool_OR, nunca bool_and: nota em que a IA
+-- acertou uma linha e errou as outras não sai com bool_and — e também não
+-- dispara o aviso vermelho na tela. Esperado hoje: vazio.
+select n.numero, n.emitente_nome, n.data_emissao,
+       count(*) filter (where i.cfop = '5922') as itens_5922,
+       count(*)                                as itens_total
   from itens_nfe i join notas_fiscais n on n.id = i.nota_fiscal_id
  where n.arquivo_pdf is not null
  group by n.id, n.numero, n.emitente_nome, n.data_emissao
-having bool_and(i.cfop = '5922');
+having bool_or(i.cfop = '5922');
 ```
 
 ---

@@ -28,6 +28,10 @@
 --
 -- SEGURANÇA: o WHERE exige cfop = '5922'. Rodar duas vezes não faz nada na
 -- segunda, e nenhuma linha fora destas duas notas é tocada.
+--
+-- EXECUTADO em 25/08/2026 pelo Matheus. Saída: 288911 · 5102 · 1 · e
+-- 289134 · 5102 · 2 · 5405 · 2. Conferido depois por consulta direta: NENHUM
+-- item com cfop 5922 restou no sistema inteiro.
 -- ============================================================
 
 BEGIN;
@@ -52,14 +56,17 @@ UPDATE itens_nfe AS i
 
 COMMIT;
 
--- Conferência DEPOIS do COMMIT: o SQL Editor exibe o resultado do ÚLTIMO
--- statement. Para ensaiar sem gravar, troque o COMMIT por ROLLBACK.
+-- ─── Conferência, SEMPRE depois do COMMIT ───────────────────────────────────
+-- No ensaio com ROLLBACK estas consultas mostram o estado ANTES da correção
+-- (elas rodam fora da transação desfeita) — o oposto do "Esperado" abaixo. A
+-- conferência só vale depois do COMMIT.
 --
--- Esperado:
---   288911 · 5102 · 1
---   289134 · 5102 · 2
---   289134 · 5405 · 2
--- Nenhuma linha com 5922.
+-- A ordem importa: o SQL Editor destaca o resultado do ÚLTIMO statement, então o
+-- veredito de sim/não fica por último. Os dois primeiros são detalhe para o
+-- olho humano.
+
+-- 1. Detalhe por nota. Esperado:
+--    288911 · 5102 · 1 · | 289134 · 5102 · 2 · | 289134 · 5405 · 2
 SELECT n.numero, i.cfop, count(*) AS itens
   FROM itens_nfe i
   JOIN notas_fiscais n ON n.id = i.nota_fiscal_id
@@ -70,11 +77,26 @@ SELECT n.numero, i.cfop, count(*) AS itens
  GROUP BY n.numero, i.cfop
  ORDER BY n.numero, i.cfop;
 
--- E a varredura geral: nota de PDF com a nota INTEIRA em 5922 ainda por
--- corrigir. Depois desta correção tem que voltar VAZIO.
-SELECT n.numero, n.emitente_nome, n.data_emissao, count(*) AS itens
+-- 2. Varredura de notas de PDF contaminadas. `bool_or`, NUNCA `bool_and`: com
+--    `bool_and` uma nota em que a IA acertou UMA linha e errou as outras 18 não
+--    aparece — e ela também não dispara o aviso vermelho na tela, porque
+--    `precisaConfirmarEfeitoIncomum` exige que NENHUM item seja compra. É o
+--    formato que a leitura vai produzir assim que acertar uma linha (achado
+--    [médio] do Apolo, 2ª rodada). Nota de entrega futura de verdade (SYAGRI)
+--    entrou por XML e não tem arquivo_pdf, então não vira falso positivo.
+SELECT n.numero, n.emitente_nome, n.data_emissao,
+       count(*) FILTER (WHERE i.cfop = '5922') AS itens_5922,
+       count(*)                                AS itens_total
   FROM itens_nfe i
   JOIN notas_fiscais n ON n.id = i.nota_fiscal_id
  WHERE n.arquivo_pdf IS NOT NULL
  GROUP BY n.id, n.numero, n.emitente_nome, n.data_emissao
-HAVING bool_and(i.cfop = '5922');
+HAVING bool_or(i.cfop = '5922');
+
+-- 3. VEREDITO — último de propósito. Esperado: 0.
+--    Correção parcial não passa por aqui: qualquer linha remanescente conta.
+SELECT count(*) AS itens_ainda_em_5922
+  FROM itens_nfe i
+  JOIN notas_fiscais n ON n.id = i.nota_fiscal_id
+ WHERE n.arquivo_pdf IS NOT NULL
+   AND i.cfop = '5922';

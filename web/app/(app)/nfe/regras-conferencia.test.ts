@@ -135,6 +135,12 @@ describe('aplicarFamiliaATodos — o conserto de 1 clique da nota lida errado', 
     // O caso real de 25/08/2026: nota 289122 da RURALCENTRO, 19 itens, CFOP
     // 5102 e 5405 impressos no papel, TODOS lidos como 5922. Nenhum item
     // entrou no estoque.
+    //
+    // Repare que a saída é 5102 mesmo nas linhas cujo papel diz 5405: o botão
+    // grava o representante da família, não sabe o que está impresso. Sem efeito
+    // em dinheiro nem estoque (5102 e 5405 são os dois COMPRA_NORMAL), mas o
+    // rótulo do botão não pode PROMETER fidelidade ao papel — e não promete,
+    // está escrito no bloco vermelho (achado [médio] do Apolo).
     const itens = [
       { cfop: '5922', familia: 'faturamento' },
       { cfop: '5922', familia: 'faturamento' },
@@ -229,13 +235,4 @@ describe('aplicarFamiliaATodos — o botão não passa por cima da trava', () =>
     expect(aplicarFamiliaATodos([trancado], COMPRA)[0]).toBe(trancado)
   })
 
-  it('a nota 289122 real: 5922 vira 5102, e não 5405 — o botão não sabe o que o papel diz', () => {
-    // Achado [médio] do Apolo: o teste do "5405 não vira 5102" cobre o item que
-    // a IA ACERTOU. No caso que o botão existe para consertar, a IA errou tudo,
-    // e o representante da família é o único código disponível. Sem efeito em
-    // dinheiro nem estoque (5102 e 5405 são os dois COMPRA_NORMAL), mas o botão
-    // não pode PROMETER fidelidade ao papel — por isso este teste existe.
-    expect(aplicarFamiliaATodos([{ cfop: '5922', familia: 'faturamento' }], COMPRA))
-      .toEqual([{ cfop: '5102', familia: 'compra' }])
-  })
 })
