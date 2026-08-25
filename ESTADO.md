@@ -22,7 +22,7 @@
 
 ---
 
-## 🔨 Exportar Excel na aba Cartões — 25/08/2026 — **PRONTO, não commitado**
+## ✅ Exportar Excel na aba Cartões — 25/08/2026 — **NO AR** (PR #71)
 
 Botão "Exportar Excel" no cabeçalho de `/cartoes`. Exporta o que está na tela
 (respeita filtro de mês e de cartão), como `.xlsx` de verdade: data como data,
@@ -56,6 +56,27 @@ select count(*) from lancamentos_financeiros where origem in ('cartao','manual')
 lançamento manual e o "mês atual" do filtro com `new Date().toISOString()`, que é
 UTC — depois das 21h no Brasil o formulário nasce com o dia seguinte, e num dia 31
 joga o gasto para o mês errado. Bug pré-existente, achado na revisão do Apolo.
+
+**Três achados da 3ª revisão que subiram sem correção** (a feature funciona; isto
+é endurecimento, e o Matheus mandou subir mesmo assim em 25/08):
+
+1. **A regra de truncamento é o único pedaço da feature sem teste** — e ela é
+   justamente o alarme contra perda silenciosa de dado. Dois mutantes sobreviveram
+   à suíte inteira: trocar `.limit(LIMITE_LANCAMENTOS)` por `.limit(500)` passa
+   225/225 (aí a tela carrega 500, descarta o resto e nunca avisa); apagar a 2ª
+   testemunha (`|| lancamentos.length >= LIMITE_LANCAMENTOS`) também passa.
+   Conserto: extrair `estaTruncado(count, carregados, limite)` para `exportar.ts`
+   como função pura e testar — é onde já mora a lógica testável desta tela.
+2. **Com EXATAMENTE 1000 lançamentos e `count` funcionando, a tela alarma à toa** e
+   o arquivo nasce `parcial` — sendo que o `count` prova que está completo. A
+   informação que desfaria o engano é jogada fora no `?? carregados.length`.
+   Conserto: guardar o `count` como `number | null` e só cair na 2ª testemunha
+   quando ele for nulo.
+3. **Se a busca de fazendas falhar, o botão morre mudo** — `fazenda-context.tsx`
+   engole o erro, deixa `fazendaAtiva` nulo para sempre e não tenta de novo. A
+   tabela aparece com 458 linhas, o botão fica desabilitado e o `title` continua
+   prometendo "Baixar 458 lançamentos em Excel". Só F5 resolve. Falhar fechado
+   está certo; falhar mudo, não. Conserto: uma linha no `title`.
 
 ---
 
