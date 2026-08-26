@@ -27,6 +27,9 @@ import { supabase } from '@/lib/supabase'
 import { api } from '@/lib/api'
 import { useFazenda } from '@/context/fazenda-context'
 import { ConferenciaPdf } from './conferencia-pdf'
+import {
+  TODOS_OS_MESES, mesDaNota, mesPadraoDaLista, mesesDisponiveis, notaVisivel, rotuloDoMes,
+} from './filtro-mes'
 import type { NotaFiscal, ItemNfe, ResultadoImportacaoXml } from '@/lib/types'
 
 const STATUS_STYLE: Record<string, string> = {
@@ -106,14 +109,22 @@ export default function NfePage() {
   // filtros
   const [busca, setBusca] = useState('')
   const [filtroStatus, setFiltroStatus] = useState<string>('todos')
+  // `null` = ainda não decidido. Quem decide é `mesPadraoDaLista`, depois da
+  // primeira carga (ou o `?mes=` da URL, que roda antes e ganha).
+  const [filtroMes, setFiltroMes] = useState<string | null>(null)
 
-  async function loadNotas() {
+  // `mesPreferido` força o filtro a ir para um mês específico — usado depois de
+  // importar um PDF, para a lista abrir no mês da nota que acabou de entrar.
+  async function loadNotas(mesPreferido?: string) {
     const { data } = await supabase
       .from('notas_fiscais')
       .select('*')
       .order('data_emissao', { ascending: false })
-    setNotas((data ?? []) as NotaFiscal[])
+    const lista = (data ?? []) as NotaFiscal[]
+    setNotas(lista)
+    setFiltroMes(atual => mesPreferido ?? atual ?? mesPadraoDaLista(lista))
     setLoading(false)
+    return lista
   }
 
   useEffect(() => { loadNotas() }, [])
@@ -122,8 +133,11 @@ export default function NfePage() {
     const params = new URLSearchParams(window.location.search)
     const q = params.get('q')
     const status = params.get('status')
+    const mes = params.get('mes')
     if (q !== null) setBusca(q)
     if (status !== null) setFiltroStatus(status)
+    // Roda antes de `loadNotas` resolver, então vence o padrão calculado lá.
+    if (mes !== null && (mes === TODOS_OS_MESES || /^\d{4}-\d{2}$/.test(mes))) setFiltroMes(mes)
   }, [])
 
   async function openNota(nota: NotaFiscal) {
@@ -181,6 +195,13 @@ export default function NfePage() {
     if (!fazendaAtiva) return
     setSalvandoNF(true)
     setAddErro('')
+    // Pistas para achar a nota recém-gravada e levar a lista até o mês dela.
+    // O modo PDF recebe a data pronta do componente de conferência; XML e manual
+    // não têm esse caminho, e sem isto o filtro de mês esconderia justamente a
+    // nota que acabou de entrar sempre que ela for de mês passado.
+    let dataManual:      string | null = null
+    let dataXml:         string | null = null
+    let numeroImportado: string | null = null
     try {
       if (addMode === 'xml' && xmlFileContent) {
         try {
@@ -194,11 +215,14 @@ export default function NfePage() {
             setAddErro(`Esta nota já está no sistema (entrou em ${dataFmt}).`)
             return
           }
+          numeroImportado = resultado.numero
+          dataXml         = resultado.dataEmissao ?? null
         } catch (err) {
           setAddErro(err instanceof Error ? err.message : 'Erro ao importar a nota.')
           return
         }
       } else if (addMode === 'manual') {
+        dataManual = manualForm.data_emissao
         const valor = parseFloat(manualForm.valor_total) || 0
         const { data: nota, error: errManual } = await supabase.from('notas_fiscais').insert({
           fazenda_id: fazendaAtiva.id,
@@ -234,7 +258,15 @@ export default function NfePage() {
       setXmlFileName(null)
       setXmlError('')
       setManualForm({ numero: '', emitente_nome: '', emitente_cnpj: '', data_emissao: '', valor_total: '' })
-      loadNotas()
+      const lista = await loadNotas()
+      // A data vem da resposta da API (XML) ou do formulário (manual). O
+      // fallback pelo número só existe para API antiga, que não devolve
+      // `dataEmissao`: nesse caso, número repetido em fornecedores diferentes
+      // faz desistir do salto em vez de chutar o mês da nota errada.
+      const homonimas = numeroImportado ? lista.filter(n => n.numero === numeroImportado) : []
+      const mes = mesDaNota(dataManual ?? dataXml)
+        ?? (homonimas.length === 1 ? mesDaNota(homonimas[0].data_emissao) : null)
+      if (mes) { setFiltroMes(mes); setUrlParam('mes', mes, '') }
     } finally {
       setSalvandoNF(false)
     }
@@ -242,21 +274,33 @@ export default function NfePage() {
 
   const canSave = addMode === 'xml' ? !!xmlFileContent : !!(manualForm.numero && manualForm.emitente_nome && manualForm.data_emissao)
 
-  const notasFiltradas = useMemo(() => {
-    const buscaLower = busca.trim().toLowerCase()
-    return notas.filter(nota => {
-      if (buscaLower) {
-        const hitNumero    = nota.numero?.toLowerCase().includes(buscaLower)
-        const hitEmitente  = nota.emitente_nome?.toLowerCase().includes(buscaLower)
-        const hitCnpj      = nota.emitente_cnpj?.toLowerCase().includes(buscaLower)
-        if (!hitNumero && !hitEmitente && !hitCnpj) return false
-      }
-      if (filtroStatus !== 'todos' && nota.status !== filtroStatus) return false
-      return true
-    })
-  }, [notas, busca, filtroStatus])
+  // A peneira mora em filtro-mes.ts, testada de mesa. Ela vivia aqui dentro, e
+  // foi exatamente onde a busca virou refém do mês sem ninguém notar.
+  const notasFiltradas = useMemo(
+    () => notas.filter(nota => notaVisivel(nota, { busca, status: filtroStatus, mes: filtroMes })),
+    [notas, busca, filtroStatus, filtroMes],
+  )
 
-  const filtroAtivo = busca.trim() !== '' || filtroStatus !== 'todos'
+  // Enquanto há busca, o mês está desligado — e a tela precisa DIZER isso, senão
+  // o dono vê "1 de 135" e conclui que só existe uma nota daquele fornecedor.
+  const buscando = busca.trim() !== ''
+
+  const meses = useMemo(() => mesesDisponiveis(notas, filtroMes ?? undefined), [notas, filtroMes])
+
+  // "Tem coisa escondida?" em vez de "o filtro está diferente do padrão": o mês
+  // agora quase sempre esconde alguma nota, e é isso que o contador e o botão
+  // Limpar precisam anunciar.
+  const filtroAtivo = busca.trim() !== '' || filtroStatus !== 'todos' || notasFiltradas.length !== notas.length
+
+  // Limpar = mostrar tudo, inclusive os outros meses. Voltar para o mês padrão
+  // aqui seria um botão que não muda nada quando o mês é justamente o que está
+  // escondendo a nota procurada.
+  function limparFiltros() {
+    setBusca('')
+    setFiltroStatus('todos')
+    setFiltroMes(TODOS_OS_MESES)
+    window.history.replaceState(null, '', `${window.location.pathname}?mes=${TODOS_OS_MESES}`)
+  }
 
   const valorTotalNFs = notas.reduce((s, n) => s + (n.valor_total ?? 0), 0)
   const pendentes = notas.filter(n => n.status === 'recebida' || n.status === 'processando').length
@@ -384,6 +428,25 @@ export default function NfePage() {
                 className="pl-8 h-9"
               />
             </div>
+            {/* A lista carrega TODAS as notas (135 em 25/08/2026) e ordena por
+                data de emissão. Sem corte por mês, uma nota nova de mês passado
+                nasce na posição 69 e parece perdida. */}
+            <div className="flex items-center gap-1.5">
+              <select
+                aria-label="Filtrar por mês de emissão"
+                className={SELECT_CLASS.replace('w-full', 'w-auto') + ' min-w-[160px]'}
+                value={filtroMes ?? TODOS_OS_MESES}
+                onChange={e => { setFiltroMes(e.target.value); setUrlParam('mes', e.target.value, '') }}
+              >
+                <option value={TODOS_OS_MESES}>{rotuloDoMes(TODOS_OS_MESES)}</option>
+                {meses.map(m => (
+                  <option key={m} value={m}>{rotuloDoMes(m)}</option>
+                ))}
+              </select>
+              {buscando && filtroMes && filtroMes !== TODOS_OS_MESES && (
+                <span className="text-xs text-muted-foreground">a busca está olhando todos os meses</span>
+              )}
+            </div>
             <select
               aria-label="Filtrar por status"
               className={SELECT_CLASS.replace('w-full', 'w-auto') + ' min-w-[140px]'}
@@ -401,7 +464,7 @@ export default function NfePage() {
                 variant="ghost"
                 size="sm"
                 className="h-9 text-muted-foreground"
-                onClick={() => { setBusca(''); setFiltroStatus('todos'); window.history.replaceState(null, '', window.location.pathname) }}
+                onClick={limparFiltros}
               >
                 Limpar
               </Button>
@@ -433,13 +496,16 @@ export default function NfePage() {
           ) : notasFiltradas.length === 0 ? (
             <div className="py-10">
               <div className="flex flex-col items-center gap-2 text-center">
-                <p className="text-sm text-muted-foreground">Nenhuma nota fiscal corresponde aos filtros aplicados.</p>
+                <p className="text-sm text-muted-foreground">
+                  Nenhuma nota fiscal corresponde aos filtros aplicados
+                  {filtroMes && filtroMes !== TODOS_OS_MESES ? ` (mês: ${rotuloDoMes(filtroMes)})` : ''}.
+                </p>
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => { setBusca(''); setFiltroStatus('todos') }}
+                  onClick={limparFiltros}
                 >
-                  Limpar filtros
+                  Ver todos os meses
                 </Button>
               </div>
             </div>
@@ -671,7 +737,16 @@ export default function NfePage() {
               isso o DialogFooter lá embaixo some quando ele está ativo. */}
           {addMode === 'pdf' ? (
             <ConferenciaPdf
-              onGravada={() => { setAddDialog(false); loadNotas() }}
+              // Leva a lista até o mês da nota que acabou de entrar. Sem isto o
+              // filtro de mês repetiria — agora por conta própria — o sumiço que
+              // ele veio consertar: nota de julho importada em agosto ficaria
+              // fora da vista logo depois de gravada.
+              onGravada={dataEmissao => {
+                setAddDialog(false)
+                const mes = mesDaNota(dataEmissao) ?? TODOS_OS_MESES
+                setUrlParam('mes', mes, '')
+                loadNotas(mes)
+              }}
               onCancelar={() => setAddDialog(false)}
             />
           ) : addMode === 'xml' ? (
