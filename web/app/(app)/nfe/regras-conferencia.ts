@@ -275,6 +275,18 @@ function cnpjNormalizado(v: string): string {
 // Apolo, 6ª rodada (27/08/2026). Na dúvida (API velha, sem `valor_total`, ou a
 // sentinela -1 do fallback de corrida), responde "é a mesma": travar de mais
 // custa um clique, travar de menos custa gasto e estoque em dobro.
+// Quando NÃO dá para comparar (sentinela -1 do fallback de corrida, ou API que
+// não devolveu nem valor nem data), `pareceMesmoDocumento` responde "é a mesma"
+// por IGNORÂNCIA, não por evidência. É a direção segura para TRAVAR — mas não
+// serve de base para uma caixa que LIBERA: o banner afirma "mesmo número, mesmo
+// fornecedor, mesma data e mesmo valor", e duas dessas quatro ninguém conferiu.
+// Achado [médio] do Apolo, 9ª rodada (27/08/2026): a tela pedia uma decisão de
+// dinheiro em cima de uma afirmação inventada, e escondia a evidência.
+export function sabeCompararDocumento(gravada: NotaGravada): boolean {
+  const temValor = typeof gravada.valor_total === 'number' && gravada.valor_total >= 0
+  return temValor || !!gravada.data_emissao
+}
+
 export function pareceMesmoDocumento(
   gravada: NotaGravada,
   // O que a IA LEU neste PDF, nunca o que o dono digitou depois. Valor e data
@@ -399,6 +411,13 @@ export function travaDeDuplicidade(params: {
   // vale. A tela não monta chave nenhuma: ela só repassa o que esta função diz.
   chaveDeConfirmacao: string
   confirmacaoValendo: boolean
+  // A gêmea que ESTÁ sendo acusada de ser o mesmo documento — o banner vermelho
+  // precisa dela para imprimir fornecedor, data e valor. Sem isso a tela acusa e
+  // esconde a prova (achado [médio] do Apolo, 9ª rodada).
+  oMesmoDocumento:    NotaGravada | null
+  // true quando o veredicto "é o mesmo documento" veio de IGNORÂNCIA. A caixa
+  // de confirmação NÃO é oferecida aqui: a saída certa é abrir a nota gravada.
+  veredictoPorIgnorancia: boolean
   // true quando a gêmea do outro modelo É esta nota — mesmo documento, com o
   // Tipo diferente. Quem trava é este campo.
   ehOMesmoDocumento:  boolean
@@ -417,7 +436,7 @@ export function travaDeDuplicidade(params: {
     numeroNormalizado(params.atual.numero),
     cnpjNormalizado(params.atual.emitenteCnpj),
   ].join('|')
-  const confirmacaoValendo = params.confirmadoPara === chaveDeConfirmacao
+  const confirmouEstaSituacao = params.confirmadoPara === chaveDeConfirmacao
   const outro = modeloAtual === 'nfe' ? 'nfse' : 'nfe'
   const lido = params.lido ?? null
 
@@ -460,6 +479,14 @@ export function travaDeDuplicidade(params: {
   // frase certa é "você trocou o Tipo"; quando foi a IA, é "confira o Tipo".
   const travadoPeloTipo = ehOMesmoDocumento && !!lido && modeloAtual !== lido.modelo
 
+  // A confirmação não vale quando o veredicto veio de ignorância — e isso é
+  // decidido AQUI, não no JSX: mesmo que a tela renderize a caixa por engano,
+  // marcá-la não libera nada.
+  const veredictoPorIgnorancia = ehOMesmoDocumento
+    && !!gemeoNoOutroModelo
+    && !sabeCompararDocumento(gemeoNoOutroModelo)
+  const confirmacaoValendo = confirmouEstaSituacao && !veredictoPorIgnorancia
+
   return {
     gemeoNoModeloAtual,
     // O aviso da gêmea cala em dois casos, e os dois são de não se contradizer:
@@ -479,6 +506,8 @@ export function travaDeDuplicidade(params: {
       || (ehOMesmoDocumento && !confirmacaoValendo),
     chaveDeConfirmacao,
     confirmacaoValendo,
+    oMesmoDocumento: ehOMesmoDocumento ? gemeoNoOutroModelo : null,
+    veredictoPorIgnorancia,
     ehOMesmoDocumento,
     travadoPeloTipo,
     modeloDoGemeoDesconhecido: !temForma,
@@ -498,7 +527,16 @@ export function podeGravar(params: {
   quantidadeItens:    number
   semCfop:            number
   familias:           readonly unknown[] | null | undefined
-  duplicataValendo:   unknown
+  // O OBJETO que `travaDeDuplicidade` devolve, não um booleano solto. Com
+  // `duplicataValendo: unknown` (como era) o parâmetro aceitava o próprio `dup`
+  // inteiro — sempre truthy — e trocar por `boolean` ainda deixava passar
+  // qualquer um dos 6 booleanos irmãos daquele retorno: `dup.confirmacaoValendo`
+  // no lugar de `dup.duplicataValendo` matava a trava inteira com `tsc` limpo e
+  // a suíte verde (achado [médio] do Apolo, 9ª rodada, 27/08/2026).
+  //
+  // Recebendo o objeto, não existe campo para trocar — mesma doutrina que já
+  // fechou o fio de `travaDeDuplicidade` na 8ª rodada.
+  trava: { duplicataValendo: boolean }
   gravando:           boolean
   // true quando a nota inteira caiu fora de "compra normal" E o dono ainda não
   // confirmou que é isso mesmo. Ver precisaConfirmarEfeitoIncomum.
@@ -522,7 +560,7 @@ export function podeGravar(params: {
 }): boolean {
   if (params.gravando) return false
   if (params.quantidadeItens === 0) return false
-  if (params.duplicataValendo) return false
+  if (params.trava.duplicataValendo) return false
   if (params.semCfop > 0 && (params.familias?.length ?? 0) > 0) return false
   if (params.efeitoIncomumPendente) return false
   if (params.linhasSemQuantidade > 0) return false

@@ -409,7 +409,6 @@ export function ConferenciaPdf(
     jaExisteLegado: leitura.jaExiste,
     confirmadoPara: docDiferenteConfirmadoPara,
   })
-  const duplicataValendo = dup.duplicataValendo
   // API antiga não manda `familias`: sem a lista não há como oferecer o conserto,
   // e um botão que não conserta nada é pior que nenhum botão.
   const temFamiliaCompra = (leitura.familias ?? []).some(f => f.chave === 'compra')
@@ -423,7 +422,7 @@ export function ConferenciaPdf(
       {/* Os três avisos de duplicidade saem todos de `travaDeDuplicidade`, que é
           função pura e testada — a decisão morava aqui dentro e foi de onde
           saíram os dois achados [alto] da 5ª rodada do Apolo (27/08/2026). */}
-      {duplicataValendo && !dup.ehOMesmoDocumento && (
+      {dup.duplicataValendo && !dup.ehOMesmoDocumento && (
         <div className="rounded-md bg-red-50 text-red-700 px-3 py-2 text-sm">
           <strong>Esta nota já está no sistema</strong>
           {dup.modeloDoGemeoDesconhecido ? '' : ` como ${nota.modelo === 'nfe' ? 'nota de produto (NF-e)' : 'nota de serviço (NFS-e)'}`}
@@ -444,11 +443,19 @@ export function ConferenciaPdf(
           <strong>{dup.travadoPeloTipo
             ? 'Você trocou o Tipo, mas esta nota já está gravada com o tipo original'
             : `Esta nota já está gravada como ${dup.modeloDoOutroGemeo === 'nfe' ? 'nota de produto (NF-e)' : 'nota de serviço (NFS-e)'}`}</strong>
-          {' '}— mesmo número, mesmo fornecedor, mesma data e mesmo valor. É o mesmo documento.
+          {dup.veredictoPorIgnorancia
+            ? ' — mesmo número e mesmo fornecedor. Não consegui conferir data nem valor da nota já gravada, então trato como sendo a mesma.'
+            : ' — mesmo número, mesmo fornecedor, mesma data e mesmo valor. É o mesmo documento.'}
+          {dup.oMesmoDocumento?.data_emissao
+            ? ` A gravada entrou em ${ddmmaaaa(dup.oMesmoDocumento.data_emissao)}`
+              + (typeof dup.oMesmoDocumento.valor_total === 'number' && dup.oMesmoDocumento.valor_total >= 0
+                  ? `, de ${brl(dup.oMesmoDocumento.valor_total)}.` : '.')
+            : ''}
           {dup.travadoPeloTipo ? '' : ' O campo "Tipo" desta leitura provavelmente saiu errado.'}
-          {' '}Gravar assim entraria pela segunda vez, com estoque e gasto contados em dobro.
-          {' '}Se a nota já gravada é que está com o tipo errado, <strong>apague ela primeiro</strong>
-          {' '}na aba NF-e.
+          {dup.confirmacaoValendo
+            ? ' Você confirmou que são documentos diferentes — a gravação está liberada.'
+            : ' Gravar assim entraria pela segunda vez, com estoque e gasto contados em dobro.'
+              + ' Se a nota já gravada é que está com o tipo errado, apague ela primeiro na aba NF-e.'}
           {/* A saída de um clique. Sem ela, o par legítimo NF-e/NFS-e emitido no
               MESMO dia com o MESMO valor (peças e mão de obra rachados meio a
               meio) ficava sem caminho nenhum: os DOIS lados do campo Tipo
@@ -457,6 +464,12 @@ export function ConferenciaPdf(
               conferir o número (que está certo). Achado [médio] do Apolo, 8ª
               rodada (27/08/2026): "travar de mais custa um clique" só é verdade
               se o clique existir, e não existia. */}
+          {/* A caixa só existe quando há EVIDÊNCIA. Quando o veredicto veio de
+              ignorância (sentinela da corrida, gêmea sem data e sem valor), a
+              saída certa é abrir a nota gravada — não um clique que libera
+              dinheiro em cima de uma afirmação que ninguém conferiu. A trava de
+              verdade está na função pura: marcar aqui não liberaria mesmo. */}
+          {!dup.veredictoPorIgnorancia && (
           <label className="mt-2 flex items-center gap-2">
             <input
               type="checkbox"
@@ -465,6 +478,7 @@ export function ConferenciaPdf(
             />
             <span>Conferi no papel: são <strong>dois documentos diferentes</strong> com o mesmo número.</span>
           </label>
+          )}
         </div>
       )}
 
@@ -850,7 +864,7 @@ export function ConferenciaPdf(
           disabled={!podeGravar({
             quantidadeItens: nota.itens.length, semCfop, familias: leitura.familias,
             linhasSemQuantidade: semQuantidade,
-            duplicataValendo, gravando,
+            trava: dup, gravando,
             efeitoIncomumPendente: efeitoIncomum && !confirmouEfeito,   // obrigatório: ver regras-conferencia.ts
           })}
           title={semCfop > 0 && (leitura.familias?.length ?? 0) > 0 ? 'Escolha o que é cada item marcado em amarelo' : undefined}

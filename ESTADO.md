@@ -269,10 +269,38 @@ objeto" — `lido: nota` ainda compilaria. Não elimina, mas põe o erro onde se
 
 **E uma lição aplicada antes de virar achado:** a caixa do item 36 nasceu como booleano com
 reset à mão no JSX — exatamente o `identidadeEditada` da 5ª rodada. Virou **chave**
-(`tipo|número|CNPJ`) antes de subir: a confirmação expira sozinha, e não existe reset para
-alguém esquecer de escrever.
+(`tipo|número|CNPJ`) antes de subir: a confirmação expira sozinha quando o dono mexe em tipo,
+número ou CNPJ. **O reset por troca de ARQUIVO continua à mão** em
+`escolherArquivo` — a chave matou um dos dois resets, não os dois.
 
-**Padrão que ficou claro em 8 rodadas, e a lição que ficou:** 3 dos [alto] nasceram em
+**9ª rodada do Apolo — nenhum [alto], e o veredito dele foi "pronta para PR":**
+
+41. **[médio] O fio `podeGravar` ainda era trocável.** `duplicataValendo` estava tipado
+    `unknown` (herança do PR #67): aceitava o objeto `dup` inteiro — sempre truthy — e
+    trocar por `boolean` ainda deixaria passar qualquer um dos 6 booleanos irmãos.
+    `dup.confirmacaoValendo` no lugar de `dup.duplicataValendo` matava a trava inteira com
+    `tsc` limpo e a suíte verde. Agora `podeGravar` recebe **o objeto**, não o campo —
+    mesma doutrina do item 38.
+42. **[médio] A caixa era oferecida também quando o veredicto veio de IGNORÂNCIA.** Com a
+    sentinela da corrida, `pareceMesmoDocumento` responde "é a mesma" por não saber — e o
+    banner afirmava "mesmo número, mesmo fornecedor, mesma data e mesmo valor", quatro
+    coisas das quais duas ninguém conferiu. Em cima disso, um clique liberava a gravação.
+    Agora `veredictoPorIgnorancia` esconde a caixa **e** invalida a confirmação na função
+    pura, então marcar não libera nem se a tela errar. O banner também passou a IMPRIMIR
+    a data e o valor da nota acusada — antes ele acusava e escondia a prova.
+43. **[baixo] Depois de marcar, a tela se contradizia** — botão liberado e texto ainda
+    dizendo "gravar assim conta em dobro, apague a outra primeiro". Texto agora muda.
+44. **[baixo] A marca nominal caía com um caractere** (`: true` → `?: true`) sem nada
+    acusar. Ganhou teste com `@ts-expect-error`: enfraquecer a marca vira TS2578. A guarda
+    guarda a si mesma.
+
+**Achado que o Apolo levantou e eu NÃO consertei, de propósito:** a guarda de
+arredondamento derruba linha com quantidade < 0,5 **e** 4ª casa decimal. Ele mediu 23
+combinações reais do projeto — adubo, ureia, defensivo, diesel, semente, calcário, SYAGRI
+— e **todas passam com deriva zero**. Ele mesmo escreveu "eu não mexeria sem um caso real
+na mão", e eu concordo: quando derruba, a linha é contada e vira aviso na tela.
+
+**Padrão que ficou claro em 9 rodadas, e a lição que ficou:** 3 dos [alto] nasceram em
 comportamento novo de TELA, e o `web` não tem testing-library — dá para arrancar uma trava
 do JSX com a suíte verde e o `tsc` limpo. **A resposta barata não foi instalar
 testing-library: foi tirar a decisão do JSX.** `travaDeDuplicidade` prova de mesa
@@ -280,8 +308,9 @@ defeitos que rodadas de leitura não tinham pegado — conte quantos com
 `grep -c "it(" web/app/\(app\)/nfe/regras-conferencia.test.ts`, porque número
 escrito aqui apodrece (esta frase já dizia "9" quando eram 20). Mesmo padrão de
 `salvar-talhao.ts` e `deletar-linha.ts`. O que ainda não tem teste é o que
-sobrou no JSX: o texto dos banners. **A LIGAÇÃO entre o JSX e as funções puras
-deixou de ser buraco na 8ª rodada** — ver o item 38.
+sobrou no JSX: o texto dos banners. **UM dos fios entre o JSX e as funções
+puras deixou de ser buraco na 8ª rodada** (item 38); os outros só fecharam na 9ª
+(item 41). Essa frase já disse "a ligação" e estava exagerando.
 
 **Como medir a exposição das linhas já gravadas** (duas classes, não uma — sem
 tolerância o número conta arredondamento honesto como defeito):

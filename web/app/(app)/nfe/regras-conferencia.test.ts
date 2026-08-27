@@ -47,7 +47,7 @@ describe('cfopAposEscolha — trocar de família preserva o dígito de estado (a
 })
 
 describe('podeGravar', () => {
-  const BASE = { quantidadeItens: 2, semCfop: 0, familias: [COMPRA, ENTREGA_FATURADA, FATURAMENTO, BONIFICACAO], duplicataValendo: null, gravando: false, linhasSemQuantidade: 0, efeitoIncomumPendente: false }
+  const BASE = { quantidadeItens: 2, semCfop: 0, familias: [COMPRA, ENTREGA_FATURADA, FATURAMENTO, BONIFICACAO], trava: { duplicataValendo: false }, gravando: false, linhasSemQuantidade: 0, efeitoIncomumPendente: false }
 
   it('caso comum — tudo certo, pode gravar', () => {
     expect(podeGravar(BASE)).toBe(true)
@@ -62,7 +62,7 @@ describe('podeGravar', () => {
   })
 
   it('duplicata valendo: trava ate o dono corrigir a identificacao', () => {
-    expect(podeGravar({ ...BASE, duplicataValendo: true })).toBe(false)
+    expect(podeGravar({ ...BASE, trava: { duplicataValendo: true } })).toBe(false)
   })
 
   it('item sem cfop COM familias disponiveis: trava — decidir "e compra" por omissao e o caminho do gasto dobrado', () => {
@@ -114,7 +114,7 @@ describe('precisaConfirmarEfeitoIncomum — a nota inteira fora de "compra"', ()
 describe('podeGravar — confirmacao de efeito incomum', () => {
   const base = {
     quantidadeItens: 3, semCfop: 0, familias: [{ chave: 'compra' }],
-    duplicataValendo: null, gravando: false, linhasSemQuantidade: 0,
+    trava: { duplicataValendo: false }, gravando: false, linhasSemQuantidade: 0,
     efeitoIncomumPendente: false,
   }
 
@@ -250,7 +250,7 @@ describe('pendenciasDeCfop — NFS-e não tem CFOP', () => {
     expect(p).toEqual({ semCfop: 0, efeitoIncomum: false })
     expect(podeGravar({
       quantidadeItens: 1, semCfop: p.semCfop, familias: [{ chave: 'compra' }],
-      duplicataValendo: null, gravando: false, efeitoIncomumPendente: p.efeitoIncomum,
+      trava: { duplicataValendo: false }, gravando: false, efeitoIncomumPendente: p.efeitoIncomum,
       linhasSemQuantidade: 0,
     })).toBe(true)
   })
@@ -261,7 +261,7 @@ describe('pendenciasDeCfop — NFS-e não tem CFOP', () => {
     expect(p).toEqual({ semCfop: 1, efeitoIncomum: true })
     expect(podeGravar({
       quantidadeItens: 1, semCfop: p.semCfop, familias: [{ chave: 'compra' }],
-      duplicataValendo: null, gravando: false, efeitoIncomumPendente: p.efeitoIncomum,
+      trava: { duplicataValendo: false }, gravando: false, efeitoIncomumPendente: p.efeitoIncomum,
       linhasSemQuantidade: 0,
     })).toBe(false)
   })
@@ -367,7 +367,7 @@ describe('linhasSemQuantidade — nota de produto exige quantidade impressa', ()
     expect(linhasSemQuantidade('nfe', itens)).toBe(1)
     expect(podeGravar({
       quantidadeItens: 1, semCfop: 0, familias: [{ chave: 'compra' }],
-      duplicataValendo: null, gravando: false, efeitoIncomumPendente: false,
+      trava: { duplicataValendo: false }, gravando: false, efeitoIncomumPendente: false,
       linhasSemQuantidade: linhasSemQuantidade('nfe', itens),
     })).toBe(false)
   })
@@ -377,7 +377,7 @@ describe('linhasSemQuantidade — nota de produto exige quantidade impressa', ()
     expect(linhasSemQuantidade('nfse', itens)).toBe(0)
     expect(podeGravar({
       quantidadeItens: 1, semCfop: 0, familias: [{ chave: 'compra' }],
-      duplicataValendo: null, gravando: false, efeitoIncomumPendente: false,
+      trava: { duplicataValendo: false }, gravando: false, efeitoIncomumPendente: false,
       linhasSemQuantidade: linhasSemQuantidade('nfse', itens),
     })).toBe(true)
   })
@@ -396,7 +396,7 @@ describe('linhasSemQuantidade — nota de produto exige quantidade impressa', ()
     // @ts-expect-error — faltam `linhasSemQuantidade` e `efeitoIncomumPendente`
     expect(() => podeGravar({
       quantidadeItens: 1, semCfop: 0, familias: [{ chave: 'compra' }],
-      duplicataValendo: null, gravando: false,
+      trava: { duplicataValendo: false }, gravando: false,
     })).not.toThrow()
   })
 })
@@ -687,5 +687,70 @@ describe('congelarLeitura', () => {
 
   it('carimba a marca que o compilador cobra', () => {
     expect(congelarLeitura(leitura).lidaPelaIA).toBe(true)
+  })
+})
+
+describe('travaDeDuplicidade — veredicto por IGNORÂNCIA não vira caixa', () => {
+  // A sentinela -1 e a gêmea sem data nem valor fazem `pareceMesmoDocumento`
+  // responder "é a mesma" por NÃO SABER. Isso é direção segura para TRAVAR, e
+  // não serve de base para um clique que LIBERA — o banner afirma quatro coisas
+  // e duas ninguém conferiu. Achado [médio] do Apolo, 9ª rodada (27/08/2026).
+  const LIDO = {
+    modelo: 'nfe' as const, numero: '500', emitenteCnpj: '040',
+    valorTotal: 1000, dataEmissao: '2026-08-10', lidaPelaIA: true as const,
+  }
+  const NA_TELA = { modelo: 'nfse' as const, numero: '500', emitenteCnpj: '040' }
+  const CEGA = { id: '', numero: '500', data_emissao: '', emitente_nome: 'X', valor_total: -1 }
+
+  it('marcar a caixa NÃO libera quando o veredicto veio de ignorância', () => {
+    const r = travaDeDuplicidade({ atual: NA_TELA, lido: LIDO,
+      notasNoBanco: { nfe: CEGA, nfse: null }, jaExisteLegado: CEGA,
+      confirmadoPara: 'nfse|500|040' })
+    expect(r.veredictoPorIgnorancia).toBe(true)
+    expect(r.confirmacaoValendo).toBe(false)
+    expect(r.duplicataValendo).toBe(true)
+  })
+
+  it('com evidência de verdade, a caixa volta a valer', () => {
+    const COMPLETA = { ...CEGA, data_emissao: '2026-08-10', valor_total: 1000 }
+    const r = travaDeDuplicidade({ atual: NA_TELA, lido: LIDO,
+      notasNoBanco: { nfe: COMPLETA, nfse: null }, jaExisteLegado: COMPLETA,
+      confirmadoPara: 'nfse|500|040' })
+    expect(r.veredictoPorIgnorancia).toBe(false)
+    expect(r.confirmacaoValendo).toBe(true)
+    expect(r.duplicataValendo).toBe(false)
+  })
+
+  it('só a DATA já é evidência suficiente para a caixa existir', () => {
+    const SO_DATA = { ...CEGA, data_emissao: '2026-08-10', valor_total: undefined }
+    const r = travaDeDuplicidade({ atual: NA_TELA, lido: LIDO,
+      notasNoBanco: { nfe: SO_DATA, nfse: null }, jaExisteLegado: SO_DATA,
+      confirmadoPara: 'nfse|500|040' })
+    expect(r.veredictoPorIgnorancia).toBe(false)
+  })
+
+  it('o banner recebe a gêmea acusada, para poder mostrar a evidência', () => {
+    const COMPLETA = { ...CEGA, data_emissao: '2026-08-10', valor_total: 1000 }
+    const r = travaDeDuplicidade({ atual: NA_TELA, lido: LIDO,
+      notasNoBanco: { nfe: COMPLETA, nfse: null }, jaExisteLegado: COMPLETA,
+      confirmadoPara: null })
+    expect(r.oMesmoDocumento).toBe(COMPLETA)
+  })
+})
+
+describe('a marca nominal protege a si mesma', () => {
+  it('enfraquecer `lidaPelaIA` para opcional quebra a compilação deste teste', () => {
+    // Achado [baixo] do Apolo, 9ª rodada: trocar `readonly lidaPelaIA: true` por
+    // `?: true` — a reação natural de quem vê um TS2741 e quer "consertar" —
+    // desligava a proteção com `tsc` limpo e a suíte verde. Com o
+    // `@ts-expect-error` abaixo, enfraquecer a marca vira
+    // "TS2578: Unused '@ts-expect-error' directive". A guarda guarda a si mesma.
+    const naTela = { modelo: 'nfe' as const, numero: '1', emitenteCnpj: '1' }
+    expect(() => travaDeDuplicidade({
+      atual: naTela,
+      // @ts-expect-error a foto NUNCA pode ser o estado editável (7ª rodada)
+      lido: naTela,
+      notasNoBanco: null, jaExisteLegado: null, confirmadoPara: null,
+    })).not.toThrow()
   })
 })
