@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { aplicarFamiliaATodos, itemTrancado, cfopAposEscolha, podeGravar, precisaConfirmarEfeitoIncomum, type FamiliaItem } from './regras-conferencia'
+import { aplicarFamiliaATodos, codigoFiscalEmNotaDeServico, itemTrancado, cfopAposEscolha, linhasSemQuantidade, pendenciasDeCfop, podeGravar, precisaConfirmarEfeitoIncomum, type FamiliaItem } from './regras-conferencia'
 
 const COMPRA: FamiliaItem            = { chave: 'compra',           rotulo: 'Compra normal',    cfop: '5102', contaComoCompra: true }
 const ENTREGA_FATURADA: FamiliaItem  = { chave: 'entrega-faturada', rotulo: 'Entrega faturada',  cfop: '5117', contaComoCompra: false }
@@ -235,4 +235,112 @@ describe('aplicarFamiliaATodos — o botão não passa por cima da trava', () =>
     expect(aplicarFamiliaATodos([trancado], COMPRA)[0]).toBe(trancado)
   })
 
+})
+
+describe('pendenciasDeCfop — NFS-e não tem CFOP', () => {
+  const servico = [{ cfop: '' }]
+
+  it('NFS-e sem CFOP não é pendência — o botão de gravar NÃO trava', () => {
+    // Achado [alto] do Apolo (27/08/2026): contar o CFOP vazio de uma nota de
+    // serviço como pendência desabilitava "Confirmar e gravar", e a única saída
+    // da tela era escolher uma família — que carimba um 5102 inventado numa nota
+    // que não tem CFOP nenhum. O 422 tinha virado botão morto.
+    const p = pendenciasDeCfop('nfse', servico)
+    expect(p).toEqual({ semCfop: 0, efeitoIncomum: false })
+    expect(podeGravar({
+      quantidadeItens: 1, semCfop: p.semCfop, familias: [{ chave: 'compra' }],
+      duplicataValendo: null, gravando: false, efeitoIncomumPendente: p.efeitoIncomum,
+    })).toBe(true)
+  })
+
+  it('a MESMA nota marcada como NF-e volta a travar — a régua do DANFE fica de pé', () => {
+    // É o que acontece quando o dono corrige o campo "Tipo" na tela.
+    const p = pendenciasDeCfop('nfe', servico)
+    expect(p).toEqual({ semCfop: 1, efeitoIncomum: true })
+    expect(podeGravar({
+      quantidadeItens: 1, semCfop: p.semCfop, familias: [{ chave: 'compra' }],
+      duplicataValendo: null, gravando: false, efeitoIncomumPendente: p.efeitoIncomum,
+    })).toBe(false)
+  })
+
+  it('DANFE normal não é afetada: conta os sem CFOP e respeita a família lida', () => {
+    expect(pendenciasDeCfop('nfe', [
+      { cfop: '5102', familia: 'compra' },
+      { cfop: '',     familia: undefined },
+    ])).toEqual({ semCfop: 1, efeitoIncomum: false })
+  })
+
+  it('DANFE inteira fora de "compra" continua parando o dono', () => {
+    expect(pendenciasDeCfop('nfe', [
+      { cfop: '5922', familia: 'entregaFutura' },
+      { cfop: '5910', familia: 'bonificacao' },
+    ])).toEqual({ semCfop: 0, efeitoIncomum: true })
+  })
+})
+
+describe('codigoFiscalEmNotaDeServico — o papel contradiz o campo "Tipo"', () => {
+  // Achado [médio] do Apolo (27/08/2026), medido com a nota 289122 real (19
+  // linhas de CFOP impresso): trocar o "Tipo" para NFS-e apagava banner
+  // vermelho, banner âmbar e a trava do botão de uma vez só, num clique — a
+  // nota entrava inteira como serviço e NENHUM item ia para o estoque.
+  it('NFS-e com CFOP impresso nas linhas: conta e avisa', () => {
+    expect(codigoFiscalEmNotaDeServico('nfse', [
+      { cfop: '5922', cfopLido: '5922' },
+      { cfop: '5102', cfopLido: '5102' },
+    ])).toBe(2)
+  })
+
+  it('NCM impresso sozinho já basta para o aviso', () => {
+    expect(codigoFiscalEmNotaDeServico('nfse', [{ cfop: '', ncm: '31021000' }])).toBe(1)
+  })
+
+  it('NFS-e de verdade não dispara aviso nenhum', () => {
+    expect(codigoFiscalEmNotaDeServico('nfse', [{ cfop: '', ncm: '', cfopLido: '' }])).toBe(0)
+  })
+
+  it('nota de PRODUTO nunca dispara — lá o código é o normal', () => {
+    expect(codigoFiscalEmNotaDeServico('nfe', [{ cfop: '5102', cfopLido: '5102', ncm: '38089329' }])).toBe(0)
+  })
+
+  it('o CFOP que o DONO escolheu não conta como impresso — só o lido', () => {
+    // `cfop` sem `cfopLido` é escolha de família, não leitura do papel. Contar
+    // isso faria o aviso nascer do próprio conserto do dono.
+    expect(codigoFiscalEmNotaDeServico('nfse', [{ cfop: '5102', cfopLido: '' }])).toBe(0)
+  })
+})
+
+describe('linhasSemQuantidade — nota de produto exige quantidade impressa', () => {
+  it('NF-e com linha sem quantidade TRAVA o botão, em vez de deixar bater no 422', () => {
+    // Achado [baixo] do Apolo (27/08/2026): sem esta trava o dono escolhia
+    // "Compra normal" no CFOP, o botão habilitava, e o servidor respondia
+    // "Não consegui ler nenhum item desta nota" com o item ali, à vista.
+    const itens = [{ cfop: '5102', quantidade: null }]
+    expect(linhasSemQuantidade('nfe', itens)).toBe(1)
+    expect(podeGravar({
+      quantidadeItens: 1, semCfop: 0, familias: [{ chave: 'compra' }],
+      duplicataValendo: null, gravando: false,
+      linhasSemQuantidade: linhasSemQuantidade('nfe', itens),
+    })).toBe(false)
+  })
+
+  it('a MESMA linha numa NFS-e é legítima — não conta e não trava', () => {
+    const itens = [{ cfop: '', quantidade: null }]
+    expect(linhasSemQuantidade('nfse', itens)).toBe(0)
+    expect(podeGravar({
+      quantidadeItens: 1, semCfop: 0, familias: [{ chave: 'compra' }],
+      duplicataValendo: null, gravando: false,
+      linhasSemQuantidade: linhasSemQuantidade('nfse', itens),
+    })).toBe(true)
+  })
+
+  it('DANFE com quantidade lida em todas as linhas não é afetada', () => {
+    expect(linhasSemQuantidade('nfe', [{ cfop: '5102', quantidade: 5 }])).toBe(0)
+  })
+
+  it('quem não manda o campo não trava — a régua dura é do servidor', () => {
+    expect(podeGravar({
+      quantidadeItens: 1, semCfop: 0, familias: [{ chave: 'compra' }],
+      duplicataValendo: null, gravando: false,
+    })).toBe(true)
+  })
 })

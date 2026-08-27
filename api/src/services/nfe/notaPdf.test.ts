@@ -396,3 +396,232 @@ describe('converterParaNFeData', () => {
     expect(nfe.formaPagamento).toBe('15')
   })
 })
+
+// ─── NFS-e: o papel não tem coluna de quantidade ────────────────────────────
+// Defeito medido em 27/08/2026 com nota real que o Matheus mandou: a NFS-e da
+// MAQNELSON (licença de software, R$ 4.370) era recusada com 'sem-itens', e a
+// tela dizia "Não consegui ler nenhum item desta nota" — mentira, a IA leu a
+// nota INTEIRA. O JSON abaixo é a resposta CRUA da IA, copiada da execução
+// real contra o PDF, não inventada para o teste.
+//
+// A causa: uma NFS-e não tem as colunas QUANT/UN/V.UNIT do DANFE — tem um
+// parágrafo de "Discriminação dos Serviços" e um valor. A IA devolveu
+// `quantidade: null` porque é o certo (não existe "quantidade" de licença), e
+// o validador, escrito para DANFE, derrubou a única linha da nota.
+//
+// O caminho do XML já resolvia isto desde 17/08/2026: parseXmlNFSe
+// (nfeProcessor.ts) monta o item com quantity 1, unit 'un' e unitValue =
+// valorTotal. Estes testes prendem os DOIS caminhos na mesma régua.
+const NFSE_MAQNELSON = {
+  ehNotaFiscal: true,
+  modelo: 'nfse',
+  numero: '2080',
+  emitenteNome: 'MAQNELSON AGRICOLA LTDA',
+  emitenteCnpj: '07791111000960',
+  dataEmissao: '2026-08-25',
+  valorTotal: 4370.0,
+  formaPagamento: null,
+  duplicatas: [],
+  itens: [{
+    descricao: 'PEDIDO 11403553 - LICENCA MASTER 1.0 12 MESES 1NW4030MVMF210282 - IE 0011145440177 Licenciamento ou cessao de direito de uso de programas',
+    quantidade: null, unidade: null, valorUnitario: null,
+    valorTotal: 4370.0, ncm: null, cfop: null,
+  }],
+}
+
+describe('validarNotaLida — NFS-e não tem coluna de quantidade', () => {
+  it('a NFS-e real da MAQNELSON entra, em vez de virar "sem-itens"', () => {
+    const r = validarNotaLida(NFSE_MAQNELSON, HOJE)
+    expect(r.status).toBe('nota')
+    if (r.status !== 'nota') return
+    expect(r.nota.modelo).toBe('nfse')
+    expect(r.nota.numero).toBe('2080')
+    expect(r.nota.valorTotal).toBe(4370)
+    expect(r.nota.itens).toHaveLength(1)
+    expect(r.itensDescartados).toBe(0)
+  })
+
+  it('quantidade que o papel não traz fica NULL — o "1" não é guardado', () => {
+    // Fail-closed: enquanto o número não existir em lugar nenhum, ninguém pode
+    // perdê-lo no caminho e acabar com quantidade inventada no estoque.
+    const r = validarNotaLida(NFSE_MAQNELSON, HOJE)
+    if (r.status !== 'nota') throw new Error(`esperava nota, veio ${r.status}`)
+    const i = r.nota.itens[0]
+    expect(i.quantidade).toBeNull()
+    expect(i.quantidadeTrib).toBeNull()
+    expect(i.unidade).toBe('un')
+    expect(i.unidadeTrib).toBe('un')
+    // O unitário SIM é resolvido aqui: com quantidade 1, ele é o total da linha.
+    expect(i.valorUnitario).toBe(4370)
+  })
+
+  it('quantidade IMPRESSA numa NFS-e é preservada, nunca sobrescrita por 1', () => {
+    // Prestador que discrimina "3 x hora técnica" tem quantidade legível no
+    // papel. Copiar o que está impresso vence inventar — mesma doutrina do CFOP.
+    const r = validarNotaLida(
+      { ...NFSE_MAQNELSON, itens: [{ ...NFSE_MAQNELSON.itens[0], quantidade: 3, unidade: 'H', valorUnitario: 1456.67 }] },
+      HOJE,
+    )
+    if (r.status !== 'nota') throw new Error(`esperava nota, veio ${r.status}`)
+    expect(r.nota.itens[0].quantidade).toBe(3)
+    expect(r.nota.itens[0].unidade).toBe('H')
+    expect(r.nota.itens[0].valorUnitario).toBe(1456.67)
+  })
+
+  it('numa DANFE, quantidade ilegível CONTINUA derrubando a linha', () => {
+    // A trava do ESTOQUE não afrouxou. Aqui a quantidade é o que entra no
+    // galpão: inventar 1 tiraria mercadoria real do controle, calado. A folga
+    // vale só onde a coluna não existe no papel.
+    for (const q of [null, 0, -3, NaN]) {
+      const r = validarNotaLida(lida({ modelo: 'nfe', itens: [item(), item({ quantidade: q })] }), HOJE)
+      expect(r.status === 'nota' && r.itensDescartados).toBe(1)
+    }
+  })
+
+  it('modelo desconhecido é tratado como DANFE, e a linha sem quantidade cai', () => {
+    // Mesma doutrina de converterParaNFeData: quem não é 'nfse' é 'nfe'.
+    const r = validarNotaLida({ ...NFSE_MAQNELSON, modelo: 'sei-la' }, HOJE)
+    expect(r.status).toBe('sem-itens')
+  })
+
+  it('NFS-e sem descrição continua sendo descartada — não inventamos linha', () => {
+    // O conserto dá folga na QUANTIDADE, que o papel não traz. Não dá folga em
+    // descrição nem em valor: sem eles a linha é leitura falhada, e um gasto
+    // fantasma no Financeiro custa mais que uma recusa.
+    for (const item of [{ descricao: '   ' }, { valorTotal: null }]) {
+      const r = validarNotaLida(
+        { ...NFSE_MAQNELSON, itens: [{ ...NFSE_MAQNELSON.itens[0], ...item }] },
+        HOJE,
+      )
+      expect(r.status).toBe('sem-itens')
+    }
+  })
+
+  it('converterParaNFeData entrega a NFS-e no MESMO formato do parseXmlNFSe', () => {
+    const r = validarNotaLida(NFSE_MAQNELSON, HOJE)
+    if (r.status !== 'nota') throw new Error(`esperava nota, veio ${r.status}`)
+    const nfe = converterParaNFeData(r.nota)
+    expect(nfe.modelo).toBe('nfse')
+    expect(nfe.items).toHaveLength(1)
+    expect(nfe.items[0].servico).toBe(true)   // serviço nunca é estocável
+    expect(nfe.items[0].quantity).toBe(1)     // o "1" nasce AQUI, não no validador
+    expect(nfe.items[0].quantityTrib).toBe(1)
+    expect(nfe.items[0].unit).toBe('un')
+    expect(nfe.items[0].unitValue).toBe(4370)
+    expect(nfe.items[0].totalValue).toBe(4370)
+    expect(nfe.items[0].ncm).toBe('')
+    expect(nfe.items[0].cfop).toBe('')
+  })
+})
+
+// ─── Passo 2: o que volta do navegador ──────────────────────────────────────
+// `validarNotaLida` roda DUAS vezes no fluxo real — na leitura e de novo em
+// POST /nfe/importar-pdf, quando o dono confirma o que editou na tela. Achado
+// [médio] do Apolo (27/08/2026): os testes acima só alimentam dado CRU de IA;
+// nenhum devolvia a saída do passo 1 na entrada do passo 2, que é o formato que
+// o navegador realmente manda — e é por esse buraco que passava o achado [alto]
+// da quantidade inferida virando estoque.
+describe('validarNotaLida — passo 2: a nota que volta do navegador', () => {
+  // O envelope que a tela manda: a nota do passo 1, possivelmente editada.
+  function idaEVolta(cru: unknown, editado: Record<string, unknown> = {}) {
+    const r1 = validarNotaLida(cru, HOJE)
+    if (r1.status !== 'nota') throw new Error(`passo 1 já falhou: ${r1.status}`)
+    return validarNotaLida({ ehNotaFiscal: true, ...r1.nota, ...editado }, HOJE)
+  }
+
+  it('NFS-e confirmada sem edição entra igual — mesma régua nos dois passos', () => {
+    const r = idaEVolta(NFSE_MAQNELSON)
+    expect(r.status).toBe('nota')
+    if (r.status !== 'nota') return
+    expect(r.nota.itens[0].quantidade).toBeNull()
+    expect(r.itensDescartados).toBe(0)
+  })
+
+  it('dono corrige o Tipo para NF-e: a quantidade inferida NÃO vira estoque', () => {
+    // O cenário caro: a IA rotula um DANFE como 'nfse', a linha ganha
+    // quantidade 1, e o dono corrige o campo "Tipo" — que é exatamente o que o
+    // banner de duplicidade da tela manda ele conferir. Sem esta trava, "1 TON
+    // a R$ 6.000" entrava no galpão no lugar de "3 TON a R$ 2.000", calado.
+    const r = idaEVolta(NFSE_MAQNELSON, { modelo: 'nfe' })
+    expect(r.status).toBe('sem-itens')
+  })
+
+  it('o aviso da tela reacende: a linha inferida cai e é CONTADA em itensDescartados', () => {
+    // Antes desta trava a linha entrava e `itensDescartados` valia 0 — o dono
+    // perdia o aviso "N item(ns) não puderam ser lidos", que é pior que o
+    // defeito original, porque o original gritava.
+    const misto = {
+      ...NFSE_MAQNELSON,
+      itens: [
+        { descricao: 'UREIA 45%', quantidade: 3, unidade: 'TON', valorUnitario: 2000, valorTotal: 6000, ncm: '31021000', cfop: '5102' },
+        { ...NFSE_MAQNELSON.itens[0] },
+      ],
+      valorTotal: 10370,
+    }
+    const r = idaEVolta(misto, { modelo: 'nfe' })
+    expect(r.status).toBe('nota')
+    if (r.status !== 'nota') return
+    expect(r.nota.itens).toHaveLength(1)
+    expect(r.nota.itens[0].descricao).toBe('UREIA 45%')
+    expect(r.nota.itens[0].quantidade).toBe(3)
+    expect(r.itensDescartados).toBe(1)
+  })
+
+  it('item de DANFE lido de verdade sobrevive à ida e volta, sem marca nenhuma', () => {
+    const r = idaEVolta(lida())
+    expect(r.status === 'nota' && r.nota.itens[0].quantidade).toBe(5)
+    expect(r.status === 'nota' && r.itensDescartados).toBe(0)
+  })
+})
+
+describe('validarNotaLida — unitário do serviço inferido', () => {
+  it('valorUnitario 0 LIDO conta como "não veio" e vira o total da linha', () => {
+    // Modelo devolvendo 0 em campo numérico ausente é comum, apesar do "null se
+    // ilegível" do schema. A régua geral aceita 0 (`>= 0`) — e aceitar aqui
+    // imprimiria "1 un × R$ 0,00 = R$ 4.370,00" na conferência. Achado [baixo]
+    // do Apolo, 27/08/2026.
+    const r = validarNotaLida(
+      { ...NFSE_MAQNELSON, itens: [{ ...NFSE_MAQNELSON.itens[0], valorUnitario: 0 }] },
+      HOJE,
+    )
+    expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(4370)
+  })
+
+  it('unitário absurdo numa DANFE continua virando zero, sem virar o total', () => {
+    const r = validarNotaLida(lida({ itens: [item({ valorUnitario: 90_000_000 })] }), HOJE)
+    expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(0)
+  })
+})
+
+describe('converterParaNFeData — NFS-e sai sem CFOP e sem NCM, como o XML', () => {
+  // Achado [alto] do Apolo (27/08/2026), medido: `servico: true` protege o
+  // ESTOQUE, não o DINHEIRO. processarNFe roda efeitoDoCfop em TODOS os itens
+  // sem olhar `servico` — um CFOP alucinado numa nota de serviço zerava o
+  // `valorCompra` e a nota gravava SEM lançamento: o gasto evaporava calado.
+  const comCodigo = {
+    ...NFSE_MAQNELSON,
+    itens: [{ ...NFSE_MAQNELSON.itens[0], cfop: '5910', ncm: '38089329' }],
+  }
+
+  it('CFOP alucinado numa NFS-e não chega em processarNFe', () => {
+    const r = validarNotaLida(comCodigo, HOJE)
+    if (r.status !== 'nota') throw new Error(`esperava nota, veio ${r.status}`)
+    // A EVIDÊNCIA fica: a tela precisa dela para avisar que o Tipo pode estar
+    // errado. O que não pode é o código ter EFEITO.
+    expect(r.nota.itens[0].cfop).toBe('5910')
+    expect(r.nota.itens[0].ncm).toBe('38089329')
+
+    const nfe = converterParaNFeData(r.nota)
+    expect(nfe.items[0].cfop).toBe('')
+    expect(nfe.items[0].ncm).toBe('')
+  })
+
+  it('a MESMA nota marcada como NF-e mantém os códigos — a régua do DANFE não mexeu', () => {
+    const r = validarNotaLida({ ...comCodigo, modelo: 'nfe', itens: [{ ...comCodigo.itens[0], quantidade: 2 }] }, HOJE)
+    if (r.status !== 'nota') throw new Error(`esperava nota, veio ${r.status}`)
+    const nfe = converterParaNFeData(r.nota)
+    expect(nfe.items[0].cfop).toBe('5910')
+    expect(nfe.items[0].ncm).toBe('38089329')
+    expect(nfe.items[0].servico).toBeUndefined()
+  })
+})

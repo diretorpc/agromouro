@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
 import { CATEGORIAS_FINANCEIRAS } from '@/lib/centro-custo'
-import { aplicarFamiliaATodos, cfopAposEscolha, itemTrancado, podeGravar, precisaConfirmarEfeitoIncomum, type FamiliaItem } from './regras-conferencia'
+import { aplicarFamiliaATodos, cfopAposEscolha, codigoFiscalEmNotaDeServico, itemTrancado, linhasSemQuantidade, pendenciasDeCfop, podeGravar, type FamiliaItem } from './regras-conferencia'
 
 // Toda a UI do modo "Upload PDF" mora aqui, fora de page.tsx (que já passa de
 // 700 linhas). O fluxo tem DOIS passos porque a leitura é da IA, não do dado
@@ -19,11 +19,13 @@ import { aplicarFamiliaATodos, cfopAposEscolha, itemTrancado, podeGravar, precis
 
 type ItemLido = {
   descricao:      string
-  quantidade:     number
+  // `null` = a nota não traz quantidade impressa (NFS-e não tem a coluna). O
+  // `1` é fabricado só no servidor, na conversão — nunca guardado aqui.
+  quantidade:     number | null
   unidade:        string
   valorUnitario:  number
   valorTotal:     number
-  quantidadeTrib: number
+  quantidadeTrib: number | null
   unidadeTrib:    string
   ncm:            string
   cfop:           string
@@ -372,13 +374,18 @@ export function ConferenciaPdf(
         ? `O lançamento de gasto passa a ser a soma só das linhas que contam como compra (${brl(somaCompra)}) — bonificação e entrega já paga não entram.`
         : 'Nenhuma linha restante conta como compra nova: o lançamento de gasto pode não ser criado, a menos que a nota traga cobrança real (duplicata) mesmo sem item de compra — confira depois de gravar.'
 
-  const semCfop = nota.itens.filter(i => !i.cfop).length
+  // As duas pendências de CFOP moram em regras-conferencia.ts: NFS-e não tem
+  // CFOP, e contar isso como pendência travava o botão de gravar sem oferecer
+  // saída que não fosse carimbar um 5102 falso (achado [alto] do Apolo,
+  // 27/08/2026). A confirmação vale para a composição ATUAL da nota: mudar o
+  // efeito de qualquer item — ou o campo "Tipo" — recalcula, e `confirmouEfeito`
+  // só destrava enquanto a situação continuar a mesma que ele confirmou.
+  const { semCfop, efeitoIncomum } = pendenciasDeCfop(nota.modelo, nota.itens)
+  // As duas contradições entre o papel e o campo "Tipo", nos dois sentidos.
+  const codigoEmServico = codigoFiscalEmNotaDeServico(nota.modelo, nota.itens)
+  const semQuantidade   = linhasSemQuantidade(nota.modelo, nota.itens)
   // O aviso só vale enquanto o dono não mexer na identificação da nota.
   const duplicataValendo = leitura.jaExiste && !identidadeEditada
-  // A confirmação vale para a composição ATUAL da nota: mudar o efeito de
-  // qualquer item recalcula, e o `confirmouEfeito` só destrava enquanto a
-  // situação continuar a mesma que ele confirmou.
-  const efeitoIncomum = precisaConfirmarEfeitoIncomum(nota.itens)
   // API antiga não manda `familias`: sem a lista não há como oferecer o conserto,
   // e um botão que não conserta nada é pior que nenhum botão.
   const temFamiliaCompra = (leitura.familias ?? []).some(f => f.chave === 'compra')
@@ -411,6 +418,28 @@ export function ConferenciaPdf(
           Já existe uma nota <strong>{nota.modelo === 'nfe' ? 'de serviço (NFS-e)' : 'de produto (NF-e)'}</strong>{' '}
           com este mesmo número e fornecedor. Confira o campo <strong>Tipo</strong>: se o tipo estiver
           errado, o sistema não reconhece a nota repetida e a compra entra duas vezes.
+        </div>
+      )}
+
+      {/* As duas contradições entre o papel e o campo "Tipo". Nenhuma das duas
+          existia antes de a tela passar a se calar sobre CFOP em NFS-e — e sem
+          elas a troca de "Tipo" virava uma saída de 1 clique que apagava todos
+          os bloqueios sem deixar rastro (achados do Apolo, 27/08/2026). */}
+      {codigoEmServico > 0 && (
+        <div className="rounded-md bg-amber-50 text-amber-800 px-3 py-2 text-sm">
+          <strong>O papel traz NCM/CFOP, mas o Tipo diz serviço.</strong>
+          {' '}{codigoEmServico} {codigoEmServico === 1 ? 'linha tem código fiscal impresso' : 'linhas têm código fiscal impresso'}
+          {' '}— nota de serviço não tem esses códigos. <strong>Confira o campo "Tipo"</strong>: gravada
+          {' '}como NFS-e, nenhuma mercadoria desta nota entra no estoque.
+        </div>
+      )}
+
+      {semQuantidade > 0 && (
+        <div className="rounded-md bg-red-50 text-red-700 px-3 py-2 text-sm">
+          <strong>Esta nota está marcada como produto (NF-e), mas {semQuantidade === 1 ? 'uma linha não tem' : `${semQuantidade} linhas não têm`} quantidade impressa.</strong>
+          {' '}Em nota de produto a quantidade é o que entra no estoque, e o sistema não inventa
+          {' '}número. Volte o Tipo para <strong>NFS-e (serviço)</strong> se for nota de serviço, ou
+          {' '}leia o PDF de novo.
         </div>
       )}
 
@@ -582,7 +611,14 @@ export function ConferenciaPdf(
               {nota.itens.map((item, n) => (
                 <tr key={n} className="border-t">
                   <td className="p-2">{item.descricao}</td>
-                  <td className="p-2 text-right">{item.quantidade}</td>
+                  {/* Quantidade inferida não pode ter a MESMA cara de quantidade
+                      lida: o "1" da NFS-e não está impresso em lugar nenhum do
+                      papel. Mesma doutrina de `cfopLido` logo abaixo. */}
+                  <td className="p-2 text-right">
+                    {item.quantidade === null
+                      ? <span className="text-muted-foreground" title="A NFS-e não traz coluna de quantidade — o serviço conta como 1 na hora de gravar">não impressa</span>
+                      : item.quantidade}
+                  </td>
                   <td className="p-2">{item.unidade}</td>
                   <td className="p-2 text-right">{brl(item.valorTotal)}</td>
                   {/* O CFOP decide estoque, bonificação e entrega futura. Quando a
@@ -596,7 +632,13 @@ export function ConferenciaPdf(
                         botão de conserto em massa precisa da MESMA resposta.
                         Quando esta pergunta vivia só aqui, o botão passou por
                         cima da trava (achado [alto] do Apolo, 25/08/2026). */}
-                    {itemTrancado(item) ? (
+                    {nota.modelo === 'nfse' ? (
+                      // Serviço não tem CFOP para escolher. Oferecer o select
+                      // aqui seria oferecer o carimbo de um código que a nota
+                      // não imprime — e é justamente o que travava a gravação
+                      // (achado [alto] do Apolo, 27/08/2026).
+                      <span className="text-muted-foreground" title="Nota de serviço: não tem CFOP, e serviço nunca entra no estoque">Serviço</span>
+                    ) : itemTrancado(item) ? (
                       <span title="CFOP com efeito próprio — não mexa sem motivo">CFOP {item.cfop}</span>
                     ) : (
                       <>
@@ -723,6 +765,7 @@ export function ConferenciaPdf(
           onClick={gravar}
           disabled={!podeGravar({
             quantidadeItens: nota.itens.length, semCfop, familias: leitura.familias,
+            linhasSemQuantidade: semQuantidade,
             duplicataValendo, gravando,
             efeitoIncomumPendente: efeitoIncomum && !confirmouEfeito,
           })}

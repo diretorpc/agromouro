@@ -22,6 +22,63 @@
 
 ---
 
+## 🔧 Nota de SERVIÇO não entrava pelo importador de PDF — 27/08/2026 — **PRONTO, aguardando merge**
+
+Ramo `fix/nfse-pdf-sem-quantidade`. Começou com o Matheus mandando uma NFS-e real
+(MAQNELSON AGRÍCOLA, licença de software) e dizendo "o importador não conseguiu ler".
+
+**O que era:** a IA leu a nota INTEIRA e certa. Quem recusou foi o nosso validador.
+`validarNotaLida` exigia `quantidade > 0` em toda linha — régua de DANFE. **NFS-e não
+tem as colunas QUANT/UN/V.UNIT**: tem "Discriminação dos Serviços" e um valor. A IA
+devolveu `quantidade: null` (o certo), a única linha caiu, e a nota virou `sem-itens` →
+422 *"Não consegui ler nenhum item desta nota"* — mensagem que mentia.
+
+O caminho do **XML** já resolvia isso desde 17/08/2026 (`parseXmlNFSe` monta o item com
+quantidade 1, `cfop: ''`, `ncm: ''`). O caminho do **PDF** nunca ganhou esse tratamento.
+
+**O que o Apolo achou em cima do conserto — e era pior que o defeito original:**
+
+1. **[alto] O gasto evaporava.** `servico: true` protege o ESTOQUE, não o DINHEIRO:
+   `processarNFe` roda `efeitoDoCfop` em TODOS os itens sem olhar `servico`. Um CFOP
+   que a IA inventasse numa NFS-e (5910 "bonificação", 5117, 5905) zerava o
+   `valorCompra` e a nota gravava **sem lançamento nenhum**. E a IA inventa CFOP com
+   frequência medida — ver memória `cfop-lido-como-5922`.
+2. **[alto] Botão morto.** Com o 422 resolvido, a NFS-e chegava na tela e **não gravava**:
+   `podeGravar` travava por `semCfop > 0`, e a única saída era o dono carimbar um CFOP
+   5102 falso numa nota que não tem CFOP.
+3. **[médio] Saída de 1 clique.** Trocar o campo "Tipo" para NFS-e apagava banner
+   vermelho, banner âmbar e a trava do botão de uma vez — nota de produto entrava
+   inteira como serviço, zero itens no estoque, nenhuma tela acusando.
+4. **[médio] Passo 2 mudo.** `POST /nfe/importar-pdf` jogava `itensDescartados` fora:
+   a nota gravava com parte das linhas e o painel fechava sem dizer nada.
+5. **[médio] Trava fail-open.** A 1ª tentativa carregava `quantidade: 1` + marca
+   `quantidadeInferida`, que viajava pelo navegador — bastava a chave não voltar para o
+   "1" inventado entrar no galpão como mercadoria de verdade.
+
+**Como ficou:**
+- `ItemNotaLido.quantidade` e `.quantidadeTrib` são `number | null`. O `1` nasce só em
+  `converterParaNFeData`. **Fail-closed:** perder o campo fortalece a defesa.
+- `converterParaNFeData` zera `ncm`/`cfop` em NFS-e (espelho do `parseXmlNFSe`) — mas só
+  na CONVERSÃO, para a tela continuar enxergando o `cfopLido` e poder avisar.
+- Duas funções puras novas em `regras-conferencia.ts`: `codigoFiscalEmNotaDeServico`
+  (banner âmbar: o papel traz NCM/CFOP mas o Tipo diz serviço) e `linhasSemQuantidade`
+  (trava o botão em vez de deixar o dono bater no 422).
+- `pendenciasDeCfop` cala CFOP em NFS-e — é o que destrava a gravação.
+- Passo 2 recusa a nota inteira quando descartaria linha (422
+  `itens-descartados-no-passo-2`) em vez de gravar metade.
+- **Régua da DANFE não afrouxou:** quantidade ilegível continua derrubando a linha.
+
+**Como conferir que continua de pé:**
+```bash
+cd api && npx tsc --noEmit && npx vitest run && cd ../web && npx tsc --noEmit && npx vitest run
+```
+
+**Limite conhecido:** os consertos que moram no `.tsx` (célula "não impressa", célula
+"Serviço", os dois banners e o fio que liga a tela às funções puras) **não têm teste** —
+o `web` não tem testing-library instalada, é convenção do projeto.
+
+---
+
 ## 🔧 "O importar PDF não funcionou" — 25/08/2026 — **PRONTO, aguardando merge**
 
 Ramo `fix/nfe-cfop-lido-errado-e-filtro-mes`. Começou como bug relatado e terminou

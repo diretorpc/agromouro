@@ -18,6 +18,13 @@ export type FamiliaItem = {
 export type ItemComCfop = {
   cfop:     string
   familia?: string
+  // O que a IA LEU no papel, congelado pela rota antes de qualquer escolha do
+  // dono. É a evidência de que uma nota rotulada como serviço talvez seja de
+  // produto — ver `codigoFiscalEmNotaDeServico`.
+  ncm?:      string
+  cfopLido?: string
+  // `null` = a nota não traz quantidade impressa (NFS-e). Ver `travasDeQuantidade`.
+  quantidade?: number | null
 }
 
 // Nota em que NENHUM item é "compra normal" é rara e cara. A leitura de
@@ -101,6 +108,78 @@ export function aplicarFamiliaATodos<T extends ItemComCfop>(
   ))
 }
 
+// As DUAS pendências de CFOP da tela, numa resposta só — porque as duas têm a
+// mesma exceção e responder cada uma no componente foi como o achado abaixo
+// nasceu.
+//
+// NFS-e NÃO TEM CFOP: o campo é do DANFE. Numa nota de serviço, item sem CFOP é
+// o normal, não pendência. Contar como pendência DESABILITAVA o botão
+// "Confirmar e gravar", e a única saída que a tela oferecia era o dono escolher
+// uma família no select — que carimba um CFOP 5102 inventado numa nota fiscal
+// que não tem CFOP nenhum. Achado [alto] do Apolo, 27/08/2026, medido contra
+// estas funções: do ponto de vista do dono o erro 422 tinha virado um botão
+// morto, sem nem a mensagem que explicava o problema. E o 5102 falso divergiria
+// do caminho do XML, onde `parseXmlNFSe` grava cfop ''.
+//
+// Os dois avisos também eram falsos para serviço: o vermelho diz "a mercadoria
+// não entra no estoque" (não existe mercadoria) e o âmbar diz "conta o gasto
+// duas vezes" (não conta — `servico: true` já resolve, ver nfeProcessor.ts).
+//
+// Reage à troca do campo "Tipo" na tela: se o dono corrigir NFS-e → NF-e, as
+// pendências voltam na hora, como devem.
+export function pendenciasDeCfop(
+  modelo: 'nfe' | 'nfse',
+  itens: readonly ItemComCfop[],
+): { semCfop: number; efeitoIncomum: boolean } {
+  if (modelo === 'nfse') return { semCfop: 0, efeitoIncomum: false }
+  return {
+    semCfop:       itens.filter(i => !i.cfop).length,
+    efeitoIncomum: precisaConfirmarEfeitoIncomum(itens),
+  }
+}
+
+// Quantas linhas trazem NCM ou CFOP IMPRESSO numa nota marcada como serviço.
+// Zero é o normal; qualquer número acima disso é contradição entre o papel e o
+// campo "Tipo", e merece aviso.
+//
+// Achado [médio] do Apolo (27/08/2026), medido com a nota 289122 real (19
+// linhas, CFOP impresso): trocar o "Tipo" para NFS-e apagava TODOS os bloqueios
+// da tela de uma vez — banner vermelho, banner âmbar e a trava do botão — num
+// clique. A nota entrava inteira como serviço e NENHUM item ia para o estoque,
+// que é o desastre de 25/08/2026 por outra porta. O aviso é a única coisa que
+// enxerga essa troca: `pendenciasDeCfop` (acima) tem que se calar em NFS-e,
+// senão o dono não consegue gravar nota de serviço nenhuma.
+//
+// Aviso, não portão: NFS-e com CFOP alucinado é caso REAL e frequente (memória
+// `cfop-lido-como-5922`), e travar por causa dele recriaria o botão morto que
+// esta mesma rodada foi consertar. O efeito do código já está neutralizado no
+// servidor (`converterParaNFeData` zera ncm/cfop em NFS-e); aqui é só a pista
+// para o dono conferir o Tipo.
+export function codigoFiscalEmNotaDeServico(
+  modelo: 'nfe' | 'nfse',
+  itens: readonly ItemComCfop[],
+): number {
+  if (modelo !== 'nfse') return 0
+  return itens.filter(i => !!i.ncm || !!i.cfopLido).length
+}
+
+// Quantas linhas estão sem quantidade impressa numa nota marcada como PRODUTO.
+// Numa NFS-e é o normal (o papel não tem a coluna); numa NF-e é impossível de
+// gravar — o servidor descarta a linha, e a nota inteira volta em 422.
+//
+// Achado [baixo] do Apolo (27/08/2026): sem esta trava, o dono que corrigisse o
+// "Tipo" de uma NFS-e para NF-e via a linha na tela, escolhia "Compra normal"
+// no CFOP, o botão habilitava — e o servidor respondia "Não consegui ler nenhum
+// item desta nota" com o item ali, à vista. Botão morto com mensagem que mente,
+// a mesma forma do defeito que abriu esta rodada.
+export function linhasSemQuantidade(
+  modelo: 'nfe' | 'nfse',
+  itens: readonly ItemComCfop[],
+): number {
+  if (modelo !== 'nfe') return 0
+  return itens.filter(i => i.quantidade === null).length
+}
+
 // A condição que HABILITA o botão "Confirmar e gravar" — devolve `true`
 // quando pode gravar, o INVERSO do que o componente usa em `disabled`.
 //
@@ -119,11 +198,16 @@ export function podeGravar(params: {
   // true quando a nota inteira caiu fora de "compra normal" E o dono ainda não
   // confirmou que é isso mesmo. Ver precisaConfirmarEfeitoIncomum.
   efeitoIncomumPendente?: boolean
+  // Linhas sem quantidade impressa numa nota marcada como NF-e. Ver
+  // `linhasSemQuantidade`: o servidor recusa essas linhas, então deixar gravar
+  // é mandar o dono bater num 422 que ele não tem como entender olhando a tela.
+  linhasSemQuantidade?: number
 }): boolean {
   if (params.gravando) return false
   if (params.quantidadeItens === 0) return false
   if (params.duplicataValendo) return false
   if (params.semCfop > 0 && (params.familias?.length ?? 0) > 0) return false
   if (params.efeitoIncomumPendente) return false
+  if ((params.linhasSemQuantidade ?? 0) > 0) return false
   return true
 }

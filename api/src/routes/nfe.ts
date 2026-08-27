@@ -257,6 +257,29 @@ nfeRoutes.post('/importar-pdf', async (req, res, next) => {
     return
   }
 
+  // Descarte de LINHA no passo 2 não pode passar calado. Achado [médio] do
+  // Apolo (27/08/2026): esta rota lia só `validada.nota` e jogava
+  // `itensDescartados` fora — a nota gravava com 1 de 2 linhas, o painel
+  // fechava e ninguém dizia nada. O banner âmbar da tela é alimentado pelo
+  // passo 1 e nunca mais é reescrito.
+  //
+  // Recusar é o certo aqui, e não "avisar depois de gravar": o dono NÃO edita
+  // quantidade, descrição nem valor na conferência (a tela só deixa mexer em
+  // identidade, Tipo, efeito do CFOP e centro de custo). Então linha caindo no
+  // passo 2 significa que a nota mudou de NATUREZA entre os dois passos — na
+  // prática, o campo "Tipo" trocado de NFS-e para NF-e, que tira o direito da
+  // quantidade inferida de existir (ver `quantidade: number | null` em
+  // notaPdf.ts). Gravar metade da nota seria o pior dos dois mundos.
+  if (validada.itensDescartados > 0) {
+    res.status(422).json({
+      error: `${validada.itensDescartados} item(ns) desta nota ficariam de fora do jeito que ela está agora — `
+        + 'em nota de produto (NF-e) toda linha precisa de quantidade impressa. '
+        + 'Confira o campo "Tipo" ou leia o PDF de novo.',
+      status: 'itens-descartados-no-passo-2',
+    })
+    return
+  }
+
   try {
     const pdf = Buffer.from(parsed.data.arquivo, 'base64')
     const resultado = await gravarNotaDoPdf(validada.nota, pdf, fazendaId)

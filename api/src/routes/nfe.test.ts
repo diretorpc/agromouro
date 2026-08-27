@@ -292,6 +292,37 @@ describe('POST /nfe/importar-pdf', () => {
     expect(gravarNotaDoPdfMock).not.toHaveBeenCalled()
   })
 
+  it('linha descartada no passo 2 RECUSA a nota inteira, em vez de gravar metade', async () => {
+    // Achado [medio] do Apolo (27/08/2026): a rota lia so `validada.nota` e
+    // jogava `itensDescartados` fora — a nota gravava com 1 de 2 linhas, o
+    // painel fechava e ninguem dizia nada. O dono nao edita quantidade na
+    // conferencia, entao linha caindo AQUI significa que a nota mudou de
+    // natureza entre os dois passos (campo "Tipo" trocado para NF-e).
+    const { req, res, next } = criarReqRes({
+      fazendaId: FAZENDA,
+      body: { ...corpoValido, nota: { ...NOTA_LIDA, itens: [
+        NOTA_LIDA.itens[0],
+        { descricao: 'SERVICO', quantidade: null, unidade: 'un', valorUnitario: 100, valorTotal: 100, quantidadeTrib: null, unidadeTrib: 'un', ncm: '', cfop: '' },
+      ] } },
+    })
+    await handler(req, res, next)
+    expect(res.statusCode).toBe(422)
+    expect(res.body.status).toBe('itens-descartados-no-passo-2')
+    expect(gravarNotaDoPdfMock).not.toHaveBeenCalled()
+  })
+
+  it('a MESMA nota como NFS-e grava inteira — a linha sem quantidade e legitima ali', async () => {
+    gravarNotaDoPdfMock.mockResolvedValue({ status: 'gravada', notaId: 'n2', numero: '58717', emitenteNome: 'SOLOS', valorTotal: 4500 })
+    const { req, res, next } = criarReqRes({
+      fazendaId: FAZENDA,
+      body: { ...corpoValido, nota: { ...NOTA_LIDA, modelo: 'nfse', itens: [
+        { descricao: 'SERVICO', quantidade: null, unidade: 'un', valorUnitario: 100, valorTotal: 100, quantidadeTrib: null, unidadeTrib: 'un', ncm: '', cfop: '' },
+      ] } },
+    })
+    await handler(req, res, next)
+    expect(res.statusCode).toBe(201)
+  })
+
   it('duplicada-nota volta 200: reenviar e resposta valida, nao erro de requisicao', async () => {
     gravarNotaDoPdfMock.mockResolvedValue({
       status: 'duplicada-nota',
