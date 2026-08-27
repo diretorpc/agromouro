@@ -88,12 +88,11 @@ rodada anterior e passou por mim:**
 7. **[médio] Fio do front sem guarda.** Dava para arrancar a trava do botão do JSX e a
    suíte ficava verde com `tsc` limpo. `linhasSemQuantidade` virou parâmetro
    **obrigatório** de `podeGravar` — o compilador é a guarda que o teste não é.
-8. **[médio] Detector cego no caso caro.** `sinaisDeNotaDeProduto` e olha TRÊS sinais: código fiscal, quantidade impressa e
-   unidade de mercadoria. Motivo: o `SCHEMA` ensina que NFS-e é "sem CFOP/NCM", então a
-   mesma decisão errada que rotula um DANFE como serviço tende a apagar os códigos dele
-   — quantidade e unidade sobrevivem. O banner ganhou **botão** "É nota de produto —
-   mudar o Tipo", pela regra que este repo já escreveu: quando a tela sabe o conserto,
-   ela oferece o conserto.
+8. **[médio] Detector cego no caso caro.** `codigoFiscalEmNotaDeServico` virou
+   `sinaisDeNotaDeProduto` e passou a olhar mais que o código fiscal. Motivo: o `SCHEMA`
+   ensina que NFS-e é "sem CFOP/NCM", então a mesma decisão errada que rotula um DANFE
+   como serviço tende a apagar os códigos dele — quantidade e unidade sobrevivem.
+   *(A forma final desse detector só veio na 5ª rodada — ver item 19.)*
 9. **[baixo] `ncm: ''` é simetria, não defesa** — o NCM não é gravado em coluna nenhuma.
    Comentário corrigido para não prometer proteção que não existe.
 10. **[médio] ORDEM DE DEPLOY: API primeiro, web depois.** Web nova + API velha reabre o
@@ -138,10 +137,54 @@ botão) passou a ser protegido pelo `tsc`; os banners não.
 zero, mas não a tela nem as linhas já gravadas com unitário 0 e total cheio — nessas,
 abrir para trocar o centro de custo ainda apaga o gasto. Subiu para o L3 do painel global.
 
-**Como medir a exposição das linhas já gravadas:**
+**5ª rodada do Apolo — 3 [alto], e os 2 piores estão na tela sem teste:**
+
+17. **[alto] O `0` era só metade.** Meu conserto do item 15 aceitava qualquer unitário
+    POSITIVO — então `{q:3, vu:200, vt:6000}` passava (R$ 6.000 → R$ 600 ao salvar) e
+    `{q:5, vu:880, vt:0}` também (R$ 0 → R$ 4.400, gasto fantasma). A régua certa não é
+    o SINAL do unitário, é a CONSISTÊNCIA dele com o total: tolerância de 2 centavos ou
+    0,1%, o que for maior. Fora dela, o unitário é derivado do total. Seis testes novos.
+18. **[baixo] Unitário derivado podia estourar a coluna.** `{q: 0.001, vt: 2 mi}` deriva
+    2 bilhões, acima do `numeric(12,4)` — o INSERT morreria e levaria a NOTA INTEIRA
+    junto. Linha assim agora cai como as outras, e é contada para o dono ver.
+19. **[médio] Lista de permissão de unidades erra CALANDO.** `uCom` é texto livre na
+    NF-e: não existe tabela fechada. Duas versões da lista já tinham errado justo nas
+    unidades que este projeto usa, e uma DANFE de 8 linhas com PEÇA/FRASCO/BALDE/PACOTE
+    não acendia aviso nenhum. Virou **lista de negação**: o conjunto que uma NFS-e
+    legítima usa é pequeno e conhecido, e unidade que ninguém previu passa a ACENDER.
+
+**⛔ ABERTO — não mergear sem decidir (2 [alto] da 5ª rodada, os dois na mesma tela):**
+
+- **A trava de duplicidade continua contornável em dois passos.** `identidadeEditada`
+  nunca volta para `false`, e mexer no campo Número (mesmo desfazendo) já a liga. Depois
+  disso, trocar o Tipo grava a nota uma segunda vez — estoque e gasto em dobro.
+- **Nota legítima do outro modelo não tem saída.** NF-e nº 500 (peças) e NFS-e nº 500
+  (mão de obra) do mesmo fornecedor é o caso que a migration 011 descreve no cabeçalho.
+  Se a IA errar o Tipo, corrigi-lo — a ação CERTA — deixa o botão travado, e o texto do
+  banner ainda manda apagar a nota já gravada, que está correta.
+
+Os dois caem com a MESMA correção: a rota devolver `jaExisteNfe` e `jaExisteNfse` (as
+duas consultas já existem; falta tirar o curto-circuito `jaExiste ? null : …`) e a
+duplicidade ser avaliada contra o `modelo` ATUAL, numa função pura em
+`regras-conferencia.ts` — mesmo padrão de `salvar-talhao.ts`. Isso também conserta o
+rótulo do banner `existeNoOutroModelo`, que hoje se inverte quando o dono obedece a ele.
+
+**Padrão que ficou claro em 5 rodadas:** 3 dos [alto] nasceram em comportamento novo de
+TELA, e o `web` não tem testing-library — dá para arrancar uma trava do JSX com as 286
+verdes e o `tsc` limpo. Extrair decisão para função pura tem pego mais que testar
+componente, e é o caminho mais barato antes de instalar biblioteca nova.
+
+**Como medir a exposição das linhas já gravadas** (duas classes, não uma — sem
+tolerância o número conta arredondamento honesto como defeito):
 ```sql
+-- destrutiva: abrir o item ENCOLHE o gasto
 select count(*) from itens_nfe
-where valor_unitario * quantidade <> valor_total;
+where valor_total > 0
+  and coalesce(quantidade,0) * coalesce(valor_unitario,0) < valor_total - 0.02;
+
+-- inflacionária: abrir o item AUMENTA o gasto
+select count(*) from itens_nfe
+where coalesce(quantidade,0) * coalesce(valor_unitario,0) > valor_total + 0.02;
 ```
 
 ---

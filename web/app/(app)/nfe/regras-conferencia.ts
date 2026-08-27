@@ -143,18 +143,27 @@ export function pendenciasDeCfop(
 // caminho do XML (`parseXmlNFSe`) sempre produz um item 'un', e o do PDF cai no
 // mesmo 'un' quando não lê nada. Ver uma destas numa nota marcada como serviço
 // é o papel dizendo "sou nota de produto".
-// Achado [baixo] do Apolo, 4ª rodada (27/08/2026), medido contra o dado real do
-// projeto: a 1ª lista não tinha `TON` (a unidade do fixture de DANFE em
-// notaPdf.test.ts) nem `MTN` (a do contrato de adubo da SYAGRI) — o sinal de
-// unidade nunca disparava nos dois casos que o projeto realmente tem.
-// `M2`/`M3` SAÍRAM: são unidades corriqueiras de NFS-e de verdade (pintura,
-// terraplanagem, concreto), e falso positivo aqui é banner gritando à toa.
-const UNIDADES_DE_MERCADORIA = new Set([
-  'KG', 'G', 'TN', 'TON', 'T', 'MTN', 'L', 'LT', 'ML',
-  'SC', 'SACO', 'BD', 'BAG', 'CX', 'FD', 'PC', 'PÇ', 'PT',
-  'DZ', 'CENTO', 'MI', 'MILHEIRO', 'GL', 'FR', 'PAR', 'RL', 'KIT', 'JG',
+// LISTA DE NEGAÇÃO, não de permissão — e a inversão é o ponto.
+//
+// `uCom` é TEXTO LIVRE no layout da NF-e: não existe tabela fechada de unidades
+// comerciais. Lista de permissão nunca fica completa, e o default dela é CALAR.
+// Achado [médio] do Apolo, 5ª rodada (27/08/2026), executado: uma DANFE de 8
+// linhas rotulada 'nfse' com UN/PEÇA/FRASCO/BALDE/MT/PACOTE não acendia
+// NENHUM aviso na tela inteira, botão habilitado, nenhuma mercadoria entrando
+// no estoque. As duas versões anteriores da lista de permissão já tinham errado
+// nas unidades que este projeto realmente usa (`TON` do fixture de DANFE,
+// `MTN` do contrato da SYAGRI) — o terceiro erro seguido é sinal de que o
+// formato da regra está errado, não o conteúdo dela.
+//
+// O conjunto que uma NFS-e legítima usa É pequeno e conhecido, então é ELE que
+// vira lista. Unidade desconhecida passa a ACENDER em vez de sumir.
+const UNIDADES_DE_SERVICO = new Set([
+  '', 'UN', 'UND', 'UNID', 'UNIDADE', 'UNITARIO', 'UNITÁRIO',
+  'H', 'HR', 'HRS', 'HORA', 'HORAS', 'HH',
+  'DIA', 'DIAS', 'SEM', 'MES', 'MÊS', 'MESES', 'ANO', 'ANOS',
+  'M2', 'M²', 'MT2', 'M3', 'M³', 'MT3',
+  'SERV', 'SERVICO', 'SERVIÇO', 'VB', 'PCT', '%',
 ])
-
 // Quantas linhas mostram sinal de MERCADORIA numa nota marcada como serviço.
 // Zero é o normal; qualquer número acima disso é contradição entre o papel e o
 // campo "Tipo", e merece aviso.
@@ -172,7 +181,8 @@ const UNIDADES_DE_MERCADORIA = new Set([
 // esta mesma rodada foi consertar. O efeito do código já está neutralizado no
 // servidor (`converterParaNFeData` zera ncm/cfop em NFS-e); aqui é só a pista
 // para o dono conferir o Tipo.
-// TRÊS sinais, não um. A 1ª versão olhava só NCM/CFOP impresso e era cega
+// DOIS sinais: código fiscal impresso, ou quantidade com unidade que não é de
+// serviço. A 1ª versão olhava só NCM/CFOP impresso e era cega
 // justamente no caso caro — achado [médio] do Apolo, 3ª rodada (27/08/2026):
 // o `SCHEMA` da leitura ensina que NFS-e é "sem CFOP/NCM", então a MESMA
 // decisão errada que rotula um DANFE como serviço tende a apagar os códigos
@@ -187,13 +197,13 @@ export function sinaisDeNotaDeProduto(
   return itens.filter(i =>
     !!i.ncm
     || !!i.cfopLido
-    // Quantidade SOZINHA não conta. Achado [médio] do Apolo, 4ª rodada
-    // (27/08/2026): NFS-e no padrão ABRASF traz "Qtde 1,00" no corpo, e o
-    // SCHEMA não manda o modelo devolver null nesse caso — o aviso acenderia
-    // em nota de serviço legítima e viraria ruído. Quantidade + unidade de
-    // MERCADORIA é o par que só existe em nota de produto.
+    // Quantidade SOZINHA não conta: NFS-e do padrão ABRASF traz "Qtde 1,00" no
+    // corpo, e o aviso viraria ruído em nota de serviço legítima. O par
+    // "quantidade impressa + unidade que NÃO é de serviço" é o que só existe em
+    // nota de produto — e, por ser lista de negação, unidade que ninguém
+    // previu acende em vez de sumir.
     || ((i.quantidade !== null && i.quantidade !== undefined)
-        && UNIDADES_DE_MERCADORIA.has((i.unidade ?? '').trim().toUpperCase()))
+        && !UNIDADES_DE_SERVICO.has((i.unidade ?? '').trim().toUpperCase()))
   ).length
 }
 

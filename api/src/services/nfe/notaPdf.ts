@@ -433,49 +433,53 @@ export function validarNotaLida(bruto: unknown, hojeISO: string): ValidacaoNota 
     // ("3 x hora técnica") é preservada: copiar o papel vence inventar, mesma
     // doutrina do CFOP.
     const quantidadeFinal = quantidadeValida ? quantidade : null   // null só sobrevive em NFS-e
-    const unitarioValido  = unitarioLido !== null && unitarioLido >= 0 && unitarioLido <= VALOR_MAX_UNITARIO
+
+    // ── O valor unitário e a invariante `quantidade × unitário === total` ────
+    //
+    // Por que a invariante importa: a tela Financeiro RECALCULA
+    // `valor_total = quantidade × valor_unitario` ao salvar um item
+    // (web/app/(app)/financeiro/page.tsx, `handleEdit`). Toda linha que sai
+    // daqui violando a invariante é um gasto que muda sozinho no primeiro
+    // clique — inclusive quando o dono só queria trocar o CENTRO DE CUSTO, que
+    // é a razão de aquele campo existir.
+    //
+    // Três tentativas até acertar, todas do Apolo, todas medidas:
+    //   2ª rodada: preservava o unitário lido → {q:1, vu:200, vt:600},
+    //              R$ 600 virava R$ 200.
+    //   4ª rodada: fabricava `0` para unitário ilegível → {q:3, vu:0, vt:6000},
+    //              R$ 6.000 viravam R$ 0. O zero não vinha da IA, era nosso.
+    //   5ª rodada: aceitava qualquer unitário POSITIVO → {q:3, vu:200,
+    //              vt:6000} passava (R$ 6.000 → R$ 600), e {q:5, vu:880,
+    //              vt:0} passava também (R$ 0 → R$ 4.400, gasto fantasma).
+    //
+    // A régua certa não é o SINAL do unitário, é a CONSISTÊNCIA dele com o
+    // total. Tolerância: 2 centavos ou 0,1% do total, o que for maior — cobre
+    // o arredondamento honesto que toda nota impressa tem, e recusa leitura
+    // errada. Fora da tolerância, o unitário é DERIVADO do total, que é o
+    // número que a nota fiscal realmente afirma e que o Financeiro soma.
+    const unitarioValido = unitarioLido !== null && unitarioLido >= 0 && unitarioLido <= VALOR_MAX_UNITARIO
+    const unitarioConfere = unitarioValido && quantidadeFinal !== null
+      && Math.abs(unitarioLido * quantidadeFinal - total) <= Math.max(0.02, total * 0.001)
+
+    const valorUnitario = quantidadeFinal === null
+      ? total                                   // NFS-e: quantidade vira 1 na conversão
+      : (unitarioConfere ? unitarioLido : total / quantidadeFinal)
+
+    // O unitário DERIVADO é o único que pode estourar: o lido já passou por
+    // VALOR_MAX_UNITARIO. `{q: 0.001, vt: 2.000.000}` deriva 2 bilhões, acima
+    // do `numeric(12,4)` da coluna — o INSERT morreria e levaria a NOTA INTEIRA
+    // junto. Linha assim é leitura errada, não compra: cai como as outras, e é
+    // CONTADA para o dono ver. Achado [baixo] do Apolo, 5ª rodada (27/08/2026).
+    if (valorUnitario > VALOR_MAX_UNITARIO) {
+      itensDescartados++
+      continue
+    }
 
     itens.push({
       descricao,
       quantidade: quantidadeFinal,
       unidade,
-      // Unitário absurdo vira 0 em vez de derrubar a linha: o que soma no
-      // Financeiro é o valor TOTAL, e perder a linha custaria mais.
-      //
-      // Sem quantidade impressa, o unitário É o total da linha — SEMPRE, mesmo
-      // que a IA tenha lido um unitário. `parseXmlNFSe` faz exatamente isto
-      // (`unitValue: valorTotal`, nfeProcessor.ts), e aqui a invariante que
-      // interessa é `quantidade 1 ⇒ unitário === total`.
-      //
-      // A versão anterior preservava o unitário lido, e isso GRAVAVA LINHA
-      // INCONSISTENTE — achado [alto] do Apolo, 3ª rodada (27/08/2026),
-      // executado ponta a ponta: NFS-e de "3 x hora técnica" com a quantidade
-      // ilegível virava `{quantidade: 1, unitário: 200, total: 600}`, e o
-      // Financeiro RECALCULA `valor_total = quantidade × valor_unitário` ao
-      // salvar (web/app/(app)/financeiro/page.tsx). Bastava o dono abrir o item
-      // para trocar o CENTRO DE CUSTO — que é a razão de o campo existir — e o
-      // gasto caía de R$ 600 para R$ 200. Num caso medido, de R$ 4.370 para
-      // R$ 0,01.
-      //
-      // (A justificativa antiga citava uma coluna de valor unitário na tela de
-      // conferência. Ela não existe: aquela tabela mostra Produto, Qtd, Un,
-      // Total, efeito e centro de custo. Conferido no arquivo.)
-      //
-      // O ramo do DANFE também não fabrica mais `0`: unitário ilegível ou
-      // absurdo vira `total / quantidade`, que preserva a mesma invariante.
-      // Achado [alto] do Apolo, 4ª rodada (27/08/2026), medido: um item
-      // `{q: 3, vu: null, vt: 6000}` era gravado com `vu: 0`, e o `handleEdit`
-      // do Financeiro zerava R$ 6.000 no primeiro salvar. O `0` não vinha da
-      // IA — era fabricado aqui. Centavo de arredondamento é o preço; R$ 6.000
-      // era o preço do outro jeito.
-      // Um `0` LIDO contra um total maior que zero é tão destrutivo quanto o
-      // fabricado — e cai no mesmo conserto. Zero só é aceito quando o total
-      // também é zero (linha de bonificação, que existe de verdade).
-      valorUnitario: quantidadeFinal === null
-        ? total
-        : (unitarioValido && (unitarioLido > 0 || total === 0)
-            ? unitarioLido
-            : total / quantidadeFinal),
+      valorUnitario,
       valorTotal:    total,
       // O DANFE imprime uma quantidade só — não existe qTrib/uTrib no papel.
       // Espelhar as comerciais faz processarNFe pular a conversão de unidade

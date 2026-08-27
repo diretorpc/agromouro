@@ -316,17 +316,32 @@ describe('sinaisDeNotaDeProduto — o papel contradiz o campo "Tipo"', () => {
     expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 1, unidade: 'un' }])).toBe(0)
     expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 3, unidade: 'H' }])).toBe(0)
     expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 40, unidade: 'M2' }])).toBe(0)
+    // Sem unidade nenhuma, quantidade sozinha continua não bastando.
+    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 1 }])).toBe(0)
   })
 
   it('unidade de mercadoria SOZINHA também não acende — precisa do par', () => {
+    // Sem quantidade impressa a nota tem cara de serviço de verdade: NFS-e não
+    // tem a coluna. A unidade sozinha vem do default 'un' do validador.
     expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: null, unidade: 'KG' }])).toBe(0)
   })
 
-  it('TON e MTN estão na lista — são as unidades que este projeto realmente usa', () => {
-    // A 1ª lista não tinha nenhuma das duas: TON é a do fixture de DANFE do
-    // repo, MTN é a do contrato de adubo da SYAGRI.
-    for (const un of ['TON', 'ton', 'MTN', 'SACO', 'FD', 'CENTO', 'KIT']) {
+  it('unidade que NINGUÉM previu acende — é lista de negação, não de permissão', () => {
+    // O ponto do achado [médio] da 5ª rodada: `uCom` é texto livre na NF-e, e
+    // lista de permissão erra por omissão — calando. Duas versões dela já
+    // tinham errado justo nas unidades que este projeto usa (TON do fixture de
+    // DANFE, MTN do contrato da SYAGRI), e uma DANFE de 8 linhas com
+    // PEÇA/FRASCO/BALDE/PACOTE não acendia aviso nenhum.
+    for (const un of ['TON', 'ton', 'MTN', 'SACO', 'FD', 'CENTO', 'KIT',
+                      'PEÇA', 'FRASCO', 'BALDE', 'PACOTE', 'MT', 'RESMA', 'xyz']) {
       expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 1, unidade: un }])).toBe(1)
+    }
+  })
+
+  it('as unidades de SERVIÇO de verdade continuam quietas', () => {
+    for (const un of ['un', 'UN', 'UND', 'UNIDADE', 'H', 'HORA', 'HRS',
+                      'DIA', 'MES', 'M2', 'M³', 'SERV', 'VB', '']) {
+      expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 3, unidade: un }])).toBe(0)
     }
   })
 

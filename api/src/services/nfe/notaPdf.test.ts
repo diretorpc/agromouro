@@ -662,3 +662,53 @@ describe('converterParaNFeData — NFS-e sai sem CFOP e sem NCM, como o XML', ()
     expect(nfe.items[0].servico).toBeUndefined()
   })
 })
+
+describe('validarNotaLida — a invariante quantidade × unitário === total', () => {
+  // A tela Financeiro RECALCULA `valor_total = quantidade × valor_unitario` ao
+  // salvar um item. Toda linha que sai daqui violando a invariante é um gasto
+  // que muda sozinho no primeiro clique — inclusive num clique que só queria
+  // trocar o centro de custo. Três rodadas do Apolo para acertar a régua:
+  // preservar o unitário lido (2ª), fabricar 0 (4ª), aceitar qualquer positivo
+  // (5ª). A régua certa é CONSISTÊNCIA com o total, não o sinal.
+
+  it('unitário positivo mas INCONSISTENTE é derivado do total', () => {
+    // {q:3, vu:200, vt:6000}: passava por ser positivo, e o Financeiro derrubava
+    // R$ 6.000 para R$ 600.
+    const r = validarNotaLida(lida({ itens: [item({ quantidade: 3, valorUnitario: 200, valorTotal: 6000 })] }), HOJE)
+    expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(2000)
+  })
+
+  it('unitário positivo contra total ZERO também é derivado — gasto fantasma', () => {
+    // {q:5, vu:880, vt:0}: passava pela cláusula que protegia a bonificação, e o
+    // Financeiro criava R$ 4.400 do nada.
+    const r = validarNotaLida(lida({ itens: [item({ quantidade: 5, valorUnitario: 880, valorTotal: 0 })] }), HOJE)
+    expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(0)
+  })
+
+  it('unitário CONSISTENTE é preservado como impresso', () => {
+    const r = validarNotaLida(lida({ itens: [item({ quantidade: 3, valorUnitario: 2000, valorTotal: 6000 })] }), HOJE)
+    expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(2000)
+  })
+
+  it('arredondamento honesto da nota impressa NÃO é reescrito', () => {
+    // 3 × 33,33 = 99,99 contra total 100,00. Diferença de 1 centavo: é como a
+    // nota foi impressa, e reescrever perderia fidelidade sem ganhar nada.
+    const r = validarNotaLida(lida({ itens: [item({ quantidade: 3, valorUnitario: 33.33, valorTotal: 100 })] }), HOJE)
+    expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(33.33)
+  })
+
+  it('a tolerância acompanha o tamanho da nota (0,1%), não é 2 centavos fixos', () => {
+    // 46.000 KG × 2,9783 = 137.001,80 contra total 137.000: R$ 1,80 de deriva
+    // em nota grande é arredondamento, não erro de leitura.
+    const r = validarNotaLida(lida({ itens: [item({ quantidade: 46000, valorUnitario: 2.9783, valorTotal: 137000 })] }), HOJE)
+    expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(2.9783)
+  })
+
+  it('unitário derivado que estoura o teto DERRUBA a linha, e ela é contada', () => {
+    // {q: 0.001, vt: 2.000.000} deriva 2 bilhões — acima do numeric(12,4) da
+    // coluna. Gravar mataria o INSERT e levaria a NOTA INTEIRA junto.
+    const r = validarNotaLida(lida({ itens: [item(), item({ quantidade: 0.001, valorUnitario: null, valorTotal: 2_000_000 })] }), HOJE)
+    expect(r.status === 'nota' && r.nota.itens).toHaveLength(1)
+    expect(r.status === 'nota' && r.itensDescartados).toBe(1)
+  })
+})
