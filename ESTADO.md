@@ -153,26 +153,33 @@ abrir para trocar o centro de custo ainda apaga o gasto. Subiu para o L3 do pain
     não acendia aviso nenhum. Virou **lista de negação**: o conjunto que uma NFS-e
     legítima usa é pequeno e conhecido, e unidade que ninguém previu passa a ACENDER.
 
-**⛔ ABERTO — não mergear sem decidir (2 [alto] da 5ª rodada, os dois na mesma tela):**
+**Os 2 [alto] da trava de duplicidade — FECHADOS (decisão do Matheus: consertar aqui):**
 
-- **A trava de duplicidade continua contornável em dois passos.** `identidadeEditada`
-  nunca volta para `false`, e mexer no campo Número (mesmo desfazendo) já a liga. Depois
-  disso, trocar o Tipo grava a nota uma segunda vez — estoque e gasto em dobro.
-- **Nota legítima do outro modelo não tem saída.** NF-e nº 500 (peças) e NFS-e nº 500
-  (mão de obra) do mesmo fornecedor é o caso que a migration 011 descreve no cabeçalho.
-  Se a IA errar o Tipo, corrigi-lo — a ação CERTA — deixa o botão travado, e o texto do
-  banner ainda manda apagar a nota já gravada, que está correta.
+20. **[alto] A trava era contornável em dois passos.** `identidadeEditada` era flag
+    pegajosa: qualquer tecla no campo Número a ligava e nada a desligava. Apagar um
+    dígito e redigitar o mesmo matava o aviso para sempre — e daí trocar o Tipo gravava a
+    nota uma segunda vez. Agora é **derivado**: compara a identidade atual com a que a IA
+    leu (`lidoOriginal`). Desfazer a edição traz o aviso de volta.
+21. **[alto] Nota legítima do outro modelo não tinha saída.** NF-e nº 500 (peças) +
+    NFS-e nº 500 (mão de obra) do mesmo fornecedor é o par que a migration 011 descreve
+    no cabeçalho. Se a IA errasse o Tipo, corrigi-lo — a ação CERTA — deixava o botão
+    travado, e o banner mandava apagar a nota gravada, que estava correta. *(Essa metade
+    era regressão minha da 4ª rodada: antes gravava, o que era pior.)*
 
-Os dois caem com a MESMA correção: a rota devolver `jaExisteNfe` e `jaExisteNfse` (as
-duas consultas já existem; falta tirar o curto-circuito `jaExiste ? null : …`) e a
-duplicidade ser avaliada contra o `modelo` ATUAL, numa função pura em
-`regras-conferencia.ts` — mesmo padrão de `salvar-talhao.ts`. Isso também conserta o
-rótulo do banner `existeNoOutroModelo`, que hoje se inverte quando o dono obedece a ele.
+**Como:** a rota parou de curto-circuitar `existeNoOutroModelo` e passou a devolver
+`notasNoBanco: { nfe, nfse }` — as duas consultas já existiam. A decisão saiu do JSX e
+virou `travaDeDuplicidade`, função pura com 9 testes, avaliada contra o modelo ATUAL da
+tela. `jaExiste` e `existeNoOutroModelo` continuam no corpo da resposta com o mesmo
+significado, porque web e API sobem separados. De quebra, o rótulo do banner passou a sair
+do modelo onde a gêmea ESTÁ — antes ele se invertia quando o dono obedecia a ele.
 
-**Padrão que ficou claro em 5 rodadas:** 3 dos [alto] nasceram em comportamento novo de
-TELA, e o `web` não tem testing-library — dá para arrancar uma trava do JSX com as 286
-verdes e o `tsc` limpo. Extrair decisão para função pura tem pego mais que testar
-componente, e é o caminho mais barato antes de instalar biblioteca nova.
+**Padrão que ficou claro em 5 rodadas, e a lição que ficou:** 3 dos [alto] nasceram em
+comportamento novo de TELA, e o `web` não tem testing-library — dá para arrancar uma trava
+do JSX com a suíte verde e o `tsc` limpo. **A resposta barata não foi instalar
+testing-library: foi tirar a decisão do JSX.** `travaDeDuplicidade` prova de mesa, em 9
+testes, dois defeitos que cinco rodadas de leitura não tinham pegado. Mesmo padrão de
+`salvar-talhao.ts` e `deletar-linha.ts`. O que ainda não tem teste é só o que sobrou no
+JSX: o texto dos banners e a ligação entre eles e as funções puras.
 
 **Como medir a exposição das linhas já gravadas** (duas classes, não uma — sem
 tolerância o número conta arredondamento honesto como defeito):

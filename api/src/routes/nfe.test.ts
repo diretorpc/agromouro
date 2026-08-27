@@ -165,6 +165,37 @@ describe('POST /nfe/ler-pdf', () => {
     expect(res.body.existeNoOutroModelo).toBeNull()
   })
 
+  it('devolve as DUAS consultas por modelo, mesmo quando a nota ja existe', async () => {
+    // Achado [alto] do Apolo, 5a rodada (27/08/2026): `existeNoOutroModelo` era
+    // curto-circuitado quando `jaExiste` estava preenchido, e a tela ficava CEGA
+    // para a gemea do outro modelo justo quando o dono ia mexer no campo "Tipo".
+    // Sem saber das duas, ela travava a nota LEGITIMA do outro modelo (NF-e n 500
+    // de pecas + NFS-e n 500 de mao de obra, o par da migration 011).
+    lerNotaPdfMock.mockResolvedValue({ status: 'nota', nota: NOTA_LIDA, itensDescartados: 0, duplicatasDescartadas: 0 })
+    nfeJaProcessadaMock.mockResolvedValue(true)
+    estado.nota = { id: 'ja', numero: '58717', data_emissao: '2026-06-08', emitente_nome: 'SOLOS' }
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA, body: corpoValido })
+    await handler(req, res, next)
+    // NOTA_LIDA e' 'nfe': a gemea encontrada entra nos dois lados porque o mock
+    // devolve a mesma linha para qualquer consulta — o que importa e' que o
+    // campo do OUTRO modelo deixou de vir vazio.
+    expect(res.body.notasNoBanco.nfe.id).toBe('ja')
+    expect(res.body.notasNoBanco.nfse.id).toBe('ja')
+    // E os campos antigos seguem com o MESMO significado, para a web mais velha
+    // que esta API (elas sobem separadas).
+    expect(res.body.jaExiste.id).toBe('ja')
+    expect(res.body.existeNoOutroModelo).toBeNull()
+  })
+
+  it('sem gemea nenhuma, notasNoBanco vem com os dois lados nulos', async () => {
+    lerNotaPdfMock.mockResolvedValue({ status: 'nota', nota: NOTA_LIDA, itensDescartados: 0, duplicatasDescartadas: 0 })
+    nfeJaProcessadaMock.mockResolvedValue(false)
+    estado.nota = null
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA, body: corpoValido })
+    await handler(req, res, next)
+    expect(res.body.notasNoBanco).toEqual({ nfe: null, nfse: null })
+  })
+
   it('devolve as familias de efeito e a familia de cada item', async () => {
     // Achado 2 do Apolo: CFOP ilegivel vira "compra" por omissao e dobra o
     // gasto numa nota de entrega futura. A tela deixa o dono escolher o EFEITO,

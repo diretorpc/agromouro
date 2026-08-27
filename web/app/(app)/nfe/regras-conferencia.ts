@@ -224,6 +224,67 @@ export function linhasSemQuantidade(
   return itens.filter(i => i.quantidade === null).length
 }
 
+// ─── A trava de duplicidade ─────────────────────────────────────────────────
+// Mora aqui, e não dentro do componente, porque foi de dentro do componente que
+// saíram os dois achados [alto] da 5ª rodada do Apolo (27/08/2026) — e os dois
+// eram de mesa, provaveis sem abrir navegador. Mesmo padrão de
+// `salvar-talhao.ts` e `deletar-linha.ts`.
+export type NotaGravada = { id: string; numero: string; data_emissao: string; emitente_nome: string }
+export type NotasNoBanco = { nfe: NotaGravada | null; nfse: NotaGravada | null }
+
+// Duas coisas que a versão anterior errava, cada uma num sentido:
+//
+// 1. A duplicidade era avaliada contra o modelo da LEITURA, não contra o modelo
+//    ATUAL da tela. Nota legítima do outro modelo (NF-e nº 500 de peças +
+//    NFS-e nº 500 de mão de obra — o par que a migration 011 descreve) ficava
+//    travada mesmo depois de o dono corrigir o Tipo, que é a ação CERTA. E o
+//    banner ainda mandava apagar a nota já gravada, que estava correta.
+//
+// 2. "O dono mexeu na identidade" era uma FLAG PEGAJOSA (`identidadeEditada`),
+//    ligada por qualquer tecla no campo Número e nunca desligada. Apagar um
+//    dígito e redigitar o mesmo já matava o aviso para sempre — e daí trocar o
+//    Tipo gravava a nota uma segunda vez, com estoque e gasto em dobro. Agora é
+//    DERIVADO: compara a identidade atual com a que a IA leu. Desfazer a edição
+//    traz o aviso de volta, como tem que ser.
+export function travaDeDuplicidade(params: {
+  modeloAtual:  'nfe' | 'nfse'
+  notasNoBanco: NotasNoBanco | null | undefined
+  // API mais velha que esta web (rollback): só sabemos que existe UMA nota
+  // repetida, não em qual modelo. Trava nos dois — direção segura.
+  jaExisteLegado: NotaGravada | null | undefined
+  numeroAtual:  string
+  cnpjAtual:    string
+  numeroLido:   string | undefined
+  cnpjLido:     string | undefined
+}): {
+  gemeoNoModeloAtual: NotaGravada | null
+  gemeoNoOutroModelo: NotaGravada | null
+  modeloDoOutroGemeo: 'nfe' | 'nfse'
+  identidadeMudou:    boolean
+  duplicataValendo:   boolean
+} {
+  const outro = params.modeloAtual === 'nfe' ? 'nfse' : 'nfe'
+
+  // Só conta como "mudou" quando a tela SABE o que foi lido. Sem `numeroLido`,
+  // assumir que mudou desligaria a trava — a direção errada.
+  const identidadeMudou =
+    (params.numeroLido !== undefined && params.numeroAtual !== params.numeroLido)
+    || (params.cnpjLido !== undefined && params.cnpjAtual !== params.cnpjLido)
+
+  const gemeoNoModeloAtual = params.notasNoBanco
+    ? params.notasNoBanco[params.modeloAtual]
+    : (params.jaExisteLegado ?? null)
+  const gemeoNoOutroModelo = params.notasNoBanco ? params.notasNoBanco[outro] : null
+
+  return {
+    gemeoNoModeloAtual,
+    gemeoNoOutroModelo,
+    modeloDoOutroGemeo: outro,
+    identidadeMudou,
+    duplicataValendo: !!gemeoNoModeloAtual && !identidadeMudou,
+  }
+}
+
 // A condição que HABILITA o botão "Confirmar e gravar" — devolve `true`
 // quando pode gravar, o INVERSO do que o componente usa em `disabled`.
 //

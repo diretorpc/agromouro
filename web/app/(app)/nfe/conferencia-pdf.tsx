@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
 import { CATEGORIAS_FINANCEIRAS } from '@/lib/centro-custo'
-import { aplicarFamiliaATodos, cfopAposEscolha, sinaisDeNotaDeProduto, itemTrancado, linhasSemQuantidade, pendenciasDeCfop, podeGravar, type FamiliaItem } from './regras-conferencia'
+import { aplicarFamiliaATodos, cfopAposEscolha, sinaisDeNotaDeProduto, itemTrancado, linhasSemQuantidade, pendenciasDeCfop, podeGravar, travaDeDuplicidade, type FamiliaItem, type NotasNoBanco } from './regras-conferencia'
 
 // Toda a UI do modo "Upload PDF" mora aqui, fora de page.tsx (que já passa de
 // 700 linhas). O fluxo tem DOIS passos porque a leitura é da IA, não do dado
@@ -81,6 +81,9 @@ type RespostaLeitura = {
   // Aviso, não bloqueio: se a IA classificou errado, as duas travas de
   // duplicidade procuram no modelo errado e a compra entra duas vezes.
   existeNoOutroModelo?: NotaNoBanco | null
+  // As duas consultas, por modelo. Ausente quando a API é mais velha que esta
+  // tela — `travaDeDuplicidade` cai no legado e trava nos dois modelos.
+  notasNoBanco?: NotasNoBanco | null
   familias?: FamiliaItem[]
 }
 
@@ -118,7 +121,7 @@ export function ConferenciaPdf(
   // Se o dono corrigir qualquer um dos três, o aviso envelheceu e não pode
   // continuar travando o botão (achado do Apolo, 24/08/2026: número lido errado
   // que casava com nota existente deixava a nota real sem caminho de entrada).
-  const [identidadeEditada, setIdentidadeEditada] = useState(false)
+
   // Foto do que a IA leu, tirada no instante em que a leitura chega — antes de
   // qualquer edição. Mostrado ao lado dos campos para o dono CONFERIR contra o
   // papel, em vez de só confiar que "o servidor recusa se for duplicata": um
@@ -134,7 +137,6 @@ export function ConferenciaPdf(
     setNomeArquivo(file.name)
     setBase64(null)
     setLidoOriginal(null)
-    setIdentidadeEditada(false)
     setConfirmouEfeito(false)
     if (file.size > LIMITE_BYTES) {
       setErro(`Arquivo grande demais (${(file.size / 1024 / 1024).toFixed(1)} MB). O limite é 10 MB.`)
@@ -274,20 +276,11 @@ export function ConferenciaPdf(
 
   function editar<K extends keyof NotaLida>(campo: K, valor: NotaLida[K]) {
     if (!nota) return
-    // `modelo` NÃO entra aqui. Achado [alto] do Apolo, 4ª rodada (27/08/2026),
-    // executado: trocar o Tipo apagava o banner "Esta nota já está no sistema" e
-    // habilitava o gravar — e o servidor NÃO recupera, porque `modelo` faz parte
-    // da chave de duplicidade (`nfeJaProcessada(..., nota.modelo)` em
-    // gravarNotaDoPdf.ts + índice único da migration 011). A nota gravada como
-    // NFS-e não colide com a mesma nota gravada como NF-e: estoque e gasto
-    // entravam duas vezes, calados. O banner substituto ainda dizia "a
-    // conferência é refeita no servidor ao gravar", que para troca de modelo é
-    // falso por construção.
-    //
-    // A doutrina do campo é "o aviso envelheceu porque o número/CNPJ que o
-    // gerou estava errado". Trocar o modelo não invalida a coincidência — só
-    // desvia a consulta para outro lugar. Por isso o aviso fica de pé.
-    if (campo === 'numero' || campo === 'emitenteCnpj') setIdentidadeEditada(true)
+    // Nada de flag de "identidade editada" aqui: quem decide isso é
+    // `travaDeDuplicidade`, comparando o valor ATUAL com o que a IA leu. A flag
+    // pegajosa que morava aqui ligava com qualquer tecla e nunca desligava —
+    // apagar um dígito e redigitar o mesmo matava o aviso de duplicidade para
+    // sempre (achado [alto] do Apolo, 5ª rodada, 27/08/2026).
     setNota({ ...nota, [campo]: valor })
   }
 
@@ -398,7 +391,16 @@ export function ConferenciaPdf(
   const pareceProduto   = sinaisDeNotaDeProduto(nota.modelo, nota.itens)
   const semQuantidade   = linhasSemQuantidade(nota.modelo, nota.itens)
   // O aviso só vale enquanto o dono não mexer na identificação da nota.
-  const duplicataValendo = leitura.jaExiste && !identidadeEditada
+  const dup = travaDeDuplicidade({
+    modeloAtual:    nota.modelo,
+    notasNoBanco:   leitura.notasNoBanco,
+    jaExisteLegado: leitura.jaExiste,
+    numeroAtual:    nota.numero,
+    cnpjAtual:      nota.emitenteCnpj,
+    numeroLido:     lidoOriginal?.numero,
+    cnpjLido:       lidoOriginal?.emitenteCnpj,
+  })
+  const duplicataValendo = dup.duplicataValendo
   // API antiga não manda `familias`: sem a lista não há como oferecer o conserto,
   // e um botão que não conserta nada é pior que nenhum botão.
   const temFamiliaCompra = (leitura.familias ?? []).some(f => f.chave === 'compra')
@@ -409,31 +411,37 @@ export function ConferenciaPdf(
 
   return (
     <div className="space-y-4">
+      {/* Os três avisos de duplicidade saem todos de `travaDeDuplicidade`, que é
+          função pura e testada — a decisão morava aqui dentro e foi de onde
+          saíram os dois achados [alto] da 5ª rodada do Apolo (27/08/2026). */}
       {duplicataValendo && (
         <div className="rounded-md bg-red-50 text-red-700 px-3 py-2 text-sm">
-          <strong>Esta nota já está no sistema</strong>
-          {leitura.jaExiste?.data_emissao ? ` (entrou em ${ddmmaaaa(leitura.jaExiste.data_emissao)})` : ''}.
+          <strong>Esta nota já está no sistema como {dup.modeloDoOutroGemeo === 'nfse' ? 'nota de produto (NF-e)' : 'nota de serviço (NFS-e)'}</strong>
+          {dup.gemeoNoModeloAtual?.data_emissao ? ` (entrou em ${ddmmaaaa(dup.gemeoNoModeloAtual.data_emissao)})` : ''}.
           {' '}Gravar de novo somaria estoque e gasto duas vezes.
           {' '}Se o número ou o CNPJ estiverem lidos errado, corrija abaixo — o sistema confere
           de novo com o número corrigido.
-          {' '}<strong>Trocar o campo "Tipo" não resolve:</strong> o tipo faz parte da chave de
-          {' '}duplicidade, então a nota entraria uma SEGUNDA vez, com estoque e gasto contados
-          {' '}em dobro. Se a nota já gravada é que está com o tipo errado, apague ela primeiro.
         </div>
       )}
 
-      {leitura.jaExiste && identidadeEditada && (
+      {dup.gemeoNoModeloAtual && dup.identidadeMudou && (
         <div className="rounded-md bg-amber-50 text-amber-800 px-3 py-2 text-sm">
           Você corrigiu a identificação da nota. A conferência de duplicidade é refeita no
           servidor ao gravar — se ainda for a mesma nota, ela é recusada lá.
         </div>
       )}
 
-      {leitura.existeNoOutroModelo && (
+      {/* O rótulo sai do modelo em que a gêmea foi ENCONTRADA, não do `Tipo`
+          atual da tela. Com o rótulo derivado do Tipo, obedecer a este aviso
+          invertia o texto dele: o dono trocava o Tipo e o banner passava a
+          apontar o modelo errado, justo no clique que ele mesmo pediu. */}
+      {dup.gemeoNoOutroModelo && (
         <div className="rounded-md bg-amber-50 text-amber-800 px-3 py-2 text-sm">
-          Já existe uma nota <strong>{nota.modelo === 'nfe' ? 'de serviço (NFS-e)' : 'de produto (NF-e)'}</strong>{' '}
-          com este mesmo número e fornecedor. Confira o campo <strong>Tipo</strong>: se o tipo estiver
-          errado, o sistema não reconhece a nota repetida e a compra entra duas vezes.
+          Já existe uma nota <strong>{dup.modeloDoOutroGemeo === 'nfe' ? 'de produto (NF-e)' : 'de serviço (NFS-e)'}</strong>{' '}
+          com este mesmo número e fornecedor
+          {dup.gemeoNoOutroModelo.data_emissao ? ` (entrou em ${ddmmaaaa(dup.gemeoNoOutroModelo.data_emissao)})` : ''}.
+          {' '}Isso é normal quando o fornecedor manda as duas — número de NF-e e de NFS-e são
+          {' '}sequências separadas. Só confira o campo <strong>Tipo</strong> antes de gravar.
         </div>
       )}
 

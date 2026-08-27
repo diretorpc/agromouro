@@ -200,9 +200,25 @@ nfeRoutes.post('/ler-pdf', async (req, res, next) => {
     // servico:true em NFS-e), divergência que nenhuma tela mostra. Uma consulta
     // a mais, sem custo de IA, e a tela avisa em vez de deixar passar.
     const outroModelo = nota.modelo === 'nfe' ? 'nfse' : 'nfe'
-    const existeNoOutroModelo = jaExiste
-      ? null
-      : await notaNoBanco(nota.numero, nota.emitenteCnpj, fazendaId, outroModelo)
+    const noOutroModelo = await notaNoBanco(nota.numero, nota.emitenteCnpj, fazendaId, outroModelo)
+
+    // As DUAS consultas, sempre, e o resultado entregue por modelo. Antes o
+    // `existeNoOutroModelo` era curto-circuitado quando `jaExiste` estava
+    // preenchido — os dois banners nunca coexistiam, e a tela ficava CEGA para
+    // o gêmeo do outro modelo justo quando o dono ia mexer no campo "Tipo".
+    // Achados [alto] do Apolo, 5ª rodada (27/08/2026): sem saber dos dois, a
+    // tela travava a nota LEGÍTIMA do outro modelo (NF-e nº 500 de peças +
+    // NFS-e nº 500 de mão de obra, o par que a migration 011 descreve no
+    // cabeçalho) e deixava passar a duplicada de verdade.
+    //
+    // `jaExiste` e `existeNoOutroModelo` continuam no corpo, com o MESMO
+    // significado de antes, porque web e API sobem separados: uma web mais
+    // velha que esta API precisa continuar enxergando o aviso de duplicidade.
+    const notasNoBanco = {
+      nfe:  nota.modelo === 'nfe'  ? jaExiste : noOutroModelo,
+      nfse: nota.modelo === 'nfse' ? jaExiste : noOutroModelo,
+    }
+    const existeNoOutroModelo = jaExiste ? null : noOutroModelo
 
     // A tela deixa o dono corrigir o EFEITO de cada item (Achado 2 do Apolo):
     // CFOP ilegível vira "compra" por omissão, e numa nota de entrega futura
@@ -226,7 +242,7 @@ nfeRoutes.post('/ler-pdf', async (req, res, next) => {
 
     res.status(200).json({
       status: 'nota', nota: notaComFamilias, itensDescartados, duplicatasDescartadas, jaExiste,
-      existeNoOutroModelo, familias: FAMILIAS_ITEM,
+      existeNoOutroModelo, notasNoBanco, familias: FAMILIAS_ITEM,
     })
   } catch (err) {
     next(err)

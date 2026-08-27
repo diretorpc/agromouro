@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { aplicarFamiliaATodos, sinaisDeNotaDeProduto, itemTrancado, cfopAposEscolha, linhasSemQuantidade, pendenciasDeCfop, podeGravar, precisaConfirmarEfeitoIncomum, type FamiliaItem } from './regras-conferencia'
+import { travaDeDuplicidade, aplicarFamiliaATodos, sinaisDeNotaDeProduto, itemTrancado, cfopAposEscolha, linhasSemQuantidade, pendenciasDeCfop, podeGravar, precisaConfirmarEfeitoIncomum, type FamiliaItem } from './regras-conferencia'
 
 const COMPRA: FamiliaItem            = { chave: 'compra',           rotulo: 'Compra normal',    cfop: '5102', contaComoCompra: true }
 const ENTREGA_FATURADA: FamiliaItem  = { chave: 'entrega-faturada', rotulo: 'Entrega faturada',  cfop: '5117', contaComoCompra: false }
@@ -396,5 +396,84 @@ describe('linhasSemQuantidade — nota de produto exige quantidade impressa', ()
       quantidadeItens: 1, semCfop: 0, familias: [{ chave: 'compra' }],
       duplicataValendo: null, gravando: false,
     })).not.toThrow()
+  })
+})
+
+describe('travaDeDuplicidade — os dois [alto] da 5ª rodada, agora provados de mesa', () => {
+  const NF = { id: 'a', numero: '500', data_emissao: '2026-07-01', emitente_nome: 'X' }
+  const SV = { id: 'b', numero: '500', data_emissao: '2026-07-02', emitente_nome: 'X' }
+  const base = { numeroAtual: '500', cnpjAtual: '04063805000135', numeroLido: '500', cnpjLido: '04063805000135' }
+
+  it('nota LEGÍTIMA do outro modelo destrava ao corrigir o Tipo', () => {
+    // NF-e nº 500 (peças) já gravada; sobe o PDF da NFS-e nº 500 (mão de obra).
+    // O SCHEMA manda "na dúvida, nfe", então a IA rotula errado e a tela trava.
+    // Corrigir o Tipo é a ação CERTA e tem que liberar — antes continuava
+    // travado, e o banner ainda mandava apagar a nota gravada, que está certa.
+    const comoNfe = travaDeDuplicidade({ ...base, modeloAtual: 'nfe', notasNoBanco: { nfe: NF, nfse: null }, jaExisteLegado: NF })
+    expect(comoNfe.duplicataValendo).toBe(true)
+
+    const comoNfse = travaDeDuplicidade({ ...base, modeloAtual: 'nfse', notasNoBanco: { nfe: NF, nfse: null }, jaExisteLegado: NF })
+    expect(comoNfse.duplicataValendo).toBe(false)
+    expect(comoNfse.gemeoNoOutroModelo).toBe(NF)   // vira aviso, não trava
+  })
+
+  it('nota REPETIDA de verdade continua travada nos dois modelos', () => {
+    for (const modelo of ['nfe', 'nfse'] as const) {
+      const r = travaDeDuplicidade({ ...base, modeloAtual: modelo, notasNoBanco: { nfe: NF, nfse: SV }, jaExisteLegado: NF })
+      expect(r.duplicataValendo).toBe(true)
+    }
+  })
+
+  it('desfazer a edição do número TRAZ o aviso de volta', () => {
+    // A flag pegajosa ligava com qualquer tecla e nunca desligava: apagar um
+    // dígito e redigitar o mesmo matava o aviso para sempre, e daí trocar o
+    // Tipo gravava a nota uma segunda vez.
+    const editando = travaDeDuplicidade({ ...base, numeroAtual: '50', modeloAtual: 'nfe', notasNoBanco: { nfe: NF, nfse: null }, jaExisteLegado: NF })
+    expect(editando.duplicataValendo).toBe(false)
+    expect(editando.identidadeMudou).toBe(true)
+
+    const desfeito = travaDeDuplicidade({ ...base, modeloAtual: 'nfe', notasNoBanco: { nfe: NF, nfse: null }, jaExisteLegado: NF })
+    expect(desfeito.duplicataValendo).toBe(true)
+    expect(desfeito.identidadeMudou).toBe(false)
+  })
+
+  it('editar o número e DEPOIS trocar o Tipo não abre a porta', () => {
+    // O caminho de dois passos do achado [alto]: com o número de volta ao
+    // original, a troca de Tipo encontra a gêmea e trava.
+    const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfse', notasNoBanco: { nfe: NF, nfse: SV }, jaExisteLegado: NF })
+    expect(r.duplicataValendo).toBe(true)
+  })
+
+  it('CNPJ corrigido também expira o aviso — é o motivo do campo existir', () => {
+    const r = travaDeDuplicidade({ ...base, cnpjAtual: '99999999000199', modeloAtual: 'nfe', notasNoBanco: { nfe: NF, nfse: null }, jaExisteLegado: NF })
+    expect(r.duplicataValendo).toBe(false)
+  })
+
+  it('o rótulo sai do modelo onde a gêmea ESTÁ, não do Tipo da tela', () => {
+    // Com o rótulo derivado do Tipo, obedecer ao aviso invertia o texto dele.
+    const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfse', notasNoBanco: { nfe: NF, nfse: null }, jaExisteLegado: null })
+    expect(r.modeloDoOutroGemeo).toBe('nfe')
+    expect(r.gemeoNoOutroModelo).toBe(NF)
+  })
+
+  it('API mais velha que a tela: trava nos DOIS modelos — direção segura', () => {
+    // Rollback da API. Só sabemos que existe uma repetida, não em qual modelo.
+    for (const modelo of ['nfe', 'nfse'] as const) {
+      const r = travaDeDuplicidade({ ...base, modeloAtual: modelo, notasNoBanco: undefined, jaExisteLegado: NF })
+      expect(r.duplicataValendo).toBe(true)
+    }
+  })
+
+  it('sem gêmea nenhuma, nada trava', () => {
+    const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfe', notasNoBanco: { nfe: null, nfse: null }, jaExisteLegado: null })
+    expect(r.duplicataValendo).toBe(false)
+    expect(r.gemeoNoOutroModelo).toBeNull()
+  })
+
+  it('sem saber o que a IA leu, o aviso NÃO é desligado', () => {
+    // Assumir "mudou" quando `lidoOriginal` ainda não chegou desligaria a trava.
+    const r = travaDeDuplicidade({ modeloAtual: 'nfe', notasNoBanco: { nfe: NF, nfse: null }, jaExisteLegado: NF,
+      numeroAtual: '500', cnpjAtual: '040', numeroLido: undefined, cnpjLido: undefined })
+    expect(r.duplicataValendo).toBe(true)
   })
 })
