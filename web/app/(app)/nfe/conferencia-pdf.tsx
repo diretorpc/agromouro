@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
 import { CATEGORIAS_FINANCEIRAS } from '@/lib/centro-custo'
-import { aplicarFamiliaATodos, cfopAposEscolha, sinaisDeNotaDeProduto, itemTrancado, linhasSemQuantidade, pendenciasDeCfop, podeGravar, travaDeDuplicidade, type FamiliaItem, type NotasNoBanco } from './regras-conferencia'
+import { aplicarFamiliaATodos, cfopAposEscolha, sinaisDeNotaDeProduto, itemTrancado, linhasSemQuantidade, pendenciasDeCfop, podeGravar, travaDeDuplicidade, type FamiliaItem, type NotaComoLida, type NotasNoBanco } from './regras-conferencia'
 
 // Toda a UI do modo "Upload PDF" mora aqui, fora de page.tsx (que já passa de
 // 700 linhas). O fluxo tem DOIS passos porque a leitura é da IA, não do dado
@@ -130,7 +130,7 @@ export function ConferenciaPdf(
   // `modelo` entra aqui porque `travaDeDuplicidade` precisa saber o que a IA leu
   // no campo Tipo para distinguir a gêmea legítima da própria nota com o Tipo
   // virado à mão (achado [alto] do Apolo, 6ª rodada, 27/08/2026).
-  const [lidoOriginal, setLidoOriginal] = useState<{ numero: string; emitenteCnpj: string; modelo: 'nfe' | 'nfse'; valorTotal: number; dataEmissao: string } | null>(null)
+  const [lidoOriginal, setLidoOriginal] = useState<NotaComoLida | null>(null)
   // Marcado pelo dono quando a nota INTEIRA caiu fora de "compra normal" e ele
   // confirma que é isso mesmo. Ver precisaConfirmarEfeitoIncomum.
   const [confirmouEfeito, setConfirmouEfeito] = useState(false)
@@ -164,7 +164,7 @@ export function ConferenciaPdf(
       const r = await api.post<RespostaLeitura>('/nfe/ler-pdf', { arquivo: base64, nomeArquivo })
       setLeitura(r)
       setNota(r.nota)
-      setLidoOriginal({ numero: r.nota.numero, emitenteCnpj: r.nota.emitenteCnpj, modelo: r.nota.modelo, valorTotal: r.nota.valorTotal, dataEmissao: r.nota.dataEmissao })
+      setLidoOriginal(r.nota)   // a leitura inteira, congelada: quem escolhe o campo é a função pura
     } catch (err) {
       setErro(err instanceof Error ? err.message : 'Erro ao ler o PDF.')
     } finally {
@@ -394,20 +394,14 @@ export function ConferenciaPdf(
   const pareceProduto   = sinaisDeNotaDeProduto(nota.modelo, nota.itens)
   const semQuantidade   = linhasSemQuantidade(nota.modelo, nota.itens)
   // O aviso só vale enquanto o dono não mexer na identificação da nota.
+  // Os dois objetos INTEIROS, não campo a campo: ligar o fio errado aqui foi a
+  // causa dos dois [alto] da 7ª rodada do Apolo (27/08/2026), e nenhum teste
+  // nem o `tsc` enxergavam, porque os candidatos tinham o mesmo tipo.
   const dup = travaDeDuplicidade({
-    modeloAtual:    nota.modelo,
+    atual:          nota,
+    lido:           lidoOriginal,
     notasNoBanco:   leitura.notasNoBanco,
     jaExisteLegado: leitura.jaExiste,
-    numeroAtual:    nota.numero,
-    cnpjAtual:      nota.emitenteCnpj,
-    numeroLido:     lidoOriginal?.numero,
-    cnpjLido:       lidoOriginal?.emitenteCnpj,
-    modeloLido:     lidoOriginal?.modelo,
-    // LIDOS, não os campos da tela: valor e data são editáveis e NÃO fazem
-    // parte da chave de duplicidade. Passar os da tela deixava o dono desligar
-    // a trava corrigindo um centavo (achado [alto] do Apolo, 7ª rodada).
-    valorTotalLido:  lidoOriginal?.valorTotal ?? nota.valorTotal,
-    dataEmissaoLida: lidoOriginal?.dataEmissao ?? nota.dataEmissao,
   })
   const duplicataValendo = dup.duplicataValendo
   // API antiga não manda `familias`: sem a lista não há como oferecer o conserto,

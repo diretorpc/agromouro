@@ -315,22 +315,29 @@ export function pareceMesmoDocumento(
 // Os dois chegavam com o mesmo estado, e a função escolhia sempre (a): um
 // clique no campo "Tipo" liberava o botão, e a tela ainda chamava o estado de
 // "normal". `modeloLido` + `pareceMesmoDocumento` são o que desempata.
+// A tela é editável e a leitura é congelada. A assinatura recebe os DOIS
+// OBJETOS INTEIROS, e é a função que decide qual campo sai de qual — em vez de
+// 8 campos soltos, onde ligar o fio errado é invisível.
+//
+// Isto não é estética: os DOIS [alto] da 7ª rodada do Apolo (27/08/2026) foram
+// exatamente fio trocado. `modeloLido` recebendo `nota.modelo` (o editável) em
+// vez de `lidoOriginal.modelo` mata a feature inteira com a suíte verde e o
+// `tsc` limpo — os dois candidatos têm o mesmo tipo, então nem o compilador nem
+// os testes da função pura enxergam. Com objetos, passar o errado exige trocar
+// `lido` por `atual` de propósito, e aí a diferença é visível na chamada.
+export type NotaNaTela  = { modelo: 'nfe' | 'nfse'; numero: string; emitenteCnpj: string }
+export type NotaComoLida = NotaNaTela & { valorTotal: number; dataEmissao: string }
+
 export function travaDeDuplicidade(params: {
-  modeloAtual:  'nfe' | 'nfse'
-  // O que a IA leu no campo Tipo. `undefined` em tela que ainda não guardava —
-  // aí a função assume que não houve troca, que é o comportamento anterior.
-  modeloLido?:  'nfe' | 'nfse'
+  // O estado ATUAL da tela: o que o dono pode ter editado.
+  atual: NotaNaTela
+  // O que a IA leu, congelado no passo 1. `null` enquanto a leitura não chegou —
+  // aí nada é tratado como editado, que é a direção segura.
+  lido:  NotaComoLida | null | undefined
   notasNoBanco: NotasNoBanco | null | undefined
   // API mais velha que esta web (rollback): só sabemos que existe UMA nota
   // repetida, não em qual modelo. Trava nos dois — direção segura.
   jaExisteLegado: NotaGravada | null | undefined
-  numeroAtual:  string
-  cnpjAtual:    string
-  numeroLido:   string | undefined
-  cnpjLido:     string | undefined
-  // LIDOS, não os da tela. Ver `pareceMesmoDocumento`.
-  valorTotalLido: number
-  dataEmissaoLida: string
 }): {
   gemeoNoModeloAtual: NotaGravada | null
   gemeoNoOutroModelo: NotaGravada | null
@@ -347,15 +354,16 @@ export function travaDeDuplicidade(params: {
   // isso, o banner imprime um rótulo inventado. Achado [baixo] da 6ª rodada.
   modeloDoGemeoDesconhecido: boolean
 } {
-  const outro = params.modeloAtual === 'nfe' ? 'nfse' : 'nfe'
+  const modeloAtual = params.atual.modelo
+  const outro = modeloAtual === 'nfe' ? 'nfse' : 'nfe'
+  const lido = params.lido ?? null
 
-  // Só conta como "mudou" quando a tela SABE o que foi lido. Sem `numeroLido`,
+  // Só conta como "mudou" quando a tela SABE o que foi lido. Sem a leitura,
   // assumir que mudou desligaria a trava — a direção errada.
-  const identidadeMudou =
-    (params.numeroLido !== undefined
-      && numeroNormalizado(params.numeroAtual) !== numeroNormalizado(params.numeroLido))
-    || (params.cnpjLido !== undefined
-      && cnpjNormalizado(params.cnpjAtual) !== cnpjNormalizado(params.cnpjLido))
+  const identidadeMudou = !!lido && (
+    numeroNormalizado(params.atual.numero) !== numeroNormalizado(lido.numero)
+    || cnpjNormalizado(params.atual.emitenteCnpj) !== cnpjNormalizado(lido.emitenteCnpj)
+  )
 
   // Guarda de FORMA, não de presença: um objeto truthy sem as duas chaves
   // abandonava o legado e devolvia `undefined` onde o tipo promete `null`.
@@ -364,7 +372,7 @@ export function travaDeDuplicidade(params: {
   const temForma = !!nb && 'nfe' in nb && 'nfse' in nb
   const legado = params.jaExisteLegado ?? null
 
-  const gemeoNoModeloAtual = temForma ? (nb![params.modeloAtual] ?? null) : legado
+  const gemeoNoModeloAtual = temForma ? (nb![modeloAtual] ?? null) : legado
   const gemeoNoOutroModelo = temForma ? (nb![outro] ?? null) : null
 
   // A gêmea do OUTRO modelo é o mesmo documento? Se for, gravar entraria pela
@@ -379,15 +387,15 @@ export function travaDeDuplicidade(params: {
   // como NF-e, IA lê 'nfse', dono não mexe em nada, botão HABILITADO, gasto em
   // dobro.
   const ehOMesmoDocumento = !!gemeoNoOutroModelo
+    && !!lido
     && !identidadeMudou
     && pareceMesmoDocumento(gemeoNoOutroModelo, {
-      valorTotal:  params.valorTotalLido,
-      dataEmissao: params.dataEmissaoLida,
+      valorTotal:  lido.valorTotal,
+      dataEmissao: lido.dataEmissao,
     })
   // `travadoPeloTipo` só muda o TEXTO do banner: quando o dono virou o campo, a
   // frase certa é "você trocou o Tipo"; quando foi a IA, é "confira o Tipo".
-  const trocouOTipo = params.modeloLido !== undefined && params.modeloAtual !== params.modeloLido
-  const travadoPeloTipo = ehOMesmoDocumento && trocouOTipo
+  const travadoPeloTipo = ehOMesmoDocumento && !!lido && modeloAtual !== lido.modelo
 
   return {
     gemeoNoModeloAtual,

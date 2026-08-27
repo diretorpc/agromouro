@@ -234,6 +234,17 @@ do modelo onde a gêmea ESTÁ — antes ele se invertia quando o dono obedecia a
 texto ficou 22 dias mentindo em toda largada de sessão, e quase fez o Apolo abrir um
 [alto] errado contra o banner que manda apagar a nota duplicada.
 
+**O conserto ESTRUTURAL, feito por causa do padrão e não de um achado:** os dois [alto]
+da 7ª rodada foram **fio ligado no lugar errado** — `modeloLido` recebendo o campo
+editável em vez do congelado. O Apolo provou que trocar esse fio mata a feature inteira
+com a suíte verde e o `tsc` limpo, porque os dois candidatos têm o mesmo tipo. Então
+`travaDeDuplicidade` passou a receber **os dois OBJETOS inteiros** (`atual` e `lido`) e
+decidir ela mesma qual campo sai de qual. `atual` nem tem `valorTotal`/`dataEmissao` para
+passar por engano.
+
+**Limite honesto:** isso reduz de "troca invisível de um campo" para "troca visível de um
+objeto" — `lido: nota` ainda compilaria. Não elimina, mas põe o erro onde se lê.
+
 **Padrão que ficou claro em 7 rodadas, e a lição que ficou:** 3 dos [alto] nasceram em
 comportamento novo de TELA, e o `web` não tem testing-library — dá para arrancar uma trava
 do JSX com a suíte verde e o `tsc` limpo. **A resposta barata não foi instalar
