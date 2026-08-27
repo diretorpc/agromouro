@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
 import { CATEGORIAS_FINANCEIRAS } from '@/lib/centro-custo'
-import { aplicarFamiliaATodos, cfopAposEscolha, codigoFiscalEmNotaDeServico, itemTrancado, linhasSemQuantidade, pendenciasDeCfop, podeGravar, type FamiliaItem } from './regras-conferencia'
+import { aplicarFamiliaATodos, cfopAposEscolha, sinaisDeNotaDeProduto, itemTrancado, linhasSemQuantidade, pendenciasDeCfop, podeGravar, type FamiliaItem } from './regras-conferencia'
 
 // Toda a UI do modo "Upload PDF" mora aqui, fora de page.tsx (que já passa de
 // 700 linhas). O fluxo tem DOIS passos porque a leitura é da IA, não do dado
@@ -382,7 +382,7 @@ export function ConferenciaPdf(
   // só destrava enquanto a situação continuar a mesma que ele confirmou.
   const { semCfop, efeitoIncomum } = pendenciasDeCfop(nota.modelo, nota.itens)
   // As duas contradições entre o papel e o campo "Tipo", nos dois sentidos.
-  const codigoEmServico = codigoFiscalEmNotaDeServico(nota.modelo, nota.itens)
+  const pareceProduto   = sinaisDeNotaDeProduto(nota.modelo, nota.itens)
   const semQuantidade   = linhasSemQuantidade(nota.modelo, nota.itens)
   // O aviso só vale enquanto o dono não mexer na identificação da nota.
   const duplicataValendo = leitura.jaExiste && !identidadeEditada
@@ -425,12 +425,21 @@ export function ConferenciaPdf(
           existia antes de a tela passar a se calar sobre CFOP em NFS-e — e sem
           elas a troca de "Tipo" virava uma saída de 1 clique que apagava todos
           os bloqueios sem deixar rastro (achados do Apolo, 27/08/2026). */}
-      {codigoEmServico > 0 && (
-        <div className="rounded-md bg-amber-50 text-amber-800 px-3 py-2 text-sm">
-          <strong>O papel traz NCM/CFOP, mas o Tipo diz serviço.</strong>
-          {' '}{codigoEmServico} {codigoEmServico === 1 ? 'linha tem código fiscal impresso' : 'linhas têm código fiscal impresso'}
-          {' '}— nota de serviço não tem esses códigos. <strong>Confira o campo "Tipo"</strong>: gravada
-          {' '}como NFS-e, nenhuma mercadoria desta nota entra no estoque.
+      {pareceProduto > 0 && (
+        <div className="rounded-md bg-amber-50 text-amber-800 px-3 py-2 text-sm space-y-2">
+          <p>
+            <strong>Esta nota tem cara de nota de produto, mas o Tipo diz serviço.</strong>
+            {' '}{pareceProduto} {pareceProduto === 1 ? 'linha traz' : 'linhas trazem'} código fiscal,
+            {' '}quantidade ou unidade de mercadoria — coisas que nota de serviço não tem.
+            {' '}Gravada como NFS-e, <strong>nenhuma mercadoria desta nota entra no estoque</strong>.
+          </p>
+          {/* Regra que este repo já escreveu, no comentário de
+              `aplicarFamiliaATodos`: quando a tela SABE qual é o conserto, ela
+              tem que oferecer o conserto, não só o aviso. Em 25/08/2026, 19
+              dropdowns perderam para 1 clique de dispensa. */}
+          <Button size="sm" variant="outline" onClick={() => editar('modelo', 'nfe')}>
+            É nota de produto — mudar o Tipo para NF-e
+          </Button>
         </div>
       )}
 

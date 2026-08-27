@@ -23,8 +23,9 @@ export type ItemComCfop = {
   // produto — ver `codigoFiscalEmNotaDeServico`.
   ncm?:      string
   cfopLido?: string
-  // `null` = a nota não traz quantidade impressa (NFS-e). Ver `travasDeQuantidade`.
+  // `null` = a nota não traz quantidade impressa (NFS-e). Ver `linhasSemQuantidade`.
   quantidade?: number | null
+  unidade?:    string
 }
 
 // Nota em que NENHUM item é "compra normal" é rara e cara. A leitura de
@@ -138,7 +139,16 @@ export function pendenciasDeCfop(
   }
 }
 
-// Quantas linhas trazem NCM ou CFOP IMPRESSO numa nota marcada como serviço.
+// Unidades que só existem em mercadoria. NFS-e não tem coluna de unidade: o
+// caminho do XML (`parseXmlNFSe`) sempre produz um item 'un', e o do PDF cai no
+// mesmo 'un' quando não lê nada. Ver uma destas numa nota marcada como serviço
+// é o papel dizendo "sou nota de produto".
+const UNIDADES_DE_MERCADORIA = new Set([
+  'KG', 'G', 'TN', 'T', 'L', 'LT', 'ML', 'SC', 'BD', 'CX', 'PC', 'PÇ',
+  'M', 'M2', 'M3', 'DZ', 'GL', 'FR', 'PT', 'PAR', 'RL',
+])
+
+// Quantas linhas mostram sinal de MERCADORIA numa nota marcada como serviço.
 // Zero é o normal; qualquer número acima disso é contradição entre o papel e o
 // campo "Tipo", e merece aviso.
 //
@@ -155,12 +165,24 @@ export function pendenciasDeCfop(
 // esta mesma rodada foi consertar. O efeito do código já está neutralizado no
 // servidor (`converterParaNFeData` zera ncm/cfop em NFS-e); aqui é só a pista
 // para o dono conferir o Tipo.
-export function codigoFiscalEmNotaDeServico(
+// TRÊS sinais, não um. A 1ª versão olhava só NCM/CFOP impresso e era cega
+// justamente no caso caro — achado [médio] do Apolo, 3ª rodada (27/08/2026):
+// o `SCHEMA` da leitura ensina que NFS-e é "sem CFOP/NCM", então a MESMA
+// decisão errada que rotula um DANFE como serviço tende a apagar os códigos
+// dele. Quantidade e unidade sobrevivem a essa decisão: uma NFS-e não tem
+// coluna de quantidade (por isso `quantidade === null` é o normal ali), e um
+// DANFE sempre imprime QUANT e a unidade comercial.
+export function sinaisDeNotaDeProduto(
   modelo: 'nfe' | 'nfse',
   itens: readonly ItemComCfop[],
 ): number {
   if (modelo !== 'nfse') return 0
-  return itens.filter(i => !!i.ncm || !!i.cfopLido).length
+  return itens.filter(i =>
+    !!i.ncm
+    || !!i.cfopLido
+    || (i.quantidade !== null && i.quantidade !== undefined)
+    || UNIDADES_DE_MERCADORIA.has((i.unidade ?? '').trim().toUpperCase())
+  ).length
 }
 
 // Quantas linhas estão sem quantidade impressa numa nota marcada como PRODUTO.
@@ -201,13 +223,19 @@ export function podeGravar(params: {
   // Linhas sem quantidade impressa numa nota marcada como NF-e. Ver
   // `linhasSemQuantidade`: o servidor recusa essas linhas, então deixar gravar
   // é mandar o dono bater num 422 que ele não tem como entender olhando a tela.
-  linhasSemQuantidade?: number
+  //
+  // OBRIGATÓRIO de propósito, mesma doutrina do `modelo` em NFeData. O `web`
+  // não tem testing-library, então NENHUM teste prova que o componente chama
+  // esta função com o valor certo — o Apolo mediu na 3ª rodada (27/08/2026):
+  // arrancar esta linha da chamada em conferencia-pdf.tsx deixava a suíte
+  // inteira verde e o `tsc` limpo. Sendo obrigatório, o compilador é a guarda.
+  linhasSemQuantidade: number
 }): boolean {
   if (params.gravando) return false
   if (params.quantidadeItens === 0) return false
   if (params.duplicataValendo) return false
   if (params.semCfop > 0 && (params.familias?.length ?? 0) > 0) return false
   if (params.efeitoIncomumPendente) return false
-  if ((params.linhasSemQuantidade ?? 0) > 0) return false
+  if (params.linhasSemQuantidade > 0) return false
   return true
 }

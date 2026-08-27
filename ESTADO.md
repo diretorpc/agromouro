@@ -22,7 +22,7 @@
 
 ---
 
-## 🔧 Nota de SERVIÇO não entrava pelo importador de PDF — 27/08/2026 — **PRONTO, aguardando merge**
+## 🔧 Nota de SERVIÇO não entrava pelo importador de PDF — 27/08/2026 — **revisado 3x, aguardando merge**
 
 Ramo `fix/nfse-pdf-sem-quantidade`. Começou com o Matheus mandando uma NFS-e real
 (MAQNELSON AGRÍCOLA, licença de software) e dizendo "o importador não conseguiu ler".
@@ -73,9 +73,43 @@ quantidade 1, `cfop: ''`, `ncm: ''`). O caminho do **PDF** nunca ganhou esse tra
 cd api && npx tsc --noEmit && npx vitest run && cd ../web && npx tsc --noEmit && npx vitest run
 ```
 
+**3ª rodada do Apolo — mais 5, sendo 1 [alto] que veio de um erro do próprio Apolo na
+rodada anterior e passou por mim:**
+
+6. **[alto] Linha inconsistente apagava gasto.** Eu preservava o valor unitário lido
+   quando a quantidade era inferida — gravando `{quantidade: 1, unitário: 200,
+   total: 600}`. O Financeiro **recalcula** `valor_total = quantidade × valor_unitario`
+   ao salvar (`web/app/(app)/financeiro/page.tsx`, `handleEdit`), então abrir o item só
+   para trocar o CENTRO DE CUSTO derrubava o gasto de R$ 600 para R$ 200. Num caso
+   medido, de R$ 4.370 para R$ 0,01. Agora, sem quantidade impressa, o unitário É o
+   total — sempre, espelho literal do `parseXmlNFSe`, com teste de invariante.
+   *A justificativa antiga citava uma coluna de valor unitário na tela de conferência
+   que não existe. Documento não confere sistema; o sistema conferiu.*
+7. **[médio] Fio do front sem guarda.** Dava para arrancar a trava do botão do JSX e a
+   suíte ficava verde com `tsc` limpo. `linhasSemQuantidade` virou parâmetro
+   **obrigatório** de `podeGravar` — o compilador é a guarda que o teste não é.
+8. **[médio] Detector cego no caso caro.** `codigoFiscalEmNotaDeServico` virou
+   `sinaisDeNotaDeProduto` e olha TRÊS sinais: código fiscal, quantidade impressa e
+   unidade de mercadoria. Motivo: o `SCHEMA` ensina que NFS-e é "sem CFOP/NCM", então a
+   mesma decisão errada que rotula um DANFE como serviço tende a apagar os códigos dele
+   — quantidade e unidade sobrevivem. O banner ganhou **botão** "É nota de produto —
+   mudar o Tipo", pela regra que este repo já escreveu: quando a tela sabe o conserto,
+   ela oferece o conserto.
+9. **[baixo] `ncm: ''` é simetria, não defesa** — o NCM não é gravado em coluna nenhuma.
+   Comentário corrigido para não prometer proteção que não existe.
+10. **[médio] ORDEM DE DEPLOY: API primeiro, web depois.** Web nova + API velha reabre o
+    achado 1 com a defesa da tela desligada — a web nova cala o banner de CFOP em NFS-e,
+    e a API velha ainda não zera o CFOP alucinado. Não mergear a web sem a API no ar.
+
 **Limite conhecido:** os consertos que moram no `.tsx` (célula "não impressa", célula
-"Serviço", os dois banners e o fio que liga a tela às funções puras) **não têm teste** —
-o `web` não tem testing-library instalada, é convenção do projeto.
+"Serviço", os três banners e os botões) **não têm teste** — o `web` não tem
+testing-library instalada, é convenção do projeto. O fio mais perigoso (a trava do
+botão) passou a ser protegido pelo `tsc`; os banners não.
+
+**Backlog que saiu daqui, não consertado de propósito:** o Financeiro recalcular
+`valor_total` a partir de quantidade × unitário atinge também DANFE com unitário
+zerado (`{q: 2, vu: 0, vt: 1000}` → salvar zera R$ 1.000). É defeito pré-existente,
+com escopo próprio.
 
 ---
 

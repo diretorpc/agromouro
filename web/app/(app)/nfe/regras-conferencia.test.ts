@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { aplicarFamiliaATodos, codigoFiscalEmNotaDeServico, itemTrancado, cfopAposEscolha, linhasSemQuantidade, pendenciasDeCfop, podeGravar, precisaConfirmarEfeitoIncomum, type FamiliaItem } from './regras-conferencia'
+import { aplicarFamiliaATodos, sinaisDeNotaDeProduto, itemTrancado, cfopAposEscolha, linhasSemQuantidade, pendenciasDeCfop, podeGravar, precisaConfirmarEfeitoIncomum, type FamiliaItem } from './regras-conferencia'
 
 const COMPRA: FamiliaItem            = { chave: 'compra',           rotulo: 'Compra normal',    cfop: '5102', contaComoCompra: true }
 const ENTREGA_FATURADA: FamiliaItem  = { chave: 'entrega-faturada', rotulo: 'Entrega faturada',  cfop: '5117', contaComoCompra: false }
@@ -47,7 +47,7 @@ describe('cfopAposEscolha — trocar de família preserva o dígito de estado (a
 })
 
 describe('podeGravar', () => {
-  const BASE = { quantidadeItens: 2, semCfop: 0, familias: [COMPRA, ENTREGA_FATURADA, FATURAMENTO, BONIFICACAO], duplicataValendo: null, gravando: false }
+  const BASE = { quantidadeItens: 2, semCfop: 0, familias: [COMPRA, ENTREGA_FATURADA, FATURAMENTO, BONIFICACAO], duplicataValendo: null, gravando: false, linhasSemQuantidade: 0 }
 
   it('caso comum — tudo certo, pode gravar', () => {
     expect(podeGravar(BASE)).toBe(true)
@@ -114,7 +114,7 @@ describe('precisaConfirmarEfeitoIncomum — a nota inteira fora de "compra"', ()
 describe('podeGravar — confirmacao de efeito incomum', () => {
   const base = {
     quantidadeItens: 3, semCfop: 0, familias: [{ chave: 'compra' }],
-    duplicataValendo: null, gravando: false,
+    duplicataValendo: null, gravando: false, linhasSemQuantidade: 0,
   }
 
   it('trava enquanto o efeito incomum nao for confirmado', () => {
@@ -250,6 +250,7 @@ describe('pendenciasDeCfop — NFS-e não tem CFOP', () => {
     expect(podeGravar({
       quantidadeItens: 1, semCfop: p.semCfop, familias: [{ chave: 'compra' }],
       duplicataValendo: null, gravando: false, efeitoIncomumPendente: p.efeitoIncomum,
+      linhasSemQuantidade: 0,
     })).toBe(true)
   })
 
@@ -260,6 +261,7 @@ describe('pendenciasDeCfop — NFS-e não tem CFOP', () => {
     expect(podeGravar({
       quantidadeItens: 1, semCfop: p.semCfop, familias: [{ chave: 'compra' }],
       duplicataValendo: null, gravando: false, efeitoIncomumPendente: p.efeitoIncomum,
+      linhasSemQuantidade: 0,
     })).toBe(false)
   })
 
@@ -278,34 +280,51 @@ describe('pendenciasDeCfop — NFS-e não tem CFOP', () => {
   })
 })
 
-describe('codigoFiscalEmNotaDeServico — o papel contradiz o campo "Tipo"', () => {
+describe('sinaisDeNotaDeProduto — o papel contradiz o campo "Tipo"', () => {
   // Achado [médio] do Apolo (27/08/2026), medido com a nota 289122 real (19
   // linhas de CFOP impresso): trocar o "Tipo" para NFS-e apagava banner
   // vermelho, banner âmbar e a trava do botão de uma vez só, num clique — a
   // nota entrava inteira como serviço e NENHUM item ia para o estoque.
   it('NFS-e com CFOP impresso nas linhas: conta e avisa', () => {
-    expect(codigoFiscalEmNotaDeServico('nfse', [
+    expect(sinaisDeNotaDeProduto('nfse', [
       { cfop: '5922', cfopLido: '5922' },
       { cfop: '5102', cfopLido: '5102' },
     ])).toBe(2)
   })
 
   it('NCM impresso sozinho já basta para o aviso', () => {
-    expect(codigoFiscalEmNotaDeServico('nfse', [{ cfop: '', ncm: '31021000' }])).toBe(1)
+    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', ncm: '31021000' }])).toBe(1)
   })
 
   it('NFS-e de verdade não dispara aviso nenhum', () => {
-    expect(codigoFiscalEmNotaDeServico('nfse', [{ cfop: '', ncm: '', cfopLido: '' }])).toBe(0)
+    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', ncm: '', cfopLido: '', quantidade: null, unidade: 'un' }])).toBe(0)
+  })
+
+  it('quantidade IMPRESSA numa NFS-e já basta — o sinal que sobrevive ao rótulo errado', () => {
+    // O caso caro: a IA decide "isto é serviço" e, coerente com essa decisão,
+    // devolve ncm/cfop nulos — apagando a própria evidência. A quantidade não
+    // some junto: NFS-e não tem coluna de quantidade.
+    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 3 }])).toBe(1)
+  })
+
+  it('unidade de mercadoria numa NFS-e também acende', () => {
+    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: null, unidade: 'KG' }])).toBe(1)
+    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: null, unidade: 'sc' }])).toBe(1)
+  })
+
+  it('"un" e "h" NÃO acendem — é o que uma nota de serviço legítima traz', () => {
+    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: null, unidade: 'un' }])).toBe(0)
+    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: null, unidade: 'H' }])).toBe(0)
   })
 
   it('nota de PRODUTO nunca dispara — lá o código é o normal', () => {
-    expect(codigoFiscalEmNotaDeServico('nfe', [{ cfop: '5102', cfopLido: '5102', ncm: '38089329' }])).toBe(0)
+    expect(sinaisDeNotaDeProduto('nfe', [{ cfop: '5102', cfopLido: '5102', ncm: '38089329' }])).toBe(0)
   })
 
   it('o CFOP que o DONO escolheu não conta como impresso — só o lido', () => {
     // `cfop` sem `cfopLido` é escolha de família, não leitura do papel. Contar
     // isso faria o aviso nascer do próprio conserto do dono.
-    expect(codigoFiscalEmNotaDeServico('nfse', [{ cfop: '5102', cfopLido: '' }])).toBe(0)
+    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '5102', cfopLido: '' }])).toBe(0)
   })
 })
 
@@ -337,10 +356,17 @@ describe('linhasSemQuantidade — nota de produto exige quantidade impressa', ()
     expect(linhasSemQuantidade('nfe', [{ cfop: '5102', quantidade: 5 }])).toBe(0)
   })
 
-  it('quem não manda o campo não trava — a régua dura é do servidor', () => {
-    expect(podeGravar({
+  it('o campo é OBRIGATÓRIO — esquecer de passar é erro de compilação, não bug calado', () => {
+    // O `web` não tem testing-library: nenhum teste prova que o componente
+    // chama `podeGravar` com o valor certo. O Apolo mediu na 3ª rodada
+    // (27/08/2026) que arrancar o argumento da chamada em conferencia-pdf.tsx
+    // deixava as 281 verdes e o tsc limpo. Com o campo obrigatório, o
+    // compilador é a guarda. Este teste existe para explicar o porquê — se
+    // alguém voltar o `?`, ele some junto e o motivo se perde.
+    // @ts-expect-error — falta `linhasSemQuantidade`
+    expect(() => podeGravar({
       quantidadeItens: 1, semCfop: 0, familias: [{ chave: 'compra' }],
       duplicataValendo: null, gravando: false,
-    })).toBe(true)
+    })).not.toThrow()
   })
 })

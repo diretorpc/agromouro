@@ -440,18 +440,28 @@ export function validarNotaLida(bruto: unknown, hojeISO: string): ValidacaoNota 
       quantidade: quantidadeFinal,
       unidade,
       // Unitário absurdo vira 0 em vez de derrubar a linha: o que soma no
-      // Financeiro é o valor TOTAL, e perder a linha custaria mais. A exceção
-      // é o serviço sem quantidade impressa: como a quantidade virou 1, o
-      // unitário É o total da linha (de novo, espelho do parseXmlNFSe) — deixá-lo
-      // em 0 mostraria "1 un × R$ 0,00 = R$ 4.370,00" na tela de conferência.
+      // Financeiro é o valor TOTAL, e perder a linha custaria mais.
       //
-      // Nesse caso `0` conta como "não veio", não como valor: modelo devolvendo
-      // 0 em campo numérico ausente é comum, apesar do "null se ilegível" do
-      // schema, e a régua geral (`>= 0`) aceitaria o zero e recriaria exatamente
-      // a tela que este comentário promete evitar — achado [baixo] do Apolo,
-      // 27/08/2026, medido.
+      // Sem quantidade impressa, o unitário É o total da linha — SEMPRE, mesmo
+      // que a IA tenha lido um unitário. `parseXmlNFSe` faz exatamente isto
+      // (`unitValue: valorTotal`, nfeProcessor.ts), e aqui a invariante que
+      // interessa é `quantidade 1 ⇒ unitário === total`.
+      //
+      // A versão anterior preservava o unitário lido, e isso GRAVAVA LINHA
+      // INCONSISTENTE — achado [alto] do Apolo, 3ª rodada (27/08/2026),
+      // executado ponta a ponta: NFS-e de "3 x hora técnica" com a quantidade
+      // ilegível virava `{quantidade: 1, unitário: 200, total: 600}`, e o
+      // Financeiro RECALCULA `valor_total = quantidade × valor_unitário` ao
+      // salvar (web/app/(app)/financeiro/page.tsx). Bastava o dono abrir o item
+      // para trocar o CENTRO DE CUSTO — que é a razão de o campo existir — e o
+      // gasto caía de R$ 600 para R$ 200. Num caso medido, de R$ 4.370 para
+      // R$ 0,01.
+      //
+      // (A justificativa antiga citava uma coluna de valor unitário na tela de
+      // conferência. Ela não existe: aquela tabela mostra Produto, Qtd, Un,
+      // Total, efeito e centro de custo. Conferido no arquivo.)
       valorUnitario: quantidadeFinal === null
-        ? (unitarioLido !== null && unitarioLido > 0 && unitarioLido <= VALOR_MAX_UNITARIO ? unitarioLido : total)
+        ? total
         : (unitarioValido ? unitarioLido : 0),
       valorTotal:    total,
       // O DANFE imprime uma quantidade só — não existe qTrib/uTrib no papel.
@@ -526,6 +536,12 @@ export function converterParaNFeData(nota: NotaLidaDoPdf): NFeData {
     unitTrib:     i.unidadeTrib,
     // NFS-e sai daqui SEMPRE com ncm e cfop vazios, como `parseXmlNFSe` já
     // fazia — e a quantidade que o papel não trouxe vira 1 aqui, nunca antes.
+    //
+    // Quem faz o trabalho é o CFOP. O `ncm: ''` é simetria com o parser de XML,
+    // não defesa: o NCM não é gravado em coluna nenhuma, e seu único consumidor
+    // (`fronteiraPorNCM`) já é curto-circuitado por `servico: true` em
+    // processarNFe. Não conte com ele para proteger nada — achado [baixo] do
+    // Apolo, 3ª rodada (27/08/2026).
     //
     // Achado [alto] do Apolo (27/08/2026), medido: `servico: true` protege o
     // ESTOQUE, não o DINHEIRO. `processarNFe` roda `efeitoDoCfop` em TODOS os

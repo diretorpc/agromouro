@@ -575,16 +575,36 @@ describe('validarNotaLida — passo 2: a nota que volta do navegador', () => {
 })
 
 describe('validarNotaLida — unitário do serviço inferido', () => {
-  it('valorUnitario 0 LIDO conta como "não veio" e vira o total da linha', () => {
-    // Modelo devolvendo 0 em campo numérico ausente é comum, apesar do "null se
-    // ilegível" do schema. A régua geral aceita 0 (`>= 0`) — e aceitar aqui
-    // imprimiria "1 un × R$ 0,00 = R$ 4.370,00" na conferência. Achado [baixo]
-    // do Apolo, 27/08/2026.
+  // A INVARIANTE que o Financeiro cobra: sem quantidade impressa, a linha vale
+  // `1 × unitário = total`. `parseXmlNFSe` garante isso por construção
+  // (`unitValue: valorTotal`); aqui tem que ser garantido na mão.
+  //
+  // Achado [alto] do Apolo, 3ª rodada (27/08/2026), executado ponta a ponta: a
+  // versão anterior preservava o unitário LIDO, gravando `{q: 1, vu: 200,
+  // vt: 600}` — e `handleEdit` do Financeiro RECALCULA
+  // `valor_total = quantidade × valor_unitario` ao salvar. Abrir o item só para
+  // trocar o centro de custo derrubava o gasto de R$ 600 para R$ 200.
+  it('sem quantidade impressa, unitário SEMPRE vira o total — mesmo se a IA leu um', () => {
+    for (const unitario of [200, 0, null, 90_000_000]) {
+      const r = validarNotaLida(
+        { ...NFSE_MAQNELSON, itens: [{ ...NFSE_MAQNELSON.itens[0], valorUnitario: unitario }] },
+        HOJE,
+      )
+      if (r.status !== 'nota') throw new Error(`esperava nota, veio ${r.status}`)
+      const i = r.nota.itens[0]
+      expect(i.quantidade).toBeNull()
+      expect(i.valorUnitario).toBe(i.valorTotal)   // a invariante
+    }
+  })
+
+  it('a invariante sobrevive à conversão: quantity 1 × unitValue === totalValue', () => {
     const r = validarNotaLida(
-      { ...NFSE_MAQNELSON, itens: [{ ...NFSE_MAQNELSON.itens[0], valorUnitario: 0 }] },
+      { ...NFSE_MAQNELSON, itens: [{ ...NFSE_MAQNELSON.itens[0], valorUnitario: 200 }] },
       HOJE,
     )
-    expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(4370)
+    if (r.status !== 'nota') throw new Error(`esperava nota, veio ${r.status}`)
+    const it0 = converterParaNFeData(r.nota).items[0]
+    expect(it0.quantity * it0.unitValue).toBe(it0.totalValue)
   })
 
   it('unitário absurdo numa DANFE continua virando zero, sem virar o total', () => {
