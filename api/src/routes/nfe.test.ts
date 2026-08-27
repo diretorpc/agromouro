@@ -32,11 +32,21 @@ vi.mock('../services/nfeProcessor', () => ({
 }))
 
 vi.mock('../services/supabase', () => {
+  // O `eq` GUARDA os filtros para o teste poder responder por modelo. Sem isso,
+  // o mock devolvia a mesma linha para qualquer consulta e nenhum teste
+  // conseguia pegar inversao de `notasNoBanco.nfe` com `.nfse` — achado
+  // [medio] do Apolo, 6a rodada (27/08/2026): trocar os dois lados na rota
+  // deixava as 734 verdes, e a tela travaria o modelo certo e liberaria o
+  // errado, que e' o defeito que a rodada veio consertar.
   function builder(): any {
+    const filtros: Record<string, unknown> = {}
     const obj: any = {
       select:      () => obj,
-      eq:          () => obj,
-      maybeSingle: async () => ({ data: estado.nota, error: null }),
+      eq:          (coluna: string, valor: unknown) => { filtros[coluna] = valor; return obj },
+      maybeSingle: async () => ({
+        data: typeof estado.nota === 'function' ? estado.nota(filtros) : estado.nota,
+        error: null,
+      }),
     }
     return obj
   }
@@ -165,6 +175,53 @@ describe('POST /nfe/ler-pdf', () => {
     expect(res.body.existeNoOutroModelo).toBeNull()
   })
 
+  it('devolve as DUAS consultas por modelo, mesmo quando a nota ja existe', async () => {
+    // Achado [alto] do Apolo, 5a rodada (27/08/2026): `existeNoOutroModelo` era
+    // curto-circuitado quando `jaExiste` estava preenchido, e a tela ficava CEGA
+    // para a gemea do outro modelo justo quando o dono ia mexer no campo "Tipo".
+    // Sem saber das duas, ela travava a nota LEGITIMA do outro modelo (NF-e n 500
+    // de pecas + NFS-e n 500 de mao de obra, o par da migration 011).
+    lerNotaPdfMock.mockResolvedValue({ status: 'nota', nota: NOTA_LIDA, itensDescartados: 0, duplicatasDescartadas: 0 })
+    nfeJaProcessadaMock.mockResolvedValue(true)
+    estado.nota = { id: 'ja', numero: '58717', data_emissao: '2026-06-08', emitente_nome: 'SOLOS' }
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA, body: corpoValido })
+    await handler(req, res, next)
+    // NOTA_LIDA e' 'nfe': a gemea encontrada entra nos dois lados porque o mock
+    // devolve a mesma linha para qualquer consulta — o que importa e' que o
+    // campo do OUTRO modelo deixou de vir vazio.
+    expect(res.body.notasNoBanco.nfe.id).toBe('ja')
+    expect(res.body.notasNoBanco.nfse.id).toBe('ja')
+    // E os campos antigos seguem com o MESMO significado, para a web mais velha
+    // que esta API (elas sobem separadas).
+    expect(res.body.jaExiste.id).toBe('ja')
+    expect(res.body.existeNoOutroModelo).toBeNull()
+  })
+
+  it('notasNoBanco poe cada gemea no SEU lado — pega inversao nfe/nfse', async () => {
+    // NOTA_LIDA e 'nfe'. A gemea existe SO como NFS-e: o lado nfe tem que vir
+    // nulo e o nfse preenchido. Com os dois lados iguais, uma inversao passaria
+    // despercebida (achado [medio] do Apolo, 6a rodada).
+    lerNotaPdfMock.mockResolvedValue({ status: 'nota', nota: NOTA_LIDA, itensDescartados: 0, duplicatasDescartadas: 0 })
+    nfeJaProcessadaMock.mockResolvedValue(false)
+    estado.nota = (f: any) => f.modelo === 'nfse'
+      ? { id: 'so-nfse', numero: '58717', data_emissao: '2026-08-10', emitente_nome: 'SOLOS', valor_total: 4400 }
+      : null
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA, body: corpoValido })
+    await handler(req, res, next)
+    expect(res.body.notasNoBanco.nfe).toBeNull()
+    expect(res.body.notasNoBanco.nfse.id).toBe('so-nfse')
+    expect(res.body.notasNoBanco.nfse.valor_total).toBe(4400)
+  })
+
+  it('sem gemea nenhuma, notasNoBanco vem com os dois lados nulos', async () => {
+    lerNotaPdfMock.mockResolvedValue({ status: 'nota', nota: NOTA_LIDA, itensDescartados: 0, duplicatasDescartadas: 0 })
+    nfeJaProcessadaMock.mockResolvedValue(false)
+    estado.nota = null
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA, body: corpoValido })
+    await handler(req, res, next)
+    expect(res.body.notasNoBanco).toEqual({ nfe: null, nfse: null })
+  })
+
   it('devolve as familias de efeito e a familia de cada item', async () => {
     // Achado 2 do Apolo: CFOP ilegivel vira "compra" por omissao e dobra o
     // gasto numa nota de entrega futura. A tela deixa o dono escolher o EFEITO,
@@ -290,6 +347,37 @@ describe('POST /nfe/importar-pdf', () => {
     await handler(req, res, next)
     expect(res.statusCode).toBe(422)
     expect(gravarNotaDoPdfMock).not.toHaveBeenCalled()
+  })
+
+  it('linha descartada no passo 2 RECUSA a nota inteira, em vez de gravar metade', async () => {
+    // Achado [medio] do Apolo (27/08/2026): a rota lia so `validada.nota` e
+    // jogava `itensDescartados` fora — a nota gravava com 1 de 2 linhas, o
+    // painel fechava e ninguem dizia nada. O dono nao edita quantidade na
+    // conferencia, entao linha caindo AQUI significa que a nota mudou de
+    // natureza entre os dois passos (campo "Tipo" trocado para NF-e).
+    const { req, res, next } = criarReqRes({
+      fazendaId: FAZENDA,
+      body: { ...corpoValido, nota: { ...NOTA_LIDA, itens: [
+        NOTA_LIDA.itens[0],
+        { descricao: 'SERVICO', quantidade: null, unidade: 'un', valorUnitario: 100, valorTotal: 100, quantidadeTrib: null, unidadeTrib: 'un', ncm: '', cfop: '' },
+      ] } },
+    })
+    await handler(req, res, next)
+    expect(res.statusCode).toBe(422)
+    expect(res.body.status).toBe('itens-descartados-no-passo-2')
+    expect(gravarNotaDoPdfMock).not.toHaveBeenCalled()
+  })
+
+  it('a MESMA nota como NFS-e grava inteira — a linha sem quantidade e legitima ali', async () => {
+    gravarNotaDoPdfMock.mockResolvedValue({ status: 'gravada', notaId: 'n2', numero: '58717', emitenteNome: 'SOLOS', valorTotal: 4500 })
+    const { req, res, next } = criarReqRes({
+      fazendaId: FAZENDA,
+      body: { ...corpoValido, nota: { ...NOTA_LIDA, modelo: 'nfse', itens: [
+        { descricao: 'SERVICO', quantidade: null, unidade: 'un', valorUnitario: 100, valorTotal: 100, quantidadeTrib: null, unidadeTrib: 'un', ncm: '', cfop: '' },
+      ] } },
+    })
+    await handler(req, res, next)
+    expect(res.statusCode).toBe(201)
   })
 
   it('duplicada-nota volta 200: reenviar e resposta valida, nao erro de requisicao', async () => {

@@ -136,16 +136,27 @@ function recusaEmPortugues(r: RecusaDeLeitura): string {
   }
 }
 
+// `valor_total` entra no select por causa de `pareceMesmoDocumento`
+// (web/app/(app)/nfe/regras-conferencia.ts): mesmo número + mesmo CNPJ + mesmo
+// total + mesma data é o MESMO documento com o campo "Tipo" virado à mão;
+// total ou data diferentes é o par legítimo (NF-e de peças + NFS-e de mão de
+// obra). Sem esse desempate a tela escolhia sempre "par legítimo" e liberava a
+// gravação dobrada — achado [alto] do Apolo, 6ª rodada (27/08/2026).
 async function notaNoBanco(numero: string, cnpj: string, fazendaId: string, modelo: string) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('notas_fiscais')
-    .select('id, numero, data_emissao, emitente_nome')
+    .select('id, numero, data_emissao, emitente_nome, valor_total')
     .eq('numero', numero)
     .eq('emitente_cnpj', cnpj)
     .eq('fazenda_id', fazendaId)
     .eq('modelo', modelo)
     .maybeSingle()
-  return data as { id: string; numero: string; data_emissao: string; emitente_nome: string } | null
+  // Erro de consulta some com o aviso de duplicidade da tela. Não relança (o
+  // índice único ainda arbitra na gravação), mas não pode sumir CALADO — o
+  // irmão `nfeJaProcessada` já tem comentário sobre isso. Achado [baixo] do
+  // Apolo, 6ª rodada (27/08/2026).
+  if (error) console.error(`[NFe] Falha ao consultar duplicidade (modelo ${modelo}):`, error.message)
+  return data as { id: string; numero: string; data_emissao: string; emitente_nome: string; valor_total: number } | null
 }
 
 // POST /nfe/ler-pdf — passo 1. Lê o PDF com IA e devolve o que entendeu, mais
@@ -189,7 +200,11 @@ nfeRoutes.post('/ler-pdf', async (req, res, next) => {
     let jaExiste = null as Awaited<ReturnType<typeof notaNoBanco>>
     if (await nfeJaProcessada(nota.numero, nota.emitenteCnpj, fazendaId, nota.modelo)) {
       jaExiste = (await notaNoBanco(nota.numero, nota.emitenteCnpj, fazendaId, nota.modelo))
-        ?? { id: '', numero: nota.numero, data_emissao: '', emitente_nome: nota.emitenteNome }
+        // Fallback para a corrida: `nfeJaProcessada` disse que existe, mas o
+        // select não devolveu (RLS, timeout). `valor_total: -1` é sentinela de
+        // "não sei o valor" — `pareceMesmoDocumento` trata como "pode ser a
+        // mesma", que é a direção segura.
+        ?? { id: '', numero: nota.numero, data_emissao: '', emitente_nome: nota.emitenteNome, valor_total: -1 }
     }
 
     // Achado 6 do Apolo (24/08/2026): errar o `modelo` fura as DUAS travas de
@@ -200,9 +215,25 @@ nfeRoutes.post('/ler-pdf', async (req, res, next) => {
     // servico:true em NFS-e), divergência que nenhuma tela mostra. Uma consulta
     // a mais, sem custo de IA, e a tela avisa em vez de deixar passar.
     const outroModelo = nota.modelo === 'nfe' ? 'nfse' : 'nfe'
-    const existeNoOutroModelo = jaExiste
-      ? null
-      : await notaNoBanco(nota.numero, nota.emitenteCnpj, fazendaId, outroModelo)
+    const noOutroModelo = await notaNoBanco(nota.numero, nota.emitenteCnpj, fazendaId, outroModelo)
+
+    // As DUAS consultas, sempre, e o resultado entregue por modelo. Antes o
+    // `existeNoOutroModelo` era curto-circuitado quando `jaExiste` estava
+    // preenchido — os dois banners nunca coexistiam, e a tela ficava CEGA para
+    // o gêmeo do outro modelo justo quando o dono ia mexer no campo "Tipo".
+    // Achados [alto] do Apolo, 5ª rodada (27/08/2026): sem saber dos dois, a
+    // tela travava a nota LEGÍTIMA do outro modelo (NF-e nº 500 de peças +
+    // NFS-e nº 500 de mão de obra, o par que a migration 011 descreve no
+    // cabeçalho) e deixava passar a duplicada de verdade.
+    //
+    // `jaExiste` e `existeNoOutroModelo` continuam no corpo, com o MESMO
+    // significado de antes, porque web e API sobem separados: uma web mais
+    // velha que esta API precisa continuar enxergando o aviso de duplicidade.
+    const notasNoBanco = {
+      nfe:  nota.modelo === 'nfe'  ? jaExiste : noOutroModelo,
+      nfse: nota.modelo === 'nfse' ? jaExiste : noOutroModelo,
+    }
+    const existeNoOutroModelo = jaExiste ? null : noOutroModelo
 
     // A tela deixa o dono corrigir o EFEITO de cada item (Achado 2 do Apolo):
     // CFOP ilegível vira "compra" por omissão, e numa nota de entrega futura
@@ -226,7 +257,7 @@ nfeRoutes.post('/ler-pdf', async (req, res, next) => {
 
     res.status(200).json({
       status: 'nota', nota: notaComFamilias, itensDescartados, duplicatasDescartadas, jaExiste,
-      existeNoOutroModelo, familias: FAMILIAS_ITEM,
+      existeNoOutroModelo, notasNoBanco, familias: FAMILIAS_ITEM,
     })
   } catch (err) {
     next(err)
@@ -254,6 +285,29 @@ nfeRoutes.post('/importar-pdf', async (req, res, next) => {
   const validada = validarNotaLida(parsed.data.nota, hojeSaoPauloISO())
   if (validada.status !== 'nota') {
     res.status(422).json({ error: recusaEmPortugues(validada), status: validada.status })
+    return
+  }
+
+  // Descarte de LINHA no passo 2 não pode passar calado. Achado [médio] do
+  // Apolo (27/08/2026): esta rota lia só `validada.nota` e jogava
+  // `itensDescartados` fora — a nota gravava com 1 de 2 linhas, o painel
+  // fechava e ninguém dizia nada. O banner âmbar da tela é alimentado pelo
+  // passo 1 e nunca mais é reescrito.
+  //
+  // Recusar é o certo aqui, e não "avisar depois de gravar": o dono NÃO edita
+  // quantidade, descrição nem valor na conferência (a tela só deixa mexer em
+  // identidade, Tipo, efeito do CFOP e centro de custo). Então linha caindo no
+  // passo 2 significa que a nota mudou de NATUREZA entre os dois passos — na
+  // prática, o campo "Tipo" trocado de NFS-e para NF-e, que tira o direito da
+  // quantidade inferida de existir (ver `quantidade: number | null` em
+  // notaPdf.ts). Gravar metade da nota seria o pior dos dois mundos.
+  if (validada.itensDescartados > 0) {
+    res.status(422).json({
+      error: `${validada.itensDescartados} item(ns) desta nota ficariam de fora do jeito que ela está agora — `
+        + 'em nota de produto (NF-e) toda linha precisa de quantidade impressa. '
+        + 'Confira o campo "Tipo" ou leia o PDF de novo.',
+      status: 'itens-descartados-no-passo-2',
+    })
     return
   }
 

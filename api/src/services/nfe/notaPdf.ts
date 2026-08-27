@@ -49,11 +49,22 @@ const DIAS_VENCIMENTO_FUTURO_MAX = 730
 
 export type ItemNotaLido = {
   descricao:      string
-  quantidade:     number
+  // `null` = a nota NÃO TRAZ quantidade impressa — é o caso da NFS-e, que não
+  // tem a coluna. O `1` é fabricado só em `converterParaNFeData`, no instante
+  // em que o item vira NFeData, e NUNCA fica guardado aqui.
+  //
+  // Isto é fail-CLOSED de propósito, e foi a 2ª tentativa. A 1ª carregava
+  // `quantidade: 1` mais uma marca `quantidadeInferida: true` que fazia a ida e
+  // volta pelo navegador — achado [médio] do Apolo (27/08/2026), medido:
+  // bastava a chave não voltar para a trava evaporar e o "1" inventado entrar
+  // no ESTOQUE como mercadoria de verdade. Com `null`, perder o campo
+  // FORTALECE a defesa: quantidade ausente numa DANFE cai na régua que já
+  // existe, e a única forma de virar 1 é a nota continuar sendo NFS-e.
+  quantidade:     number | null
   unidade:        string
   valorUnitario:  number
   valorTotal:     number
-  quantidadeTrib: number
+  quantidadeTrib: number | null
   unidadeTrib:    string
   ncm:            string   // '' quando ilegível — a cascata de processarNFe trata
   cfop:           string   // '' quando ilegível
@@ -368,6 +379,13 @@ export function validarNotaLida(bruto: unknown, hojeISO: string): ValidacaoNota 
 
   // 3. Itens — a unidade de recusa aqui é a LINHA, nunca a nota. Uma nota com
   //    20 itens e 1 ilegível não pode perder os outros 19.
+  //
+  //    O `modelo` é decidido ANTES do laço porque a régua da linha depende
+  //    dele: NFS-e não tem coluna de quantidade (ver `quantidadeValida` abaixo).
+  //    Quem não é 'nfse' é 'nfe' — mesma doutrina do enum do SCHEMA.
+  const modelo: 'nfe' | 'nfse' = b.modelo === 'nfse' ? 'nfse' : 'nfe'
+  const ehServico = modelo === 'nfse'
+
   const itensBrutos = Array.isArray(b.itens) ? b.itens : []
   let itensDescartados = 0
   if (itensBrutos.length > MAX_ITENS) {
@@ -382,28 +400,111 @@ export function validarNotaLida(bruto: unknown, hojeISO: string): ValidacaoNota 
     const quantidade = numeroFinito(i.quantidade)
     const total      = numeroFinito(i.valorTotal)
 
+    // Uma NFS-e NÃO TEM as colunas QUANT/UN/V.UNIT do DANFE — tem um parágrafo
+    // de "Discriminação dos Serviços" e um valor. `quantidade: null` numa nota
+    // de serviço é a IA acertando (não existe "quantidade" de licença de
+    // software), não falhando. Exigir quantidade ali recusava a nota inteira
+    // com 'sem-itens' e a tela mentia "não consegui ler nenhum item" — medido
+    // em 27/08/2026 com a NFS-e real da MAQNELSON (licença, R$ 4.370), cujo
+    // JSON cru está preso em notaPdf.test.ts.
+    //
+    // Numa DANFE (`modelo: 'nfe'`) a exigência CONTINUA de pé, e é de propósito:
+    // ali a quantidade é o que entra no galpão, e um "1" inventado tiraria
+    // mercadoria real do controle sem ninguém ver. A folga vale só onde a
+    // coluna não existe no papel.
+    const quantidadeValida = quantidade !== null && quantidade > 0 && quantidade < QUANTIDADE_MAX
+
+    // Numa DANFE, quantidade ausente é recusa — inclusive quando o `null` está
+    // voltando do navegador no passo 2 porque o dono corrigiu o campo "Tipo"
+    // de NFS-e para NF-e. Cair aqui devolve o item para `itensDescartados`.
     if (!descricao
-      || quantidade === null || quantidade <= 0 || quantidade >= QUANTIDADE_MAX
-      || total === null || total < 0 || total > VALOR_MAX_ITEM) {
+      || total === null || total < 0 || total > VALOR_MAX_ITEM
+      || (!ehServico && !quantidadeValida)) {
       itensDescartados++
       continue
     }
 
-    const unitarioLido = numeroFinito(i.valorUnitario)
     const unidade      = texto(i.unidade) ?? 'un'
+
+    // Serviço sem quantidade impressa vira "1 un", igual ao que parseXmlNFSe
+    // (nfeProcessor.ts) monta quando a MESMA nota chega por XML — os dois
+    // caminhos precisam produzir o mesmo item. Quantidade IMPRESSA e legível
+    // ("3 x hora técnica") é preservada: copiar o papel vence inventar, mesma
+    // doutrina do CFOP.
+    const quantidadeFinal = quantidadeValida ? quantidade : null   // null só sobrevive em NFS-e
+
+    // ── O valor unitário e a invariante `quantidade × unitário === total` ────
+    //
+    // Por que a invariante importa: a tela Financeiro RECALCULA
+    // `valor_total = quantidade × valor_unitario` ao salvar um item
+    // (web/app/(app)/financeiro/page.tsx, `handleEdit`). Toda linha que sai
+    // daqui violando a invariante é um gasto que muda sozinho no primeiro
+    // clique — inclusive quando o dono só queria trocar o CENTRO DE CUSTO, que
+    // é a razão de aquele campo existir.
+    //
+    // O unitário é SEMPRE derivado do total, e essa foi a 4ª tentativa. Todas
+    // as anteriores foram achados do Apolo, todas medidas:
+    //   2ª rodada: preservava o unitário lido → {q:1, vu:200, vt:600}.
+    //   4ª rodada: fabricava `0` para o ilegível → {q:3, vu:0, vt:6000}.
+    //   5ª rodada: aceitava qualquer POSITIVO → {q:3, vu:200, vt:6000} passava,
+    //              e {q:5, vu:880, vt:0} criava R$ 4.400 do nada.
+    //   6ª rodada: aceitava o lido dentro de 0,1% do total. Parecia apertado, e
+    //              não era: 0,1% é um ORÇAMENTO DE DERIVA que o `handleEdit`
+    //              materializa depois — R$ 490 medidos numa linha de R$ 500 mil,
+    //              e até ~R$ 2.000 no teto de VALOR_MAX_ITEM.
+    //
+    // Derivar sempre limita a deriva ao arredondamento da coluna —
+    // `quantidade × 0,00005`, uma FÓRMULA e não um número, porque número em
+    // comentário apodrece: a 1ª versão deste texto dizia "R$ 0,05" e só valia
+    // para quantidade ~1.000. Nas quantidades reais deste projeto (46.000 kg de
+    // adubo, 466.000 kg da SYAGRI) dá alguns reais, não centavos — ainda assim
+    // duas ordens de grandeza abaixo da régua anterior. E não se perde nada: o
+    // unitário lido não alimenta nenhuma
+    // outra conta — `converterParaNFeData` só o repassa, e quem soma dinheiro é
+    // o TOTAL, que é o número que a nota fiscal afirma.
+    const valorUnitario = quantidadeFinal === null
+      ? total                                   // NFS-e: quantidade vira 1 na conversão
+      : total / quantidadeFinal
+
+    // Duas bordas do `numeric(12,4)` da coluna, as duas derrubando a LINHA em
+    // vez de a nota inteira, e as duas CONTADAS para o dono ver:
+    //
+    // 1. ACIMA DO TETO: `{q: 0.001, vt: 2.000.000}` deriva 2 bilhões. Gravar
+    //    mataria o INSERT e levaria a nota inteira junto (achado [baixo] do
+    //    Apolo, 5ª rodada).
+    //
+    // 2. ARREDONDAMENTO QUE MEXE NO DINHEIRO: `{q: 700.000, vt: 100}` deriva
+    //    0,00014285…; a coluna guarda 0,0001, e o `handleEdit` do Financeiro
+    //    refaz o total como R$ 70 — 30% a menos (achado [baixo] do Apolo, 6ª
+    //    rodada). A régua não é o VALOR do unitário, é o EFEITO do
+    //    arredondamento: simula o que a coluna vai guardar e mede quanto o
+    //    total se move. Linha que a coluna não consegue representar sem mexer
+    //    no dinheiro é leitura errada, não compra.
+    //    O `handleEdit` multiplica os DOIS valores já arredondados pelo banco:
+    //    `valor_unitario` é numeric(12,4) e `quantidade` é numeric(12,3). A 1ª
+    //    versão desta guarda simulava só metade do INSERT, e uma linha de
+    //    `q = 0,0005` passava com o total dobrando depois — achado [médio] do
+    //    Apolo, 7ª rodada (27/08/2026).
+    const unitarioNaColuna   = Math.round(valorUnitario * 10_000) / 10_000
+    const quantidadeNaColuna = quantidadeFinal === null ? null : Math.round(quantidadeFinal * 1_000) / 1_000
+    const derivaDaColuna = quantidadeNaColuna === null
+      ? 0
+      : Math.abs(unitarioNaColuna * quantidadeNaColuna - total)
+    if (valorUnitario > VALOR_MAX_UNITARIO || derivaDaColuna > Math.max(0.02, total * 0.001)) {
+      itensDescartados++
+      continue
+    }
 
     itens.push({
       descricao,
-      quantidade,
+      quantidade: quantidadeFinal,
       unidade,
-      // Unitário absurdo vira 0 em vez de derrubar a linha: o que soma no
-      // Financeiro é o valor TOTAL, e perder a linha custaria mais.
-      valorUnitario: unitarioLido !== null && unitarioLido >= 0 && unitarioLido <= VALOR_MAX_UNITARIO ? unitarioLido : 0,
+      valorUnitario,
       valorTotal:    total,
       // O DANFE imprime uma quantidade só — não existe qTrib/uTrib no papel.
       // Espelhar as comerciais faz processarNFe pular a conversão de unidade
       // comercial (ele exige uTrib DIFERENTE de uCom para converter).
-      quantidadeTrib: quantidade,
+      quantidadeTrib: quantidadeFinal,
       unidadeTrib:    unidade,
       ncm:  codigoDeNDigitos(i.ncm, 8),
       cfop: codigoDeNDigitos(i.cfop, 4),
@@ -438,8 +539,6 @@ export function validarNotaLida(bruto: unknown, hojeISO: string): ValidacaoNota 
     }
   })
 
-  const modelo: 'nfe' | 'nfse' = b.modelo === 'nfse' ? 'nfse' : 'nfe'
-
   return {
     status: 'nota',
     nota: {
@@ -466,14 +565,36 @@ export function validarNotaLida(bruto: unknown, hojeISO: string): ValidacaoNota 
 export function converterParaNFeData(nota: NotaLidaDoPdf): NFeData {
   const items: NFeItem[] = nota.itens.map(i => ({
     description:  i.descricao,
-    quantity:     i.quantidade,
+    quantity:     i.quantidade ?? 1,
     unit:         i.unidade,
     unitValue:    i.valorUnitario,
     totalValue:   i.valorTotal,
-    quantityTrib: i.quantidadeTrib,
+    quantityTrib: i.quantidadeTrib ?? 1,
     unitTrib:     i.unidadeTrib,
-    ncm:          i.ncm,
-    cfop:         i.cfop,
+    // NFS-e sai daqui SEMPRE com ncm e cfop vazios, como `parseXmlNFSe` já
+    // fazia — e a quantidade que o papel não trouxe vira 1 aqui, nunca antes.
+    //
+    // Quem faz o trabalho é o CFOP. O `ncm: ''` é simetria com o parser de XML,
+    // não defesa: o NCM não é gravado em coluna nenhuma, e seu único consumidor
+    // (`fronteiraPorNCM`) já é curto-circuitado por `servico: true` em
+    // processarNFe. Não conte com ele para proteger nada — achado [baixo] do
+    // Apolo, 3ª rodada (27/08/2026).
+    //
+    // Achado [alto] do Apolo (27/08/2026), medido: `servico: true` protege o
+    // ESTOQUE, não o DINHEIRO. `processarNFe` roda `efeitoDoCfop` em TODOS os
+    // itens sem olhar `servico` (nfeProcessor.ts, `efeitosDosItens`), então um
+    // CFOP que a IA inventasse numa nota de serviço — 5910 "bonificação", 5117
+    // "entrega de pedido já faturado", 5905 "remessa sem compra" — zerava o
+    // `valorCompra` e a nota era gravada SEM lançamento nenhum: o gasto
+    // evaporava calado. E a IA inventa CFOP com frequência medida (memória
+    // `cfop-lido-como-5922`: 3 de 4 notas por PDF).
+    //
+    // Zerar AQUI e não em `validarNotaLida` é de propósito: a tela de
+    // conferência continua enxergando o código que a IA leu (`cfopLido`), que é
+    // a pista de que uma nota de PRODUTO pode ter sido rotulada como serviço.
+    // Neutraliza o efeito sem apagar a evidência.
+    ncm:          nota.modelo === 'nfse' ? '' : i.ncm,
+    cfop:         nota.modelo === 'nfse' ? '' : i.cfop,
     // undefined quando o dono não escolheu: processarNFe grava null e a tela
     // Financeiro segue derivando de insumos.tipo, como sempre fez.
     ...(i.centroCusto ? { centroCusto: i.centroCusto } : {}),

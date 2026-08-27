@@ -22,6 +22,315 @@
 
 ---
 
+## 🔧 Nota de SERVIÇO não entrava pelo importador de PDF — 27/08/2026 — **PR #74 aberto**
+
+> https://github.com/diretorpc/agromouro/pull/74 — 9 rodadas do Apolo, a última sem
+> nenhum [alto] e com veredito "pronta para PR". **Ordem de deploy: API antes da web**
+> (motivo no corpo do PR e no item 10 abaixo).
+
+Ramo `fix/nfse-pdf-sem-quantidade`. Começou com o Matheus mandando uma NFS-e real
+(MAQNELSON AGRÍCOLA, licença de software) e dizendo "o importador não conseguiu ler".
+
+**O que era:** a IA leu a nota INTEIRA e certa. Quem recusou foi o nosso validador.
+`validarNotaLida` exigia `quantidade > 0` em toda linha — régua de DANFE. **NFS-e não
+tem as colunas QUANT/UN/V.UNIT**: tem "Discriminação dos Serviços" e um valor. A IA
+devolveu `quantidade: null` (o certo), a única linha caiu, e a nota virou `sem-itens` →
+422 *"Não consegui ler nenhum item desta nota"* — mensagem que mentia.
+
+O caminho do **XML** já resolvia isso desde 17/08/2026 (`parseXmlNFSe` monta o item com
+quantidade 1, `cfop: ''`, `ncm: ''`). O caminho do **PDF** nunca ganhou esse tratamento.
+
+**O que o Apolo achou em cima do conserto — e era pior que o defeito original:**
+
+1. **[alto] O gasto evaporava.** `servico: true` protege o ESTOQUE, não o DINHEIRO:
+   `processarNFe` roda `efeitoDoCfop` em TODOS os itens sem olhar `servico`. Um CFOP
+   que a IA inventasse numa NFS-e (5910 "bonificação", 5117, 5905) zerava o
+   `valorCompra` e a nota gravava **sem lançamento nenhum**. E a IA inventa CFOP com
+   frequência medida — ver memória `cfop-lido-como-5922`.
+2. **[alto] Botão morto.** Com o 422 resolvido, a NFS-e chegava na tela e **não gravava**:
+   `podeGravar` travava por `semCfop > 0`, e a única saída era o dono carimbar um CFOP
+   5102 falso numa nota que não tem CFOP.
+3. **[médio] Saída de 1 clique.** Trocar o campo "Tipo" para NFS-e apagava banner
+   vermelho, banner âmbar e a trava do botão de uma vez — nota de produto entrava
+   inteira como serviço, zero itens no estoque, nenhuma tela acusando.
+4. **[médio] Passo 2 mudo.** `POST /nfe/importar-pdf` jogava `itensDescartados` fora:
+   a nota gravava com parte das linhas e o painel fechava sem dizer nada.
+5. **[médio] Trava fail-open.** A 1ª tentativa carregava `quantidade: 1` + marca
+   `quantidadeInferida`, que viajava pelo navegador — bastava a chave não voltar para o
+   "1" inventado entrar no galpão como mercadoria de verdade.
+
+**Como ficou:**
+- `ItemNotaLido.quantidade` e `.quantidadeTrib` são `number | null`. O `1` nasce só em
+  `converterParaNFeData`. **Fail-closed:** perder o campo fortalece a defesa.
+- `converterParaNFeData` zera `ncm`/`cfop` em NFS-e (espelho do `parseXmlNFSe`) — mas só
+  na CONVERSÃO, para a tela continuar enxergando o `cfopLido` e poder avisar.
+- Duas funções puras novas em `regras-conferencia.ts`: `codigoFiscalEmNotaDeServico`
+  (banner âmbar: o papel traz NCM/CFOP mas o Tipo diz serviço) e `linhasSemQuantidade`
+  (trava o botão em vez de deixar o dono bater no 422).
+- `pendenciasDeCfop` cala CFOP em NFS-e — é o que destrava a gravação.
+- Passo 2 recusa a nota inteira quando descartaria linha (422
+  `itens-descartados-no-passo-2`) em vez de gravar metade.
+- **Régua da DANFE não afrouxou:** quantidade ilegível continua derrubando a linha.
+
+**Como conferir que continua de pé:**
+```bash
+cd api && npx tsc --noEmit && npx vitest run && cd ../web && npx tsc --noEmit && npx vitest run
+```
+
+**3ª rodada do Apolo — mais 5, sendo 1 [alto] que veio de um erro do próprio Apolo na
+rodada anterior e passou por mim:**
+
+6. **[alto] Linha inconsistente apagava gasto.** Eu preservava o valor unitário lido
+   quando a quantidade era inferida — gravando `{quantidade: 1, unitário: 200,
+   total: 600}`. O Financeiro **recalcula** `valor_total = quantidade × valor_unitario`
+   ao salvar (`web/app/(app)/financeiro/page.tsx`, `handleEdit`), então abrir o item só
+   para trocar o CENTRO DE CUSTO derrubava o gasto de R$ 600 para R$ 200. Num caso
+   medido, de R$ 4.370 para R$ 0,01. Agora, sem quantidade impressa, o unitário É o
+   total — sempre, espelho literal do `parseXmlNFSe`, com teste de invariante.
+   *A justificativa antiga citava uma coluna de valor unitário na tela de conferência
+   que não existe. Documento não confere sistema; o sistema conferiu.*
+7. **[médio] Fio do front sem guarda.** Dava para arrancar a trava do botão do JSX e a
+   suíte ficava verde com `tsc` limpo. `linhasSemQuantidade` virou parâmetro
+   **obrigatório** de `podeGravar` — o compilador é a guarda que o teste não é.
+8. **[médio] Detector cego no caso caro.** `codigoFiscalEmNotaDeServico` virou
+   `sinaisDeNotaDeProduto` e passou a olhar mais que o código fiscal. Motivo: o `SCHEMA`
+   ensina que NFS-e é "sem CFOP/NCM", então a mesma decisão errada que rotula um DANFE
+   como serviço tende a apagar os códigos dele — quantidade e unidade sobrevivem.
+   *(A forma final desse detector só veio na 5ª rodada — ver item 19.)*
+9. **[baixo] `ncm: ''` é simetria, não defesa** — o NCM não é gravado em coluna nenhuma.
+   Comentário corrigido para não prometer proteção que não existe.
+10. **[médio] ORDEM DE DEPLOY: API primeiro, web depois.** Web nova + API velha reabre o
+    achado 1 com a defesa da tela desligada — a web nova cala o banner de CFOP em NFS-e,
+    e a API velha ainda não zera o CFOP alucinado. Não mergear a web sem a API no ar.
+
+**Limite conhecido:** os consertos que moram no `.tsx` (célula "não impressa", célula
+"Serviço", os três banners e os botões) **não têm teste** — o `web` não tem
+testing-library instalada, é convenção do projeto. O fio mais perigoso (a trava do
+botão) passou a ser protegido pelo `tsc`; os banners não.
+
+**4ª rodada do Apolo — mais 6, e o [alto] de novo foi coisa minha da rodada anterior:**
+
+11. **[alto] O botão que eu adicionei desligava a trava de duplicidade.**
+    `editar('modelo', …)` marcava `identidadeEditada`, que apaga o banner "Esta nota já
+    está no sistema" e libera o gravar. E o servidor **não recupera**: `modelo` faz parte
+    da chave de duplicidade (`nfeJaProcessada(..., nota.modelo)` + índice único da
+    migration 011), então a nota gravada como NFS-e não colide com a mesma gravada como
+    NF-e — **estoque e gasto entrando duas vezes, calados**. O banner substituto ainda
+    dizia "a conferência é refeita no servidor ao gravar", falso por construção.
+    Conserto: `modelo` saiu do gatilho de `identidadeEditada`, e o banner vermelho passou
+    a dizer que trocar o Tipo não resolve.
+12. **[médio] O botão foi removido.** Além do item 11, ele era armado por um sinal com
+    falso positivo. E o precedente de 25/08 não se aplicava: lá o conserto eram 19
+    dropdowns contra 1 clique de dispensa; aqui é UM dropdown, na mesma tela.
+13. **[médio] Quantidade sozinha era falso positivo.** NFS-e do padrão ABRASF traz
+    "Qtde 1,00" — o aviso acenderia em nota de serviço legítima. Agora só conta
+    quantidade **com** unidade de mercadoria.
+14. **[médio] A trava mais antiga continuava opcional.** `efeitoIncomumPendente` — a que
+    impede o gasto dobrado por CFOP incomum — também virou obrigatória em `podeGravar`.
+15. **[alto] O `0` do valor unitário não vinha da IA: era fabricado por nós.** Um item
+    `{q: 3, vu: null, vt: 6000}` era gravado com `vu: 0`, e o Financeiro zerava R$ 6.000
+    no primeiro salvar. Agora unitário ilegível vira `total ÷ quantidade`, e um `0` lido
+    contra total maior que zero recebe o mesmo tratamento. Zero só sobrevive quando o
+    total também é zero (bonificação de verdade). Vale para DANFE e NFS-e.
+16. **[baixo] `UNIDADES_DE_MERCADORIA` errava nas duas unidades que este projeto usa** —
+    `TON` (fixture de DANFE) e `MTN` (contrato da SYAGRI). Corrigida; `M2`/`M3` saíram,
+    porque são unidades corriqueiras de NFS-e de verdade.
+
+**Backlog que saiu daqui, não consertado de propósito:** o Financeiro **recalcular**
+`valor_total = quantidade × valor_unitario` no `handleEdit`. O item 15 tapou a ORIGEM do
+zero, mas não a tela nem as linhas já gravadas com unitário 0 e total cheio — nessas,
+abrir para trocar o centro de custo ainda apaga o gasto. Subiu para o L3 do painel global.
+
+**5ª rodada do Apolo — 3 [alto], e os 2 piores estão na tela sem teste:**
+
+17. **[alto] O `0` era só metade.** Meu conserto do item 15 aceitava qualquer unitário
+    POSITIVO — então `{q:3, vu:200, vt:6000}` passava (R$ 6.000 → R$ 600 ao salvar) e
+    `{q:5, vu:880, vt:0}` também (R$ 0 → R$ 4.400, gasto fantasma). A régua certa não é
+    o SINAL do unitário, é a CONSISTÊNCIA dele com o total: tolerância de 2 centavos ou
+    0,1%, o que for maior. Fora dela, o unitário é derivado do total. Seis testes novos.
+18. **[baixo] Unitário derivado podia estourar a coluna.** `{q: 0.001, vt: 2 mi}` deriva
+    2 bilhões, acima do `numeric(12,4)` — o INSERT morreria e levaria a NOTA INTEIRA
+    junto. Linha assim agora cai como as outras, e é contada para o dono ver.
+19. **[médio] Lista de permissão de unidades erra CALANDO.** `uCom` é texto livre na
+    NF-e: não existe tabela fechada. Duas versões da lista já tinham errado justo nas
+    unidades que este projeto usa, e uma DANFE de 8 linhas com PEÇA/FRASCO/BALDE/PACOTE
+    não acendia aviso nenhum. Virou **lista de negação**: o conjunto que uma NFS-e
+    legítima usa é pequeno e conhecido, e unidade que ninguém previu passa a ACENDER.
+
+**Os 2 [alto] da trava de duplicidade — FECHADOS (decisão do Matheus: consertar aqui):**
+
+20. **[alto] A trava era contornável em dois passos.** `identidadeEditada` era flag
+    pegajosa: qualquer tecla no campo Número a ligava e nada a desligava. Apagar um
+    dígito e redigitar o mesmo matava o aviso para sempre — e daí trocar o Tipo gravava a
+    nota uma segunda vez. Agora é **derivado**: compara a identidade atual com a que a IA
+    leu (`lidoOriginal`). Desfazer a edição traz o aviso de volta.
+21. **[alto] Nota legítima do outro modelo não tinha saída.** NF-e nº 500 (peças) +
+    NFS-e nº 500 (mão de obra) do mesmo fornecedor é o par que a migration 011 descreve
+    no cabeçalho. Se a IA errasse o Tipo, corrigi-lo — a ação CERTA — deixava o botão
+    travado, e o banner mandava apagar a nota gravada, que estava correta. *(Essa metade
+    era regressão minha da 4ª rodada: antes gravava, o que era pior.)*
+
+**Como:** a rota parou de curto-circuitar `existeNoOutroModelo` e passou a devolver
+`notasNoBanco: { nfe, nfse }` — as duas consultas já existiam. A decisão saiu do JSX e
+virou `travaDeDuplicidade`, função pura com 9 testes, avaliada contra o modelo ATUAL da
+tela. `jaExiste` e `existeNoOutroModelo` continuam no corpo da resposta com o mesmo
+significado, porque web e API sobem separados. De quebra, o rótulo do banner passou a sair
+do modelo onde a gêmea ESTÁ — antes ele se invertia quando o dono obedecia a ele.
+
+**6ª rodada do Apolo — 1 [alto], e era regressão do conserto da 5ª:**
+
+22. **[alto] A trava de duplicidade não sabia o que a IA tinha LIDO no campo Tipo.**
+    Com duas entradas (modelo atual + as consultas), dois mundos opostos produzem o MESMO
+    estado — (a) gêmea legítima do outro modelo e (b) a própria nota com o Tipo virado à
+    mão — e a função escolhia sempre (a). Um clique no Tipo liberava o botão, e o banner
+    ainda chamava o estado de **"normal"**. Agora são TRÊS entradas: `modeloLido` entrou,
+    e `pareceMesmoDocumento` desempata por **data + valor** (a rota passou a trazer
+    `valor_total`). Na dúvida, trava.
+23. **[médio] O unitário lido deixou de ser copiado — é sempre derivado do total.** A
+    tolerância de 0,1% da 5ª rodada não era uma régua, era um **orçamento de deriva** que
+    o `handleEdit` do Financeiro materializa depois: R$ 490 medidos numa linha de R$ 500
+    mil, até ~R$ 2.000 no teto. Derivar sempre limita a deriva ao arredondamento da
+    coluna — R$ 0,05 na mesma linha. Nada usava o unitário lido para outra conta.
+24. **[médio] O aviso da gêmea não expirava** quando o dono corrigia o número, e
+    **contradizia** o banner vermelho quando a trava vinha do Tipo. Cala nos dois casos.
+25. **[médio] O teste da rota não pegava inversão** de `notasNoBanco.nfe` com `.nfse` — o
+    mock devolvia a mesma linha para qualquer consulta. Agora ele responde por modelo, e
+    a inversão mata o teste (conferido sabotando).
+26. **[baixo] `PCT` estava na lista de serviço** — `nfeProcessor.ts` lista PAC/PACOTE como
+    embalagem. Escrito por extenso acendia, abreviado calava. E `UN.` com ponto passou a
+    ser normalizado.
+27. **[baixo] Identidade comparada em texto cru:** digitar "0500" no lugar de "500", um
+    espaço no fim, ou pontuar o CNPJ desligava a trava — o servidor normaliza igual e
+    recusaria depois. Agora a comparação é normalizada com as mesmas regras do servidor.
+28. **[baixo] `notasNoBanco` com forma inesperada** abandonava o legado; a guarda virou de
+    FORMA, não de presença. **Erro do Supabase na consulta** era engolido — agora é logado.
+29. **[baixo] Arredondamento da coluna que mexe no dinheiro derruba a linha:**
+    `{q: 700.000, vt: 100}` deriva 0,00014…, a coluna guarda 0,0001 e o total viraria
+    R$ 70. A régua não é o valor do unitário, é o EFEITO do arredondamento.
+
+**7ª rodada do Apolo — 2 [alto], os dois "fio ligado no lugar errado":**
+
+30. **[alto] A trava comparava os campos da TELA, que são editáveis.** Valor e data não
+    fazem parte da chave de duplicidade do servidor, então corrigir um centavo lido errado
+    e trocar o Tipo liberava o botão — a nota entrava pela segunda vez, e com um total
+    diferente, atrapalhando qualquer deduplicação futura. Agora compara sempre o que a IA
+    LEU deste PDF (`lidoOriginal` guarda valor e data também).
+31. **[alto] Quando quem errava o Tipo era a IA, nada travava.** `travadoPeloTipo` exigia
+    que o DONO virasse o campo — e leitura errada do Tipo é o modo de falha documentado
+    deste projeto. Nota já gravada como NF-e + IA lendo 'nfse' + dono sem mexer em nada =
+    botão habilitado e gasto em dobro. A pergunta certa não é "quem virou o campo?", é
+    "a gêmea do outro modelo é o mesmo documento?". `travadoPeloTipo` agora só escolhe o
+    TEXTO do banner.
+32. **[médio] O banner âmbar afirmava um fato que o código nunca conferiu** ("data e valor
+    diferentes, são documentos diferentes"). Passa por `pareceMesmoDocumento` antes.
+33. **[médio] A guarda de arredondamento simulava metade do INSERT** — `valor_unitario` é
+    `numeric(12,4)` mas `quantidade` é `numeric(12,3)`, e o Financeiro multiplica os dois
+    já arredondados. `q = 0,0005` passava com o total dobrando depois.
+34. **[médio] `M2`/`M3` saíram da lista de serviço** — areia, brita, pedra e concreto se
+    vendem em m³, e o fornecedor do caso de 24/08 é loja de material de construção.
+35. **[baixo] O "R$ 0,05" que eu tinha escrito estava errado** para as quantidades deste
+    projeto (só valia para ~1.000 unidades). Virou fórmula: `quantidade × 0,00005`.
+    Número em comentário apodrece — a regra do `CLAUDE.md` pegou o próprio autor.
+
+**Fora do escopo, consertado na hora:** a memória `nfe-corrida-duas-portas` afirmava que
+"apagar nota não desfaz estoque". **Falso desde 05/08/2026** — a migration
+`009_excluir_nota_fiscal.sql` devolve o saldo item a item e apaga tudo numa transação. O
+texto ficou 22 dias mentindo em toda largada de sessão, e quase fez o Apolo abrir um
+[alto] errado contra o banner que manda apagar a nota duplicada.
+
+**O conserto ESTRUTURAL, feito por causa do padrão e não de um achado:** os dois [alto]
+da 7ª rodada foram **fio ligado no lugar errado** — `modeloLido` recebendo o campo
+editável em vez do congelado. O Apolo provou que trocar esse fio mata a feature inteira
+com a suíte verde e o `tsc` limpo, porque os dois candidatos têm o mesmo tipo. Então
+`travaDeDuplicidade` passou a receber **os dois OBJETOS inteiros** (`atual` e `lido`) e
+decidir ela mesma qual campo sai de qual. `atual` nem tem `valorTotal`/`dataEmissao` para
+passar por engano.
+
+**Limite honesto:** isso reduz de "troca invisível de um campo" para "troca visível de um
+objeto" — `lido: nota` ainda compilaria. Não elimina, mas põe o erro onde se lê.
+
+**8ª rodada do Apolo — a primeira SEM nenhum [alto]:**
+
+36. **[médio] O par legítimo do MESMO dia com o MESMO valor virou botão morto.** Peças e
+    mão de obra rachados meio a meio: `pareceMesmoDocumento` não tem como distinguir, e os
+    DOIS lados do campo Tipo travavam. As duas saídas que o banner oferecia estavam
+    erradas para ele — "apague a nota gravada" (é legítima) e "confira o número" (está
+    certo). *"Travar de mais custa um clique" só é verdade se o clique existir*, e não
+    existia. Ganhou caixa de confirmação, no mesmo padrão do `confirmouEfeito`.
+37. **[médio] A guarda das duas colunas tinha subido sem teste** — reverter o conserto
+    deixava as 736 verdes. O "736/736" do commit era verdadeiro e não provava nada sobre
+    ele. Coberto agora.
+38. **[médio] Havia um SEGUNDO fio que dava para religar errado**, e eu tinha registrado
+    só o primeiro: `atual: lidoOriginal!` compilava e recriava o botão morto que este ramo
+    inteiro existe para matar — custo de um `!`. **Fechado com marca nominal**
+    (`lidaPelaIA`) e `congelarLeitura`: agora `lido: nota` vira **TS2741** e
+    `atual: lidoOriginal!` vira **TS2322**, os dois conferidos sabotando o componente.
+39. **[baixo] O refactor da 7ª rodada apagou o teste da sentinela `-1`** sem querer, e ela
+    é código vivo. Recolocado no nível certo.
+40. **[baixo] `setLidoOriginal(r.nota)` guardava REFERÊNCIA, não cópia** — o congelamento
+    passou a depender de todo edit futuro continuar imutável. `congelarLeitura` copia os
+    5 campos.
+
+**E uma lição aplicada antes de virar achado:** a caixa do item 36 nasceu como booleano com
+reset à mão no JSX — exatamente o `identidadeEditada` da 5ª rodada. Virou **chave**
+(`tipo|número|CNPJ`) antes de subir: a confirmação expira sozinha quando o dono mexe em tipo,
+número ou CNPJ. **O reset por troca de ARQUIVO continua à mão** em
+`escolherArquivo` — a chave matou um dos dois resets, não os dois.
+
+**9ª rodada do Apolo — nenhum [alto], e o veredito dele foi "pronta para PR":**
+
+41. **[médio] O fio `podeGravar` ainda era trocável.** `duplicataValendo` estava tipado
+    `unknown` (herança do PR #67): aceitava o objeto `dup` inteiro — sempre truthy — e
+    trocar por `boolean` ainda deixaria passar qualquer um dos 6 booleanos irmãos.
+    `dup.confirmacaoValendo` no lugar de `dup.duplicataValendo` matava a trava inteira com
+    `tsc` limpo e a suíte verde. Agora `podeGravar` recebe **o objeto**, não o campo —
+    mesma doutrina do item 38.
+42. **[médio] A caixa era oferecida também quando o veredicto veio de IGNORÂNCIA.** Com a
+    sentinela da corrida, `pareceMesmoDocumento` responde "é a mesma" por não saber — e o
+    banner afirmava "mesmo número, mesmo fornecedor, mesma data e mesmo valor", quatro
+    coisas das quais duas ninguém conferiu. Em cima disso, um clique liberava a gravação.
+    Agora `veredictoPorIgnorancia` esconde a caixa **e** invalida a confirmação na função
+    pura, então marcar não libera nem se a tela errar. O banner também passou a IMPRIMIR
+    a data e o valor da nota acusada — antes ele acusava e escondia a prova.
+43. **[baixo] Depois de marcar, a tela se contradizia** — botão liberado e texto ainda
+    dizendo "gravar assim conta em dobro, apague a outra primeiro". Texto agora muda.
+44. **[baixo] A marca nominal caía com um caractere** (`: true` → `?: true`) sem nada
+    acusar. Ganhou teste com `@ts-expect-error`: enfraquecer a marca vira TS2578. A guarda
+    guarda a si mesma.
+
+**Achado que o Apolo levantou e eu NÃO consertei, de propósito:** a guarda de
+arredondamento derruba linha com quantidade < 0,5 **e** 4ª casa decimal. Ele mediu 23
+combinações reais do projeto — adubo, ureia, defensivo, diesel, semente, calcário, SYAGRI
+— e **todas passam com deriva zero**. Ele mesmo escreveu "eu não mexeria sem um caso real
+na mão", e eu concordo: quando derruba, a linha é contada e vira aviso na tela.
+
+**Padrão que ficou claro em 9 rodadas, e a lição que ficou:** 3 dos [alto] nasceram em
+comportamento novo de TELA, e o `web` não tem testing-library — dá para arrancar uma trava
+do JSX com a suíte verde e o `tsc` limpo. **A resposta barata não foi instalar
+testing-library: foi tirar a decisão do JSX.** `travaDeDuplicidade` prova de mesa
+defeitos que rodadas de leitura não tinham pegado — conte quantos com
+`grep -c "it(" web/app/\(app\)/nfe/regras-conferencia.test.ts`, porque número
+escrito aqui apodrece (esta frase já dizia "9" quando eram 20). Mesmo padrão de
+`salvar-talhao.ts` e `deletar-linha.ts`. O que ainda não tem teste é o que
+sobrou no JSX: o texto dos banners. **UM dos fios entre o JSX e as funções
+puras deixou de ser buraco na 8ª rodada** (item 38); os outros só fecharam na 9ª
+(item 41). Essa frase já disse "a ligação" e estava exagerando.
+
+**Como medir a exposição das linhas já gravadas** (duas classes, não uma — sem
+tolerância o número conta arredondamento honesto como defeito):
+```sql
+-- destrutiva: abrir o item ENCOLHE o gasto
+select count(*) from itens_nfe
+where valor_total > 0
+  and coalesce(quantidade,0) * coalesce(valor_unitario,0) < valor_total - 0.02;
+
+-- inflacionária: abrir o item AUMENTA o gasto
+select count(*) from itens_nfe
+where coalesce(quantidade,0) * coalesce(valor_unitario,0) > valor_total + 0.02;
+```
+
+---
+
 ## 🔧 "O importar PDF não funcionou" — 25/08/2026 — **PRONTO, aguardando merge**
 
 Ramo `fix/nfe-cfop-lido-errado-e-filtro-mes`. Começou como bug relatado e terminou

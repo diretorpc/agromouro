@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
 import { CATEGORIAS_FINANCEIRAS } from '@/lib/centro-custo'
-import { aplicarFamiliaATodos, cfopAposEscolha, itemTrancado, podeGravar, precisaConfirmarEfeitoIncomum, type FamiliaItem } from './regras-conferencia'
+import { aplicarFamiliaATodos, cfopAposEscolha, sinaisDeNotaDeProduto, itemTrancado, linhasSemQuantidade, pendenciasDeCfop, podeGravar, travaDeDuplicidade, congelarLeitura, type FamiliaItem, type NotaComoLida, type NotasNoBanco } from './regras-conferencia'
 
 // Toda a UI do modo "Upload PDF" mora aqui, fora de page.tsx (que já passa de
 // 700 linhas). O fluxo tem DOIS passos porque a leitura é da IA, não do dado
@@ -19,11 +19,13 @@ import { aplicarFamiliaATodos, cfopAposEscolha, itemTrancado, podeGravar, precis
 
 type ItemLido = {
   descricao:      string
-  quantidade:     number
+  // `null` = a nota não traz quantidade impressa (NFS-e não tem a coluna). O
+  // `1` é fabricado só no servidor, na conversão — nunca guardado aqui.
+  quantidade:     number | null
   unidade:        string
   valorUnitario:  number
   valorTotal:     number
-  quantidadeTrib: number
+  quantidadeTrib: number | null
   unidadeTrib:    string
   ncm:            string
   cfop:           string
@@ -79,6 +81,9 @@ type RespostaLeitura = {
   // Aviso, não bloqueio: se a IA classificou errado, as duas travas de
   // duplicidade procuram no modelo errado e a compra entra duas vezes.
   existeNoOutroModelo?: NotaNoBanco | null
+  // As duas consultas, por modelo. Ausente quando a API é mais velha que esta
+  // tela — `travaDeDuplicidade` cai no legado e trava nos dois modelos.
+  notasNoBanco?: NotasNoBanco | null
   familias?: FamiliaItem[]
 }
 
@@ -116,24 +121,31 @@ export function ConferenciaPdf(
   // Se o dono corrigir qualquer um dos três, o aviso envelheceu e não pode
   // continuar travando o botão (achado do Apolo, 24/08/2026: número lido errado
   // que casava com nota existente deixava a nota real sem caminho de entrada).
-  const [identidadeEditada, setIdentidadeEditada] = useState(false)
+
   // Foto do que a IA leu, tirada no instante em que a leitura chega — antes de
   // qualquer edição. Mostrado ao lado dos campos para o dono CONFERIR contra o
   // papel, em vez de só confiar que "o servidor recusa se for duplicata": um
   // dígito errado no CNPJ faz o servidor não achar nada e gravar a nota como
   // se fosse nova (achado do Apolo, 24/08/2026).
-  const [lidoOriginal, setLidoOriginal] = useState<{ numero: string; emitenteCnpj: string } | null>(null)
+  // `modelo` entra aqui porque `travaDeDuplicidade` precisa saber o que a IA leu
+  // no campo Tipo para distinguir a gêmea legítima da própria nota com o Tipo
+  // virado à mão (achado [alto] do Apolo, 6ª rodada, 27/08/2026).
+  const [lidoOriginal, setLidoOriginal] = useState<NotaComoLida | null>(null)
   // Marcado pelo dono quando a nota INTEIRA caiu fora de "compra normal" e ele
   // confirma que é isso mesmo. Ver precisaConfirmarEfeitoIncomum.
   const [confirmouEfeito, setConfirmouEfeito] = useState(false)
+  // Guarda a CHAVE do que foi confirmado (tipo + número + CNPJ), não um "sim".
+  // Assim a confirmação expira sozinha quando qualquer um dos três muda — sem
+  // reset à mão, que é onde o `identidadeEditada` da 5ª rodada se perdeu.
+  const [docDiferenteConfirmadoPara, setDocDiferenteConfirmadoPara] = useState<string | null>(null)
 
   function escolherArquivo(file: File) {
     setErro(''); setLeitura(null); setNota(null)
     setNomeArquivo(file.name)
     setBase64(null)
     setLidoOriginal(null)
-    setIdentidadeEditada(false)
     setConfirmouEfeito(false)
+    setDocDiferenteConfirmadoPara(null)
     if (file.size > LIMITE_BYTES) {
       setErro(`Arquivo grande demais (${(file.size / 1024 / 1024).toFixed(1)} MB). O limite é 10 MB.`)
       return
@@ -157,7 +169,7 @@ export function ConferenciaPdf(
       const r = await api.post<RespostaLeitura>('/nfe/ler-pdf', { arquivo: base64, nomeArquivo })
       setLeitura(r)
       setNota(r.nota)
-      setLidoOriginal({ numero: r.nota.numero, emitenteCnpj: r.nota.emitenteCnpj })
+      setLidoOriginal(congelarLeitura(r.nota))   // CÓPIA dos 5 campos, e a marca que o tsc cobra
     } catch (err) {
       setErro(err instanceof Error ? err.message : 'Erro ao ler o PDF.')
     } finally {
@@ -272,7 +284,11 @@ export function ConferenciaPdf(
 
   function editar<K extends keyof NotaLida>(campo: K, valor: NotaLida[K]) {
     if (!nota) return
-    if (campo === 'numero' || campo === 'emitenteCnpj' || campo === 'modelo') setIdentidadeEditada(true)
+    // Nada de flag de "identidade editada" aqui: quem decide isso é
+    // `travaDeDuplicidade`, comparando o valor ATUAL com o que a IA leu. A flag
+    // pegajosa que morava aqui ligava com qualquer tecla e nunca desligava —
+    // apagar um dígito e redigitar o mesmo matava o aviso de duplicidade para
+    // sempre (achado [alto] do Apolo, 5ª rodada, 27/08/2026).
     setNota({ ...nota, [campo]: valor })
   }
 
@@ -372,13 +388,27 @@ export function ConferenciaPdf(
         ? `O lançamento de gasto passa a ser a soma só das linhas que contam como compra (${brl(somaCompra)}) — bonificação e entrega já paga não entram.`
         : 'Nenhuma linha restante conta como compra nova: o lançamento de gasto pode não ser criado, a menos que a nota traga cobrança real (duplicata) mesmo sem item de compra — confira depois de gravar.'
 
-  const semCfop = nota.itens.filter(i => !i.cfop).length
+  // As duas pendências de CFOP moram em regras-conferencia.ts: NFS-e não tem
+  // CFOP, e contar isso como pendência travava o botão de gravar sem oferecer
+  // saída que não fosse carimbar um 5102 falso (achado [alto] do Apolo,
+  // 27/08/2026). A confirmação vale para a composição ATUAL da nota: mudar o
+  // efeito de qualquer item — ou o campo "Tipo" — recalcula, e `confirmouEfeito`
+  // só destrava enquanto a situação continuar a mesma que ele confirmou.
+  const { semCfop, efeitoIncomum } = pendenciasDeCfop(nota.modelo, nota.itens)
+  // As duas contradições entre o papel e o campo "Tipo", nos dois sentidos.
+  const pareceProduto   = sinaisDeNotaDeProduto(nota.modelo, nota.itens)
+  const semQuantidade   = linhasSemQuantidade(nota.modelo, nota.itens)
   // O aviso só vale enquanto o dono não mexer na identificação da nota.
-  const duplicataValendo = leitura.jaExiste && !identidadeEditada
-  // A confirmação vale para a composição ATUAL da nota: mudar o efeito de
-  // qualquer item recalcula, e o `confirmouEfeito` só destrava enquanto a
-  // situação continuar a mesma que ele confirmou.
-  const efeitoIncomum = precisaConfirmarEfeitoIncomum(nota.itens)
+  // Os dois objetos INTEIROS, não campo a campo: ligar o fio errado aqui foi a
+  // causa dos dois [alto] da 7ª rodada do Apolo (27/08/2026), e nenhum teste
+  // nem o `tsc` enxergavam, porque os candidatos tinham o mesmo tipo.
+  const dup = travaDeDuplicidade({
+    atual:          nota,
+    lido:           lidoOriginal,
+    notasNoBanco:   leitura.notasNoBanco,
+    jaExisteLegado: leitura.jaExiste,
+    confirmadoPara: docDiferenteConfirmadoPara,
+  })
   // API antiga não manda `familias`: sem a lista não há como oferecer o conserto,
   // e um botão que não conserta nada é pior que nenhum botão.
   const temFamiliaCompra = (leitura.familias ?? []).some(f => f.chave === 'compra')
@@ -389,28 +419,125 @@ export function ConferenciaPdf(
 
   return (
     <div className="space-y-4">
-      {duplicataValendo && (
+      {/* Os três avisos de duplicidade saem todos de `travaDeDuplicidade`, que é
+          função pura e testada — a decisão morava aqui dentro e foi de onde
+          saíram os dois achados [alto] da 5ª rodada do Apolo (27/08/2026). */}
+      {dup.duplicataValendo && !dup.ehOMesmoDocumento && (
         <div className="rounded-md bg-red-50 text-red-700 px-3 py-2 text-sm">
           <strong>Esta nota já está no sistema</strong>
-          {leitura.jaExiste?.data_emissao ? ` (entrou em ${ddmmaaaa(leitura.jaExiste.data_emissao)})` : ''}.
+          {dup.modeloDoGemeoDesconhecido ? '' : ` como ${nota.modelo === 'nfe' ? 'nota de produto (NF-e)' : 'nota de serviço (NFS-e)'}`}
+          {dup.gemeoNoModeloAtual?.data_emissao ? ` (entrou em ${ddmmaaaa(dup.gemeoNoModeloAtual.data_emissao)})` : ''}.
           {' '}Gravar de novo somaria estoque e gasto duas vezes.
           {' '}Se o número ou o CNPJ estiverem lidos errado, corrija abaixo — o sistema confere
           de novo com o número corrigido.
         </div>
       )}
 
-      {leitura.jaExiste && identidadeEditada && (
+      {/* A trava que vem da TROCA do Tipo precisa de texto próprio: sem ele, o
+          dono troca o campo, o botão continua travado e ele não faz ideia do
+          porquê. Achado [alto] do Apolo, 6ª rodada (27/08/2026): antes deste
+          bloco, trocar o Tipo LIBERAVA o botão e a tela chamava o estado de
+          "normal" — a mesma nota entrava uma segunda vez, sem estoque. */}
+      {dup.ehOMesmoDocumento && (
+        <div className="rounded-md bg-red-50 text-red-700 px-3 py-2 text-sm">
+          <strong>{dup.travadoPeloTipo
+            ? 'Você trocou o Tipo, mas esta nota já está gravada com o tipo original'
+            : `Esta nota já está gravada como ${dup.modeloDoOutroGemeo === 'nfe' ? 'nota de produto (NF-e)' : 'nota de serviço (NFS-e)'}`}</strong>
+          {dup.veredictoPorIgnorancia
+            ? ' — mesmo número e mesmo fornecedor. Não consegui conferir data nem valor da nota já gravada, então trato como sendo a mesma.'
+            : ' — mesmo número, mesmo fornecedor, mesma data e mesmo valor. É o mesmo documento.'}
+          {dup.oMesmoDocumento?.data_emissao
+            ? ` A gravada entrou em ${ddmmaaaa(dup.oMesmoDocumento.data_emissao)}`
+              + (typeof dup.oMesmoDocumento.valor_total === 'number' && dup.oMesmoDocumento.valor_total >= 0
+                  ? `, de ${brl(dup.oMesmoDocumento.valor_total)}.` : '.')
+            : ''}
+          {dup.travadoPeloTipo ? '' : ' O campo "Tipo" desta leitura provavelmente saiu errado.'}
+          {dup.confirmacaoValendo
+            ? ' Você confirmou que são documentos diferentes — a gravação está liberada.'
+            : ' Gravar assim entraria pela segunda vez, com estoque e gasto contados em dobro.'
+              + ' Se a nota já gravada é que está com o tipo errado, apague ela primeiro na aba NF-e.'}
+          {/* A saída de um clique. Sem ela, o par legítimo NF-e/NFS-e emitido no
+              MESMO dia com o MESMO valor (peças e mão de obra rachados meio a
+              meio) ficava sem caminho nenhum: os DOIS lados do campo Tipo
+              travavam, e as duas saídas oferecidas no texto acima estavam
+              erradas para ele — apagar a nota gravada (que é legítima) ou
+              conferir o número (que está certo). Achado [médio] do Apolo, 8ª
+              rodada (27/08/2026): "travar de mais custa um clique" só é verdade
+              se o clique existir, e não existia. */}
+          {/* A caixa só existe quando há EVIDÊNCIA. Quando o veredicto veio de
+              ignorância (sentinela da corrida, gêmea sem data e sem valor), a
+              saída certa é abrir a nota gravada — não um clique que libera
+              dinheiro em cima de uma afirmação que ninguém conferiu. A trava de
+              verdade está na função pura: marcar aqui não liberaria mesmo. */}
+          {!dup.veredictoPorIgnorancia && (
+          <label className="mt-2 flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={dup.confirmacaoValendo}
+              onChange={e => setDocDiferenteConfirmadoPara(e.target.checked ? dup.chaveDeConfirmacao : null)}
+            />
+            <span>Conferi no papel: são <strong>dois documentos diferentes</strong> com o mesmo número.</span>
+          </label>
+          )}
+        </div>
+      )}
+
+      {dup.gemeoNoModeloAtual && dup.identidadeMudou && (
         <div className="rounded-md bg-amber-50 text-amber-800 px-3 py-2 text-sm">
           Você corrigiu a identificação da nota. A conferência de duplicidade é refeita no
           servidor ao gravar — se ainda for a mesma nota, ela é recusada lá.
         </div>
       )}
 
-      {leitura.existeNoOutroModelo && (
+      {/* O rótulo sai do modelo em que a gêmea foi ENCONTRADA, não do `Tipo`
+          atual da tela. Com o rótulo derivado do Tipo, obedecer a este aviso
+          invertia o texto dele: o dono trocava o Tipo e o banner passava a
+          apontar o modelo errado, justo no clique que ele mesmo pediu. */}
+      {dup.gemeoNoOutroModelo && (
         <div className="rounded-md bg-amber-50 text-amber-800 px-3 py-2 text-sm">
-          Já existe uma nota <strong>{nota.modelo === 'nfe' ? 'de serviço (NFS-e)' : 'de produto (NF-e)'}</strong>{' '}
-          com este mesmo número e fornecedor. Confira o campo <strong>Tipo</strong>: se o tipo estiver
-          errado, o sistema não reconhece a nota repetida e a compra entra duas vezes.
+          Já existe uma nota <strong>{dup.modeloDoOutroGemeo === 'nfe' ? 'de produto (NF-e)' : 'de serviço (NFS-e)'}</strong>{' '}
+          com este mesmo número e fornecedor
+          {dup.gemeoNoOutroModelo.data_emissao ? ` (entrou em ${ddmmaaaa(dup.gemeoNoOutroModelo.data_emissao)})` : ''}
+          {typeof dup.gemeoNoOutroModelo.valor_total === 'number' && dup.gemeoNoOutroModelo.valor_total >= 0
+            ? `, de ${brl(dup.gemeoNoOutroModelo.valor_total)}` : ''}.
+          {' '}Data e valor diferentes dos desta nota, então são documentos diferentes — acontece
+          {' '}quando o fornecedor manda peças e mão de obra separadas. Ainda assim,{' '}
+          <strong>confira o campo Tipo</strong> antes de gravar.
+        </div>
+      )}
+
+      {/* As duas contradições entre o papel e o campo "Tipo". Nenhuma das duas
+          existia antes de a tela passar a se calar sobre CFOP em NFS-e — e sem
+          elas a troca de "Tipo" virava uma saída de 1 clique que apagava todos
+          os bloqueios sem deixar rastro (achados do Apolo, 27/08/2026). */}
+      {pareceProduto > 0 && (
+        <div className="rounded-md bg-amber-50 text-amber-800 px-3 py-2 text-sm space-y-2">
+          <p>
+            <strong>Esta nota tem cara de nota de produto, mas o Tipo diz serviço.</strong>
+            {' '}{pareceProduto} {pareceProduto === 1 ? 'linha traz' : 'linhas trazem'} código fiscal,
+            {' '}ou quantidade com unidade de mercadoria — coisas que nota de serviço não tem.
+            {' '}Gravada como NFS-e, <strong>nenhuma mercadoria desta nota entra no estoque</strong>.
+            {' '}Se for nota de produto, troque o campo <strong>"Tipo"</strong> acima.
+          </p>
+          {/* SEM botão de conserto, de propósito — e isto contraria de propósito o
+              comentário de `aplicarFamiliaATodos` ("quando a tela sabe o conserto,
+              ela oferece o conserto"). Duas razões, as duas medidas pelo Apolo na
+              4ª rodada (27/08/2026):
+              1. O botão apagava o aviso de duplicidade e deixava a nota entrar
+                 duas vezes (ver o comentário em `editar`).
+              2. `sinaisDeNotaDeProduto` não tem certeza suficiente para um botão.
+              E o precedente de 25/08 não se aplica: lá o conserto eram 19
+              dropdowns contra 1 clique de dispensa. Aqui é UM dropdown, o campo
+              "Tipo", que está logo acima nesta mesma tela. */}
+        </div>
+      )}
+
+      {semQuantidade > 0 && (
+        <div className="rounded-md bg-red-50 text-red-700 px-3 py-2 text-sm">
+          <strong>Esta nota está marcada como produto (NF-e), mas {semQuantidade === 1 ? 'uma linha não tem' : `${semQuantidade} linhas não têm`} quantidade impressa.</strong>
+          {' '}Em nota de produto a quantidade é o que entra no estoque, e o sistema não inventa
+          {' '}número. Volte o Tipo para <strong>NFS-e (serviço)</strong> se for nota de serviço, ou
+          {' '}leia o PDF de novo.
         </div>
       )}
 
@@ -582,7 +709,14 @@ export function ConferenciaPdf(
               {nota.itens.map((item, n) => (
                 <tr key={n} className="border-t">
                   <td className="p-2">{item.descricao}</td>
-                  <td className="p-2 text-right">{item.quantidade}</td>
+                  {/* Quantidade inferida não pode ter a MESMA cara de quantidade
+                      lida: o "1" da NFS-e não está impresso em lugar nenhum do
+                      papel. Mesma doutrina de `cfopLido` logo abaixo. */}
+                  <td className="p-2 text-right">
+                    {item.quantidade === null
+                      ? <span className="text-muted-foreground" title="A NFS-e não traz coluna de quantidade — o serviço conta como 1 na hora de gravar">não impressa</span>
+                      : item.quantidade}
+                  </td>
                   <td className="p-2">{item.unidade}</td>
                   <td className="p-2 text-right">{brl(item.valorTotal)}</td>
                   {/* O CFOP decide estoque, bonificação e entrega futura. Quando a
@@ -596,7 +730,13 @@ export function ConferenciaPdf(
                         botão de conserto em massa precisa da MESMA resposta.
                         Quando esta pergunta vivia só aqui, o botão passou por
                         cima da trava (achado [alto] do Apolo, 25/08/2026). */}
-                    {itemTrancado(item) ? (
+                    {nota.modelo === 'nfse' ? (
+                      // Serviço não tem CFOP para escolher. Oferecer o select
+                      // aqui seria oferecer o carimbo de um código que a nota
+                      // não imprime — e é justamente o que travava a gravação
+                      // (achado [alto] do Apolo, 27/08/2026).
+                      <span className="text-muted-foreground" title="Nota de serviço: não tem CFOP, e serviço nunca entra no estoque">Serviço</span>
+                    ) : itemTrancado(item) ? (
                       <span title="CFOP com efeito próprio — não mexa sem motivo">CFOP {item.cfop}</span>
                     ) : (
                       <>
@@ -723,8 +863,9 @@ export function ConferenciaPdf(
           onClick={gravar}
           disabled={!podeGravar({
             quantidadeItens: nota.itens.length, semCfop, familias: leitura.familias,
-            duplicataValendo, gravando,
-            efeitoIncomumPendente: efeitoIncomum && !confirmouEfeito,
+            linhasSemQuantidade: semQuantidade,
+            trava: dup, gravando,
+            efeitoIncomumPendente: efeitoIncomum && !confirmouEfeito,   // obrigatório: ver regras-conferencia.ts
           })}
           title={semCfop > 0 && (leitura.familias?.length ?? 0) > 0 ? 'Escolha o que é cada item marcado em amarelo' : undefined}
         >
