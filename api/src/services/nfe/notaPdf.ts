@@ -443,34 +443,45 @@ export function validarNotaLida(bruto: unknown, hojeISO: string): ValidacaoNota 
     // clique — inclusive quando o dono só queria trocar o CENTRO DE CUSTO, que
     // é a razão de aquele campo existir.
     //
-    // Três tentativas até acertar, todas do Apolo, todas medidas:
-    //   2ª rodada: preservava o unitário lido → {q:1, vu:200, vt:600},
-    //              R$ 600 virava R$ 200.
-    //   4ª rodada: fabricava `0` para unitário ilegível → {q:3, vu:0, vt:6000},
-    //              R$ 6.000 viravam R$ 0. O zero não vinha da IA, era nosso.
-    //   5ª rodada: aceitava qualquer unitário POSITIVO → {q:3, vu:200,
-    //              vt:6000} passava (R$ 6.000 → R$ 600), e {q:5, vu:880,
-    //              vt:0} passava também (R$ 0 → R$ 4.400, gasto fantasma).
+    // O unitário é SEMPRE derivado do total, e essa foi a 4ª tentativa. Todas
+    // as anteriores foram achados do Apolo, todas medidas:
+    //   2ª rodada: preservava o unitário lido → {q:1, vu:200, vt:600}.
+    //   4ª rodada: fabricava `0` para o ilegível → {q:3, vu:0, vt:6000}.
+    //   5ª rodada: aceitava qualquer POSITIVO → {q:3, vu:200, vt:6000} passava,
+    //              e {q:5, vu:880, vt:0} criava R$ 4.400 do nada.
+    //   6ª rodada: aceitava o lido dentro de 0,1% do total. Parecia apertado, e
+    //              não era: 0,1% é um ORÇAMENTO DE DERIVA que o `handleEdit`
+    //              materializa depois — R$ 490 medidos numa linha de R$ 500 mil,
+    //              e até ~R$ 2.000 no teto de VALOR_MAX_ITEM.
     //
-    // A régua certa não é o SINAL do unitário, é a CONSISTÊNCIA dele com o
-    // total. Tolerância: 2 centavos ou 0,1% do total, o que for maior — cobre
-    // o arredondamento honesto que toda nota impressa tem, e recusa leitura
-    // errada. Fora da tolerância, o unitário é DERIVADO do total, que é o
-    // número que a nota fiscal realmente afirma e que o Financeiro soma.
-    const unitarioValido = unitarioLido !== null && unitarioLido >= 0 && unitarioLido <= VALOR_MAX_UNITARIO
-    const unitarioConfere = unitarioValido && quantidadeFinal !== null
-      && Math.abs(unitarioLido * quantidadeFinal - total) <= Math.max(0.02, total * 0.001)
-
+    // Derivar sempre tem deriva máxima de `quantidade × 0,00005` (o
+    // arredondamento do `numeric(12,4)` da coluna): R$ 0,05 na mesma linha de
+    // R$ 500 mil. E não se perde nada: o unitário lido não alimenta nenhuma
+    // outra conta — `converterParaNFeData` só o repassa, e quem soma dinheiro é
+    // o TOTAL, que é o número que a nota fiscal afirma.
     const valorUnitario = quantidadeFinal === null
       ? total                                   // NFS-e: quantidade vira 1 na conversão
-      : (unitarioConfere ? unitarioLido : total / quantidadeFinal)
+      : total / quantidadeFinal
 
-    // O unitário DERIVADO é o único que pode estourar: o lido já passou por
-    // VALOR_MAX_UNITARIO. `{q: 0.001, vt: 2.000.000}` deriva 2 bilhões, acima
-    // do `numeric(12,4)` da coluna — o INSERT morreria e levaria a NOTA INTEIRA
-    // junto. Linha assim é leitura errada, não compra: cai como as outras, e é
-    // CONTADA para o dono ver. Achado [baixo] do Apolo, 5ª rodada (27/08/2026).
-    if (valorUnitario > VALOR_MAX_UNITARIO) {
+    // Duas bordas do `numeric(12,4)` da coluna, as duas derrubando a LINHA em
+    // vez de a nota inteira, e as duas CONTADAS para o dono ver:
+    //
+    // 1. ACIMA DO TETO: `{q: 0.001, vt: 2.000.000}` deriva 2 bilhões. Gravar
+    //    mataria o INSERT e levaria a nota inteira junto (achado [baixo] do
+    //    Apolo, 5ª rodada).
+    //
+    // 2. ARREDONDAMENTO QUE MEXE NO DINHEIRO: `{q: 700.000, vt: 100}` deriva
+    //    0,00014285…; a coluna guarda 0,0001, e o `handleEdit` do Financeiro
+    //    refaz o total como R$ 70 — 30% a menos (achado [baixo] do Apolo, 6ª
+    //    rodada). A régua não é o VALOR do unitário, é o EFEITO do
+    //    arredondamento: simula o que a coluna vai guardar e mede quanto o
+    //    total se move. Linha que a coluna não consegue representar sem mexer
+    //    no dinheiro é leitura errada, não compra.
+    const unitarioNaColuna = Math.round(valorUnitario * 10_000) / 10_000
+    const derivaDaColuna = quantidadeFinal === null
+      ? 0
+      : Math.abs(unitarioNaColuna * quantidadeFinal - total)
+    if (valorUnitario > VALOR_MAX_UNITARIO || derivaDaColuna > Math.max(0.02, total * 0.001)) {
       itensDescartados++
       continue
     }

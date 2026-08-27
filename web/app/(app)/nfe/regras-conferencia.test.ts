@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { travaDeDuplicidade, aplicarFamiliaATodos, sinaisDeNotaDeProduto, itemTrancado, cfopAposEscolha, linhasSemQuantidade, pendenciasDeCfop, podeGravar, precisaConfirmarEfeitoIncomum, type FamiliaItem } from './regras-conferencia'
+import { travaDeDuplicidade, pareceMesmoDocumento, aplicarFamiliaATodos, sinaisDeNotaDeProduto, itemTrancado, cfopAposEscolha, linhasSemQuantidade, pendenciasDeCfop, podeGravar, precisaConfirmarEfeitoIncomum, type FamiliaItem } from './regras-conferencia'
 
 const COMPRA: FamiliaItem            = { chave: 'compra',           rotulo: 'Compra normal',    cfop: '5102', contaComoCompra: true }
 const ENTREGA_FATURADA: FamiliaItem  = { chave: 'entrega-faturada', rotulo: 'Entrega faturada',  cfop: '5117', contaComoCompra: false }
@@ -333,13 +333,13 @@ describe('sinaisDeNotaDeProduto — o papel contradiz o campo "Tipo"', () => {
     // DANFE, MTN do contrato da SYAGRI), e uma DANFE de 8 linhas com
     // PEÇA/FRASCO/BALDE/PACOTE não acendia aviso nenhum.
     for (const un of ['TON', 'ton', 'MTN', 'SACO', 'FD', 'CENTO', 'KIT',
-                      'PEÇA', 'FRASCO', 'BALDE', 'PACOTE', 'MT', 'RESMA', 'xyz']) {
+                      'PEÇA', 'FRASCO', 'BALDE', 'PACOTE', 'PCT', 'MT', 'RESMA', 'xyz']) {
       expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 1, unidade: un }])).toBe(1)
     }
   })
 
   it('as unidades de SERVIÇO de verdade continuam quietas', () => {
-    for (const un of ['un', 'UN', 'UND', 'UNIDADE', 'H', 'HORA', 'HRS',
+    for (const un of ['un', 'UN', 'UN.', 'UND', 'UNIDADE', 'H', 'HORA', 'HRS',
                       'DIA', 'MES', 'M2', 'M³', 'SERV', 'VB', '']) {
       expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 3, unidade: un }])).toBe(0)
     }
@@ -399,81 +399,168 @@ describe('linhasSemQuantidade — nota de produto exige quantidade impressa', ()
   })
 })
 
-describe('travaDeDuplicidade — os dois [alto] da 5ª rodada, agora provados de mesa', () => {
-  const NF = { id: 'a', numero: '500', data_emissao: '2026-07-01', emitente_nome: 'X' }
-  const SV = { id: 'b', numero: '500', data_emissao: '2026-07-02', emitente_nome: 'X' }
-  const base = { numeroAtual: '500', cnpjAtual: '04063805000135', numeroLido: '500', cnpjLido: '04063805000135' }
+describe('travaDeDuplicidade — a gêmea legítima e a nota com o Tipo virado', () => {
+  // A NOTA QUE ESTÁ NA TELA: nº 500, R$ 1.000, emitida em 10/08.
+  const ATUAL = { valorTotalAtual: 1000, dataEmissaoAtual: '2026-08-10' }
+  // A MESMA nota, já gravada: mesmo total, mesma data.
+  const MESMA = { id: 'mesma', numero: '500', data_emissao: '2026-08-10', emitente_nome: 'X', valor_total: 1000 }
+  // Documento DIFERENTE, mesmo número: o par peças/mão de obra da migration 011.
+  const OUTRA = { id: 'outra', numero: '500', data_emissao: '2026-07-02', emitente_nome: 'X', valor_total: 380 }
+  const base = {
+    ...ATUAL,
+    numeroAtual: '500', cnpjAtual: '04063805000135',
+    numeroLido: '500',  cnpjLido: '04063805000135',
+  }
 
-  it('nota LEGÍTIMA do outro modelo destrava ao corrigir o Tipo', () => {
-    // NF-e nº 500 (peças) já gravada; sobe o PDF da NFS-e nº 500 (mão de obra).
-    // O SCHEMA manda "na dúvida, nfe", então a IA rotula errado e a tela trava.
-    // Corrigir o Tipo é a ação CERTA e tem que liberar — antes continuava
-    // travado, e o banner ainda mandava apagar a nota gravada, que está certa.
-    const comoNfe = travaDeDuplicidade({ ...base, modeloAtual: 'nfe', notasNoBanco: { nfe: NF, nfse: null }, jaExisteLegado: NF })
-    expect(comoNfe.duplicataValendo).toBe(true)
+  it('trocar o Tipo NÃO libera quando é o mesmo documento — o [alto] da 6ª rodada', () => {
+    // A nota já entrou pelo Make como NF-e. O dono sobe o PDF dela; a IA lê
+    // 'nfe' e a tela trava, certo. Ele troca SÓ o campo Tipo para serviço:
+    // antes, o botão liberava e a tela ainda chamava o estado de "normal" — e
+    // a nota entrava pela segunda vez, porque `modelo` faz parte da chave.
+    const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfse', modeloLido: 'nfe',
+      notasNoBanco: { nfe: MESMA, nfse: null }, jaExisteLegado: MESMA })
+    expect(r.duplicataValendo).toBe(true)
+    expect(r.travadoPeloTipo).toBe(true)
+    // E o aviso da "gêmea legítima" CALA: ele diria "data e valor diferentes,
+    // são documentos diferentes" logo ao lado do vermelho dizendo o contrário.
+    expect(r.gemeoNoOutroModelo).toBeNull()
+  })
 
-    const comoNfse = travaDeDuplicidade({ ...base, modeloAtual: 'nfse', notasNoBanco: { nfe: NF, nfse: null }, jaExisteLegado: NF })
-    expect(comoNfse.duplicataValendo).toBe(false)
-    expect(comoNfse.gemeoNoOutroModelo).toBe(NF)   // vira aviso, não trava
+  it('trocar o Tipo LIBERA quando é documento diferente — o par peças + mão de obra', () => {
+    // Data e valor diferentes: são as duas notas que a migration 011 descreve.
+    const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfse', modeloLido: 'nfe',
+      notasNoBanco: { nfe: OUTRA, nfse: null }, jaExisteLegado: OUTRA })
+    expect(r.duplicataValendo).toBe(false)
+    expect(r.travadoPeloTipo).toBe(false)
+    expect(r.gemeoNoOutroModelo).toBe(OUTRA)   // vira aviso, não trava
+  })
+
+  it('sem saber o modelo LIDO, o desempate não roda — comportamento anterior', () => {
+    const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfse', modeloLido: undefined,
+      notasNoBanco: { nfe: MESMA, nfse: null }, jaExisteLegado: MESMA })
+    expect(r.travadoPeloTipo).toBe(false)
+  })
+
+  it('API velha, sem valor_total: assume "é a mesma" e trava — direção segura', () => {
+    const semValor = { id: 'v', numero: '500', data_emissao: '2026-08-10', emitente_nome: 'X' }
+    const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfse', modeloLido: 'nfe',
+      notasNoBanco: { nfe: semValor, nfse: null }, jaExisteLegado: semValor })
+    expect(r.duplicataValendo).toBe(true)
+  })
+
+  it('a sentinela -1 do fallback de corrida também trava', () => {
+    const corrida = { id: '', numero: '500', data_emissao: '', emitente_nome: 'X', valor_total: -1 }
+    const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfse', modeloLido: 'nfe',
+      notasNoBanco: { nfe: corrida, nfse: null }, jaExisteLegado: corrida })
+    expect(r.duplicataValendo).toBe(true)
   })
 
   it('nota REPETIDA de verdade continua travada nos dois modelos', () => {
     for (const modelo of ['nfe', 'nfse'] as const) {
-      const r = travaDeDuplicidade({ ...base, modeloAtual: modelo, notasNoBanco: { nfe: NF, nfse: SV }, jaExisteLegado: NF })
-      expect(r.duplicataValendo).toBe(true)
-    }
-  })
-
-  it('desfazer a edição do número TRAZ o aviso de volta', () => {
-    // A flag pegajosa ligava com qualquer tecla e nunca desligava: apagar um
-    // dígito e redigitar o mesmo matava o aviso para sempre, e daí trocar o
-    // Tipo gravava a nota uma segunda vez.
-    const editando = travaDeDuplicidade({ ...base, numeroAtual: '50', modeloAtual: 'nfe', notasNoBanco: { nfe: NF, nfse: null }, jaExisteLegado: NF })
-    expect(editando.duplicataValendo).toBe(false)
-    expect(editando.identidadeMudou).toBe(true)
-
-    const desfeito = travaDeDuplicidade({ ...base, modeloAtual: 'nfe', notasNoBanco: { nfe: NF, nfse: null }, jaExisteLegado: NF })
-    expect(desfeito.duplicataValendo).toBe(true)
-    expect(desfeito.identidadeMudou).toBe(false)
-  })
-
-  it('editar o número e DEPOIS trocar o Tipo não abre a porta', () => {
-    // O caminho de dois passos do achado [alto]: com o número de volta ao
-    // original, a troca de Tipo encontra a gêmea e trava.
-    const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfse', notasNoBanco: { nfe: NF, nfse: SV }, jaExisteLegado: NF })
-    expect(r.duplicataValendo).toBe(true)
-  })
-
-  it('CNPJ corrigido também expira o aviso — é o motivo do campo existir', () => {
-    const r = travaDeDuplicidade({ ...base, cnpjAtual: '99999999000199', modeloAtual: 'nfe', notasNoBanco: { nfe: NF, nfse: null }, jaExisteLegado: NF })
-    expect(r.duplicataValendo).toBe(false)
-  })
-
-  it('o rótulo sai do modelo onde a gêmea ESTÁ, não do Tipo da tela', () => {
-    // Com o rótulo derivado do Tipo, obedecer ao aviso invertia o texto dele.
-    const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfse', notasNoBanco: { nfe: NF, nfse: null }, jaExisteLegado: null })
-    expect(r.modeloDoOutroGemeo).toBe('nfe')
-    expect(r.gemeoNoOutroModelo).toBe(NF)
-  })
-
-  it('API mais velha que a tela: trava nos DOIS modelos — direção segura', () => {
-    // Rollback da API. Só sabemos que existe uma repetida, não em qual modelo.
-    for (const modelo of ['nfe', 'nfse'] as const) {
-      const r = travaDeDuplicidade({ ...base, modeloAtual: modelo, notasNoBanco: undefined, jaExisteLegado: NF })
+      const r = travaDeDuplicidade({ ...base, modeloAtual: modelo, modeloLido: modelo,
+        notasNoBanco: { nfe: MESMA, nfse: MESMA }, jaExisteLegado: MESMA })
       expect(r.duplicataValendo).toBe(true)
     }
   })
 
   it('sem gêmea nenhuma, nada trava', () => {
-    const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfe', notasNoBanco: { nfe: null, nfse: null }, jaExisteLegado: null })
+    const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfe', modeloLido: 'nfe',
+      notasNoBanco: { nfe: null, nfse: null }, jaExisteLegado: null })
     expect(r.duplicataValendo).toBe(false)
+    expect(r.gemeoNoOutroModelo).toBeNull()
+  })
+})
+
+describe('travaDeDuplicidade — a identidade que o dono edita', () => {
+  const NF = { id: 'a', numero: '500', data_emissao: '2026-08-10', emitente_nome: 'X', valor_total: 1000 }
+  const base = {
+    valorTotalAtual: 1000, dataEmissaoAtual: '2026-08-10',
+    numeroAtual: '500', cnpjAtual: '04063805000135',
+    numeroLido: '500',  cnpjLido: '04063805000135',
+    modeloAtual: 'nfe' as const, modeloLido: 'nfe' as const,
+    notasNoBanco: { nfe: NF, nfse: null }, jaExisteLegado: NF,
+  }
+
+  it('desfazer a edição do número TRAZ o aviso de volta', () => {
+    // A flag pegajosa ligava com qualquer tecla e nunca desligava.
+    expect(travaDeDuplicidade({ ...base, numeroAtual: '50' }).duplicataValendo).toBe(false)
+    expect(travaDeDuplicidade(base).duplicataValendo).toBe(true)
+  })
+
+  it('reformatação NÃO conta como edição — o servidor normaliza igual', () => {
+    // Achado [baixo] da 6ª rodada: comparando texto cru, "0500" no lugar de
+    // "500", um espaço no fim, ou o CNPJ pontuado desligavam a trava. O dono
+    // não tinha mudado nada e levava um erro do servidor depois.
+    for (const numero of ['500', '0500', ' 500 ', '5.00']) {
+      expect(travaDeDuplicidade({ ...base, numeroAtual: numero }).duplicataValendo).toBe(true)
+    }
+    expect(travaDeDuplicidade({ ...base, cnpjAtual: '04.063.805/0001-35' }).duplicataValendo).toBe(true)
+  })
+
+  it('CNPJ trocado de verdade expira o aviso — é o motivo do campo existir', () => {
+    expect(travaDeDuplicidade({ ...base, cnpjAtual: '99999999000199' }).duplicataValendo).toBe(false)
+  })
+
+  it('corrigir o número APAGA o aviso da gêmea — ele fala do número antigo', () => {
+    // Achado [médio] da 6ª rodada: o banner seguia afirmando "existe uma nota
+    // com ESTE mesmo número" sobre um número que não era mais o da tela.
+    const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfse', modeloLido: 'nfse', numeroAtual: '999' })
+    expect(r.identidadeMudou).toBe(true)
     expect(r.gemeoNoOutroModelo).toBeNull()
   })
 
   it('sem saber o que a IA leu, o aviso NÃO é desligado', () => {
-    // Assumir "mudou" quando `lidoOriginal` ainda não chegou desligaria a trava.
-    const r = travaDeDuplicidade({ modeloAtual: 'nfe', notasNoBanco: { nfe: NF, nfse: null }, jaExisteLegado: NF,
-      numeroAtual: '500', cnpjAtual: '040', numeroLido: undefined, cnpjLido: undefined })
+    const r = travaDeDuplicidade({ ...base, numeroAtual: '999', numeroLido: undefined, cnpjLido: undefined })
     expect(r.duplicataValendo).toBe(true)
+  })
+})
+
+describe('travaDeDuplicidade — API mais velha que a tela', () => {
+  const NF = { id: 'a', numero: '500', data_emissao: '2026-08-10', emitente_nome: 'X', valor_total: 1000 }
+  const base = {
+    valorTotalAtual: 1000, dataEmissaoAtual: '2026-08-10',
+    numeroAtual: '500', cnpjAtual: '040', numeroLido: '500', cnpjLido: '040',
+    modeloLido: 'nfe' as const,
+  }
+
+  it('trava nos DOIS modelos — não se sabe onde a gêmea está', () => {
+    for (const modelo of ['nfe', 'nfse'] as const) {
+      const r = travaDeDuplicidade({ ...base, modeloAtual: modelo, notasNoBanco: undefined, jaExisteLegado: NF })
+      expect(r.duplicataValendo).toBe(true)
+      expect(r.modeloDoGemeoDesconhecido).toBe(true)   // a tela não imprime rótulo inventado
+    }
+  })
+
+  it('objeto com FORMA inesperada cai no legado, não desliga a trava', () => {
+    // Achado [baixo] da 6ª rodada: bastava o objeto ser truthy para o legado
+    // ser abandonado, e chave faltando devolvia `undefined` onde o tipo promete
+    // `null`. A guarda é de FORMA, não de presença.
+    const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfe',
+      notasNoBanco: {} as never, jaExisteLegado: NF })
+    expect(r.duplicataValendo).toBe(true)
+    expect(r.gemeoNoModeloAtual).toBe(NF)
+  })
+})
+
+describe('pareceMesmoDocumento', () => {
+  const atual = { valorTotal: 1000, dataEmissao: '2026-08-10' }
+  const gravada = (over: Record<string, unknown>) =>
+    ({ id: '', numero: '', emitente_nome: '', data_emissao: '2026-08-10', ...over }) as never
+
+  it('mesma data e mesmo valor = mesmo documento', () => {
+    expect(pareceMesmoDocumento(gravada({ valor_total: 1000 }), atual)).toBe(true)
+  })
+  it('centavo de diferença ainda é o mesmo documento', () => {
+    expect(pareceMesmoDocumento(gravada({ valor_total: 1000.02 }), atual)).toBe(true)
+  })
+  it('valor diferente = documento diferente', () => {
+    expect(pareceMesmoDocumento(gravada({ valor_total: 380 }), atual)).toBe(false)
+  })
+  it('data diferente = documento diferente', () => {
+    expect(pareceMesmoDocumento(gravada({ valor_total: 1000, data_emissao: '2026-07-02' }), atual)).toBe(false)
+  })
+  it('sem valor ou sem data, responde "pode ser a mesma"', () => {
+    expect(pareceMesmoDocumento(gravada({}), atual)).toBe(true)
+    expect(pareceMesmoDocumento(gravada({ valor_total: 380, data_emissao: '' }), atual)).toBe(true)
   })
 })

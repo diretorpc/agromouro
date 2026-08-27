@@ -136,16 +136,27 @@ function recusaEmPortugues(r: RecusaDeLeitura): string {
   }
 }
 
+// `valor_total` entra no select por causa de `pareceMesmoDocumento`
+// (web/app/(app)/nfe/regras-conferencia.ts): mesmo número + mesmo CNPJ + mesmo
+// total + mesma data é o MESMO documento com o campo "Tipo" virado à mão;
+// total ou data diferentes é o par legítimo (NF-e de peças + NFS-e de mão de
+// obra). Sem esse desempate a tela escolhia sempre "par legítimo" e liberava a
+// gravação dobrada — achado [alto] do Apolo, 6ª rodada (27/08/2026).
 async function notaNoBanco(numero: string, cnpj: string, fazendaId: string, modelo: string) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('notas_fiscais')
-    .select('id, numero, data_emissao, emitente_nome')
+    .select('id, numero, data_emissao, emitente_nome, valor_total')
     .eq('numero', numero)
     .eq('emitente_cnpj', cnpj)
     .eq('fazenda_id', fazendaId)
     .eq('modelo', modelo)
     .maybeSingle()
-  return data as { id: string; numero: string; data_emissao: string; emitente_nome: string } | null
+  // Erro de consulta some com o aviso de duplicidade da tela. Não relança (o
+  // índice único ainda arbitra na gravação), mas não pode sumir CALADO — o
+  // irmão `nfeJaProcessada` já tem comentário sobre isso. Achado [baixo] do
+  // Apolo, 6ª rodada (27/08/2026).
+  if (error) console.error(`[NFe] Falha ao consultar duplicidade (modelo ${modelo}):`, error.message)
+  return data as { id: string; numero: string; data_emissao: string; emitente_nome: string; valor_total: number } | null
 }
 
 // POST /nfe/ler-pdf — passo 1. Lê o PDF com IA e devolve o que entendeu, mais
@@ -189,7 +200,11 @@ nfeRoutes.post('/ler-pdf', async (req, res, next) => {
     let jaExiste = null as Awaited<ReturnType<typeof notaNoBanco>>
     if (await nfeJaProcessada(nota.numero, nota.emitenteCnpj, fazendaId, nota.modelo)) {
       jaExiste = (await notaNoBanco(nota.numero, nota.emitenteCnpj, fazendaId, nota.modelo))
-        ?? { id: '', numero: nota.numero, data_emissao: '', emitente_nome: nota.emitenteNome }
+        // Fallback para a corrida: `nfeJaProcessada` disse que existe, mas o
+        // select não devolveu (RLS, timeout). `valor_total: -1` é sentinela de
+        // "não sei o valor" — `pareceMesmoDocumento` trata como "pode ser a
+        // mesma", que é a direção segura.
+        ?? { id: '', numero: nota.numero, data_emissao: '', emitente_nome: nota.emitenteNome, valor_total: -1 }
     }
 
     // Achado 6 do Apolo (24/08/2026): errar o `modelo` fura as DUAS travas de

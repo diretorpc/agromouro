@@ -32,11 +32,21 @@ vi.mock('../services/nfeProcessor', () => ({
 }))
 
 vi.mock('../services/supabase', () => {
+  // O `eq` GUARDA os filtros para o teste poder responder por modelo. Sem isso,
+  // o mock devolvia a mesma linha para qualquer consulta e nenhum teste
+  // conseguia pegar inversao de `notasNoBanco.nfe` com `.nfse` — achado
+  // [medio] do Apolo, 6a rodada (27/08/2026): trocar os dois lados na rota
+  // deixava as 734 verdes, e a tela travaria o modelo certo e liberaria o
+  // errado, que e' o defeito que a rodada veio consertar.
   function builder(): any {
+    const filtros: Record<string, unknown> = {}
     const obj: any = {
       select:      () => obj,
-      eq:          () => obj,
-      maybeSingle: async () => ({ data: estado.nota, error: null }),
+      eq:          (coluna: string, valor: unknown) => { filtros[coluna] = valor; return obj },
+      maybeSingle: async () => ({
+        data: typeof estado.nota === 'function' ? estado.nota(filtros) : estado.nota,
+        error: null,
+      }),
     }
     return obj
   }
@@ -185,6 +195,22 @@ describe('POST /nfe/ler-pdf', () => {
     // que esta API (elas sobem separadas).
     expect(res.body.jaExiste.id).toBe('ja')
     expect(res.body.existeNoOutroModelo).toBeNull()
+  })
+
+  it('notasNoBanco poe cada gemea no SEU lado — pega inversao nfe/nfse', async () => {
+    // NOTA_LIDA e 'nfe'. A gemea existe SO como NFS-e: o lado nfe tem que vir
+    // nulo e o nfse preenchido. Com os dois lados iguais, uma inversao passaria
+    // despercebida (achado [medio] do Apolo, 6a rodada).
+    lerNotaPdfMock.mockResolvedValue({ status: 'nota', nota: NOTA_LIDA, itensDescartados: 0, duplicatasDescartadas: 0 })
+    nfeJaProcessadaMock.mockResolvedValue(false)
+    estado.nota = (f: any) => f.modelo === 'nfse'
+      ? { id: 'so-nfse', numero: '58717', data_emissao: '2026-08-10', emitente_nome: 'SOLOS', valor_total: 4400 }
+      : null
+    const { req, res, next } = criarReqRes({ fazendaId: FAZENDA, body: corpoValido })
+    await handler(req, res, next)
+    expect(res.body.notasNoBanco.nfe).toBeNull()
+    expect(res.body.notasNoBanco.nfse.id).toBe('so-nfse')
+    expect(res.body.notasNoBanco.nfse.valor_total).toBe(4400)
   })
 
   it('sem gemea nenhuma, notasNoBanco vem com os dois lados nulos', async () => {

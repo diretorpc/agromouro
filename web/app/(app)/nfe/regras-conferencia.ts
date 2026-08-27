@@ -162,8 +162,19 @@ const UNIDADES_DE_SERVICO = new Set([
   'H', 'HR', 'HRS', 'HORA', 'HORAS', 'HH',
   'DIA', 'DIAS', 'SEM', 'MES', 'MÊS', 'MESES', 'ANO', 'ANOS',
   'M2', 'M²', 'MT2', 'M3', 'M³', 'MT3',
-  'SERV', 'SERVICO', 'SERVIÇO', 'VB', 'PCT', '%',
+  'SERV', 'SERVICO', 'SERVIÇO', 'VB', '%',
 ])
+// `PCT` NÃO entra: `nfeProcessor.ts` lista PAC/PACOTE como unidade comercial de
+// EMBALAGEM — mercadoria. Escrito por extenso acendia, abreviado calava.
+// Achado [baixo] do Apolo, 6ª rodada (27/08/2026). Pacote de horas já é coberto
+// por SERV/VB.
+
+// `UN.` com ponto é `UN`: o DANFE pontua a abreviação e a comparação crua
+// deixava passar. Mesma família do `numeroNormalizado` — normalizar antes de
+// comparar, sempre.
+function unidadeNormalizada(v: string | undefined): string {
+  return (v ?? '').trim().toUpperCase().replace(/\./g, '')
+}
 // Quantas linhas mostram sinal de MERCADORIA numa nota marcada como serviço.
 // Zero é o normal; qualquer número acima disso é contradição entre o papel e o
 // campo "Tipo", e merece aviso.
@@ -203,7 +214,7 @@ export function sinaisDeNotaDeProduto(
     // nota de produto — e, por ser lista de negação, unidade que ninguém
     // previu acende em vez de sumir.
     || ((i.quantidade !== null && i.quantidade !== undefined)
-        && !UNIDADES_DE_SERVICO.has((i.unidade ?? '').trim().toUpperCase()))
+        && !UNIDADES_DE_SERVICO.has(unidadeNormalizada(i.unidade)))
   ).length
 }
 
@@ -229,25 +240,64 @@ export function linhasSemQuantidade(
 // saíram os dois achados [alto] da 5ª rodada do Apolo (27/08/2026) — e os dois
 // eram de mesa, provaveis sem abrir navegador. Mesmo padrão de
 // `salvar-talhao.ts` e `deletar-linha.ts`.
-export type NotaGravada = { id: string; numero: string; data_emissao: string; emitente_nome: string }
+export type NotaGravada = {
+  id: string; numero: string; data_emissao: string; emitente_nome: string
+  // Ausente quando a API é mais velha que esta tela. `pareceMesmoDocumento`
+  // trata a ausência como "pode ser a mesma nota" — direção segura.
+  valor_total?: number
+}
 export type NotasNoBanco = { nfe: NotaGravada | null; nfse: NotaGravada | null }
 
-// Duas coisas que a versão anterior errava, cada uma num sentido:
+// As identidades são comparadas NORMALIZADAS, com as mesmas duas regras do
+// servidor (`numeroDaNota` e `cnpjLimpo` em api/src/services/nfe/notaPdf.ts).
+// Achado [baixo] do Apolo, 6ª rodada (27/08/2026), medido: comparando texto
+// cru, digitar "058717" no lugar de "58717", deixar um espaço no fim, ou
+// pontuar o CNPJ desligava a trava — o dono não tinha mudado nada, e levava um
+// erro do servidor depois de a tela ter dito que estava liberado.
+function numeroNormalizado(v: string): string {
+  return v.replace(/\D/g, '').replace(/^0+/, '')
+}
+function cnpjNormalizado(v: string): string {
+  return v.replace(/\D/g, '')
+}
+
+// Mesmo número + mesmo CNPJ + MESMO TOTAL + MESMA DATA = mesmo documento, com o
+// campo "Tipo" virado à mão. Total ou data diferentes = o par legítimo que a
+// migration 011 descreve (NF-e nº 500 de peças + NFS-e nº 500 de mão de obra).
 //
-// 1. A duplicidade era avaliada contra o modelo da LEITURA, não contra o modelo
-//    ATUAL da tela. Nota legítima do outro modelo (NF-e nº 500 de peças +
-//    NFS-e nº 500 de mão de obra — o par que a migration 011 descreve) ficava
-//    travada mesmo depois de o dono corrigir o Tipo, que é a ação CERTA. E o
-//    banner ainda mandava apagar a nota já gravada, que estava correta.
+// Sem esse desempate os dois mundos produzem o MESMO estado de entrada, e
+// escolher qualquer lado como padrão erra metade dos casos — achado [alto] do
+// Apolo, 6ª rodada (27/08/2026). Na dúvida (API velha, sem `valor_total`, ou a
+// sentinela -1 do fallback de corrida), responde "é a mesma": travar de mais
+// custa um clique, travar de menos custa gasto e estoque em dobro.
+export function pareceMesmoDocumento(
+  gravada: NotaGravada,
+  atual: { valorTotal: number; dataEmissao: string },
+): boolean {
+  if (typeof gravada.valor_total !== 'number' || gravada.valor_total < 0) return true
+  if (!gravada.data_emissao) return true
+  return gravada.data_emissao === atual.dataEmissao
+    && Math.abs(gravada.valor_total - atual.valorTotal) <= 0.02
+}
+
+// ─── A trava de duplicidade ─────────────────────────────────────────────────
+// Mora aqui, e não dentro do componente, porque foi de dentro do componente que
+// saíram os achados [alto] da 5ª e da 6ª rodada do Apolo (27/08/2026) — e todos
+// eram de mesa, provaveis sem abrir navegador. Mesmo padrão de
+// `salvar-talhao.ts` e `deletar-linha.ts`.
 //
-// 2. "O dono mexeu na identidade" era uma FLAG PEGAJOSA (`identidadeEditada`),
-//    ligada por qualquer tecla no campo Número e nunca desligada. Apagar um
-//    dígito e redigitar o mesmo já matava o aviso para sempre — e daí trocar o
-//    Tipo gravava a nota uma segunda vez, com estoque e gasto em dobro. Agora é
-//    DERIVADO: compara a identidade atual com a que a IA leu. Desfazer a edição
-//    traz o aviso de volta, como tem que ser.
+// TRÊS entradas, não duas. A versão anterior recebia só o modelo ATUAL e as
+// consultas, e por isso não distinguia:
+//   (a) gêmea legítima do outro modelo  → pode gravar, com aviso;
+//   (b) a PRÓPRIA nota, com o Tipo virado à mão → não pode, é gravação dobrada.
+// Os dois chegavam com o mesmo estado, e a função escolhia sempre (a): um
+// clique no campo "Tipo" liberava o botão, e a tela ainda chamava o estado de
+// "normal". `modeloLido` + `pareceMesmoDocumento` são o que desempata.
 export function travaDeDuplicidade(params: {
   modeloAtual:  'nfe' | 'nfse'
+  // O que a IA leu no campo Tipo. `undefined` em tela que ainda não guardava —
+  // aí a função assume que não houve troca, que é o comportamento anterior.
+  modeloLido?:  'nfe' | 'nfse'
   notasNoBanco: NotasNoBanco | null | undefined
   // API mais velha que esta web (rollback): só sabemos que existe UMA nota
   // repetida, não em qual modelo. Trava nos dois — direção segura.
@@ -256,32 +306,69 @@ export function travaDeDuplicidade(params: {
   cnpjAtual:    string
   numeroLido:   string | undefined
   cnpjLido:     string | undefined
+  valorTotalAtual: number
+  dataEmissaoAtual: string
 }): {
   gemeoNoModeloAtual: NotaGravada | null
   gemeoNoOutroModelo: NotaGravada | null
   modeloDoOutroGemeo: 'nfe' | 'nfse'
   identidadeMudou:    boolean
   duplicataValendo:   boolean
+  // true quando a trava vem do Tipo trocado, não da leitura original — a tela
+  // precisa dizer isso ao dono, senão ele não entende o que travou.
+  travadoPeloTipo:    boolean
+  // true quando a tela não sabe em qual modelo a gêmea está (API velha) — sem
+  // isso, o banner imprime um rótulo inventado. Achado [baixo] da 6ª rodada.
+  modeloDoGemeoDesconhecido: boolean
 } {
   const outro = params.modeloAtual === 'nfe' ? 'nfse' : 'nfe'
 
   // Só conta como "mudou" quando a tela SABE o que foi lido. Sem `numeroLido`,
   // assumir que mudou desligaria a trava — a direção errada.
   const identidadeMudou =
-    (params.numeroLido !== undefined && params.numeroAtual !== params.numeroLido)
-    || (params.cnpjLido !== undefined && params.cnpjAtual !== params.cnpjLido)
+    (params.numeroLido !== undefined
+      && numeroNormalizado(params.numeroAtual) !== numeroNormalizado(params.numeroLido))
+    || (params.cnpjLido !== undefined
+      && cnpjNormalizado(params.cnpjAtual) !== cnpjNormalizado(params.cnpjLido))
 
-  const gemeoNoModeloAtual = params.notasNoBanco
-    ? params.notasNoBanco[params.modeloAtual]
-    : (params.jaExisteLegado ?? null)
-  const gemeoNoOutroModelo = params.notasNoBanco ? params.notasNoBanco[outro] : null
+  // Guarda de FORMA, não de presença: um objeto truthy sem as duas chaves
+  // abandonava o legado e devolvia `undefined` onde o tipo promete `null`.
+  // Achado [baixo] do Apolo, 6ª rodada (27/08/2026).
+  const nb = params.notasNoBanco
+  const temForma = !!nb && 'nfe' in nb && 'nfse' in nb
+  const legado = params.jaExisteLegado ?? null
+
+  const gemeoNoModeloAtual = temForma ? (nb![params.modeloAtual] ?? null) : legado
+  const gemeoNoOutroModelo = temForma ? (nb![outro] ?? null) : null
+
+  // O Tipo foi trocado à mão E a gêmea está justamente no modelo que a IA leu:
+  // é a própria nota, a menos que total ou data digam o contrário.
+  const trocouOTipo = params.modeloLido !== undefined && params.modeloAtual !== params.modeloLido
+  const gemeoNoModeloLido = trocouOTipo && temForma ? (nb![params.modeloLido!] ?? null) : null
+  const travadoPeloTipo = !!gemeoNoModeloLido
+    && !identidadeMudou
+    && pareceMesmoDocumento(gemeoNoModeloLido, {
+      valorTotal:  params.valorTotalAtual,
+      dataEmissao: params.dataEmissaoAtual,
+    })
 
   return {
     gemeoNoModeloAtual,
-    gemeoNoOutroModelo,
+    // O aviso da gêmea cala em dois casos, e os dois são de não se contradizer:
+    //
+    // - `identidadeMudou`: ele afirma "existe uma nota com ESTE mesmo número",
+    //   e depois da correção isso deixa de ser verdade (achado [médio] do
+    //   Apolo, 6ª rodada);
+    // - `travadoPeloTipo`: aí a "gêmea" É a própria nota. O aviso diria "data e
+    //   valor diferentes, são documentos diferentes" logo ao lado do banner
+    //   vermelho dizendo "é o mesmo documento" — dois avisos brigando na mesma
+    //   tela, e o dono acreditando no mais simpático.
+    gemeoNoOutroModelo: (identidadeMudou || travadoPeloTipo) ? null : gemeoNoOutroModelo,
     modeloDoOutroGemeo: outro,
     identidadeMudou,
-    duplicataValendo: !!gemeoNoModeloAtual && !identidadeMudou,
+    duplicataValendo: (!!gemeoNoModeloAtual && !identidadeMudou) || travadoPeloTipo,
+    travadoPeloTipo,
+    modeloDoGemeoDesconhecido: !temForma,
   }
 }
 

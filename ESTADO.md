@@ -173,7 +173,38 @@ tela. `jaExiste` e `existeNoOutroModelo` continuam no corpo da resposta com o me
 significado, porque web e API sobem separados. De quebra, o rótulo do banner passou a sair
 do modelo onde a gêmea ESTÁ — antes ele se invertia quando o dono obedecia a ele.
 
-**Padrão que ficou claro em 5 rodadas, e a lição que ficou:** 3 dos [alto] nasceram em
+**6ª rodada do Apolo — 1 [alto], e era regressão do conserto da 5ª:**
+
+22. **[alto] A trava de duplicidade não sabia o que a IA tinha LIDO no campo Tipo.**
+    Com duas entradas (modelo atual + as consultas), dois mundos opostos produzem o MESMO
+    estado — (a) gêmea legítima do outro modelo e (b) a própria nota com o Tipo virado à
+    mão — e a função escolhia sempre (a). Um clique no Tipo liberava o botão, e o banner
+    ainda chamava o estado de **"normal"**. Agora são TRÊS entradas: `modeloLido` entrou,
+    e `pareceMesmoDocumento` desempata por **data + valor** (a rota passou a trazer
+    `valor_total`). Na dúvida, trava.
+23. **[médio] O unitário lido deixou de ser copiado — é sempre derivado do total.** A
+    tolerância de 0,1% da 5ª rodada não era uma régua, era um **orçamento de deriva** que
+    o `handleEdit` do Financeiro materializa depois: R$ 490 medidos numa linha de R$ 500
+    mil, até ~R$ 2.000 no teto. Derivar sempre limita a deriva ao arredondamento da
+    coluna — R$ 0,05 na mesma linha. Nada usava o unitário lido para outra conta.
+24. **[médio] O aviso da gêmea não expirava** quando o dono corrigia o número, e
+    **contradizia** o banner vermelho quando a trava vinha do Tipo. Cala nos dois casos.
+25. **[médio] O teste da rota não pegava inversão** de `notasNoBanco.nfe` com `.nfse` — o
+    mock devolvia a mesma linha para qualquer consulta. Agora ele responde por modelo, e
+    a inversão mata o teste (conferido sabotando).
+26. **[baixo] `PCT` estava na lista de serviço** — `nfeProcessor.ts` lista PAC/PACOTE como
+    embalagem. Escrito por extenso acendia, abreviado calava. E `UN.` com ponto passou a
+    ser normalizado.
+27. **[baixo] Identidade comparada em texto cru:** digitar "0500" no lugar de "500", um
+    espaço no fim, ou pontuar o CNPJ desligava a trava — o servidor normaliza igual e
+    recusaria depois. Agora a comparação é normalizada com as mesmas regras do servidor.
+28. **[baixo] `notasNoBanco` com forma inesperada** abandonava o legado; a guarda virou de
+    FORMA, não de presença. **Erro do Supabase na consulta** era engolido — agora é logado.
+29. **[baixo] Arredondamento da coluna que mexe no dinheiro derruba a linha:**
+    `{q: 700.000, vt: 100}` deriva 0,00014…, a coluna guarda 0,0001 e o total viraria
+    R$ 70. A régua não é o valor do unitário, é o EFEITO do arredondamento.
+
+**Padrão que ficou claro em 6 rodadas, e a lição que ficou:** 3 dos [alto] nasceram em
 comportamento novo de TELA, e o `web` não tem testing-library — dá para arrancar uma trava
 do JSX com a suíte verde e o `tsc` limpo. **A resposta barata não foi instalar
 testing-library: foi tirar a decisão do JSX.** `travaDeDuplicidade` prova de mesa, em 9

@@ -470,7 +470,8 @@ describe('validarNotaLida — NFS-e não tem coluna de quantidade', () => {
     if (r.status !== 'nota') throw new Error(`esperava nota, veio ${r.status}`)
     expect(r.nota.itens[0].quantidade).toBe(3)
     expect(r.nota.itens[0].unidade).toBe('H')
-    expect(r.nota.itens[0].valorUnitario).toBe(1456.67)
+    // O unitário é derivado do total, não copiado — ver a invariante abaixo.
+    expect(r.nota.itens[0].valorUnitario).toBeCloseTo(4370 / 3, 6)
   })
 
   it('numa DANFE, quantidade ilegível CONTINUA derrubando a linha', () => {
@@ -623,11 +624,7 @@ describe('validarNotaLida — unitário do serviço inferido', () => {
     }
   })
 
-  it('unitário 0 com total 0 é preservado — linha de bonificação existe de verdade', () => {
-    const r = validarNotaLida(lida({ itens: [item({ valorUnitario: 0, valorTotal: 0 })] }), HOJE)
-    expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(0)
-    expect(r.status === 'nota' && r.itensDescartados).toBe(0)
-  })
+
 })
 
 describe('converterParaNFeData — NFS-e sai sem CFOP e sem NCM, como o XML', () => {
@@ -690,18 +687,37 @@ describe('validarNotaLida — a invariante quantidade × unitário === total', (
     expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(2000)
   })
 
-  it('arredondamento honesto da nota impressa NÃO é reescrito', () => {
-    // 3 × 33,33 = 99,99 contra total 100,00. Diferença de 1 centavo: é como a
-    // nota foi impressa, e reescrever perderia fidelidade sem ganhar nada.
+  it('o unitário LIDO nunca é copiado — nem quando bate quase certo', () => {
+    // 3 × 33,33 = 99,99 contra total 100,00. Copiar esse centavo parecia
+    // inofensivo, mas a régua de "quase certo" é um ORÇAMENTO DE DERIVA que o
+    // `handleEdit` do Financeiro materializa depois. Achado [médio] do Apolo,
+    // 6ª rodada (27/08/2026), medido: com tolerância de 0,1%, uma linha de
+    // R$ 500 mil aceitava R$ 490 de deriva; derivando sempre, o teto é o
+    // arredondamento da coluna — R$ 0,05 na mesma linha.
     const r = validarNotaLida(lida({ itens: [item({ quantidade: 3, valorUnitario: 33.33, valorTotal: 100 })] }), HOJE)
-    expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(33.33)
+    expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBeCloseTo(100 / 3, 6)
   })
 
-  it('a tolerância acompanha o tamanho da nota (0,1%), não é 2 centavos fixos', () => {
-    // 46.000 KG × 2,9783 = 137.001,80 contra total 137.000: R$ 1,80 de deriva
-    // em nota grande é arredondamento, não erro de leitura.
+  it('nota GRANDE: o unitário derivado mantém o total, não o texto do papel', () => {
     const r = validarNotaLida(lida({ itens: [item({ quantidade: 46000, valorUnitario: 2.9783, valorTotal: 137000 })] }), HOJE)
-    expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(2.9783)
+    if (r.status !== 'nota') throw new Error(`esperava nota, veio ${r.status}`)
+    const i = r.nota.itens[0]
+    expect(i.quantidade! * i.valorUnitario).toBeCloseTo(137000, 6)
+  })
+
+  it('unitário derivado abaixo da precisão da coluna DERRUBA a linha', () => {
+    // {q: 700.000, vt: 100} deriva 0,00014…; o numeric(12,4) grava 0,0001 e o
+    // Financeiro refaz o total como R$ 70 — 30% a menos. Achado [baixo] do
+    // Apolo, 6ª rodada (27/08/2026).
+    const r = validarNotaLida(lida({ itens: [item(), item({ quantidade: 700_000, valorUnitario: null, valorTotal: 100 })] }), HOJE)
+    expect(r.status === 'nota' && r.nota.itens).toHaveLength(1)
+    expect(r.status === 'nota' && r.itensDescartados).toBe(1)
+  })
+
+  it('linha de bonificação (total 0) sobrevive — 0 ÷ qualquer coisa é 0', () => {
+    const r = validarNotaLida(lida({ itens: [item({ quantidade: 5, valorUnitario: 880, valorTotal: 0 })] }), HOJE)
+    expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(0)
+    expect(r.status === 'nota' && r.itensDescartados).toBe(0)
   })
 
   it('unitário derivado que estoura o teto DERRUBA a linha, e ela é contada', () => {

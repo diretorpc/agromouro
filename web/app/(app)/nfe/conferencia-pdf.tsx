@@ -127,7 +127,10 @@ export function ConferenciaPdf(
   // papel, em vez de só confiar que "o servidor recusa se for duplicata": um
   // dígito errado no CNPJ faz o servidor não achar nada e gravar a nota como
   // se fosse nova (achado do Apolo, 24/08/2026).
-  const [lidoOriginal, setLidoOriginal] = useState<{ numero: string; emitenteCnpj: string } | null>(null)
+  // `modelo` entra aqui porque `travaDeDuplicidade` precisa saber o que a IA leu
+  // no campo Tipo para distinguir a gêmea legítima da própria nota com o Tipo
+  // virado à mão (achado [alto] do Apolo, 6ª rodada, 27/08/2026).
+  const [lidoOriginal, setLidoOriginal] = useState<{ numero: string; emitenteCnpj: string; modelo: 'nfe' | 'nfse' } | null>(null)
   // Marcado pelo dono quando a nota INTEIRA caiu fora de "compra normal" e ele
   // confirma que é isso mesmo. Ver precisaConfirmarEfeitoIncomum.
   const [confirmouEfeito, setConfirmouEfeito] = useState(false)
@@ -161,7 +164,7 @@ export function ConferenciaPdf(
       const r = await api.post<RespostaLeitura>('/nfe/ler-pdf', { arquivo: base64, nomeArquivo })
       setLeitura(r)
       setNota(r.nota)
-      setLidoOriginal({ numero: r.nota.numero, emitenteCnpj: r.nota.emitenteCnpj })
+      setLidoOriginal({ numero: r.nota.numero, emitenteCnpj: r.nota.emitenteCnpj, modelo: r.nota.modelo })
     } catch (err) {
       setErro(err instanceof Error ? err.message : 'Erro ao ler o PDF.')
     } finally {
@@ -399,6 +402,9 @@ export function ConferenciaPdf(
     cnpjAtual:      nota.emitenteCnpj,
     numeroLido:     lidoOriginal?.numero,
     cnpjLido:       lidoOriginal?.emitenteCnpj,
+    modeloLido:     lidoOriginal?.modelo,
+    valorTotalAtual:  nota.valorTotal,
+    dataEmissaoAtual: nota.dataEmissao,
   })
   const duplicataValendo = dup.duplicataValendo
   // API antiga não manda `familias`: sem a lista não há como oferecer o conserto,
@@ -414,13 +420,29 @@ export function ConferenciaPdf(
       {/* Os três avisos de duplicidade saem todos de `travaDeDuplicidade`, que é
           função pura e testada — a decisão morava aqui dentro e foi de onde
           saíram os dois achados [alto] da 5ª rodada do Apolo (27/08/2026). */}
-      {duplicataValendo && (
+      {duplicataValendo && !dup.travadoPeloTipo && (
         <div className="rounded-md bg-red-50 text-red-700 px-3 py-2 text-sm">
-          <strong>Esta nota já está no sistema como {dup.modeloDoOutroGemeo === 'nfse' ? 'nota de produto (NF-e)' : 'nota de serviço (NFS-e)'}</strong>
+          <strong>Esta nota já está no sistema</strong>
+          {dup.modeloDoGemeoDesconhecido ? '' : ` como ${nota.modelo === 'nfe' ? 'nota de produto (NF-e)' : 'nota de serviço (NFS-e)'}`}
           {dup.gemeoNoModeloAtual?.data_emissao ? ` (entrou em ${ddmmaaaa(dup.gemeoNoModeloAtual.data_emissao)})` : ''}.
           {' '}Gravar de novo somaria estoque e gasto duas vezes.
           {' '}Se o número ou o CNPJ estiverem lidos errado, corrija abaixo — o sistema confere
           de novo com o número corrigido.
+        </div>
+      )}
+
+      {/* A trava que vem da TROCA do Tipo precisa de texto próprio: sem ele, o
+          dono troca o campo, o botão continua travado e ele não faz ideia do
+          porquê. Achado [alto] do Apolo, 6ª rodada (27/08/2026): antes deste
+          bloco, trocar o Tipo LIBERAVA o botão e a tela chamava o estado de
+          "normal" — a mesma nota entrava uma segunda vez, sem estoque. */}
+      {dup.travadoPeloTipo && (
+        <div className="rounded-md bg-red-50 text-red-700 px-3 py-2 text-sm">
+          <strong>Você trocou o Tipo, mas esta nota já está gravada com o tipo original</strong>
+          {' '}— mesmo número, mesmo fornecedor, mesma data e mesmo valor. É o mesmo documento.
+          {' '}Gravar assim entraria pela segunda vez, com estoque e gasto contados em dobro.
+          {' '}Se a nota já gravada é que está com o tipo errado, <strong>apague ela primeiro</strong>
+          {' '}na aba NF-e; se são notas diferentes, confira o número.
         </div>
       )}
 
@@ -439,9 +461,12 @@ export function ConferenciaPdf(
         <div className="rounded-md bg-amber-50 text-amber-800 px-3 py-2 text-sm">
           Já existe uma nota <strong>{dup.modeloDoOutroGemeo === 'nfe' ? 'de produto (NF-e)' : 'de serviço (NFS-e)'}</strong>{' '}
           com este mesmo número e fornecedor
-          {dup.gemeoNoOutroModelo.data_emissao ? ` (entrou em ${ddmmaaaa(dup.gemeoNoOutroModelo.data_emissao)})` : ''}.
-          {' '}Isso é normal quando o fornecedor manda as duas — número de NF-e e de NFS-e são
-          {' '}sequências separadas. Só confira o campo <strong>Tipo</strong> antes de gravar.
+          {dup.gemeoNoOutroModelo.data_emissao ? ` (entrou em ${ddmmaaaa(dup.gemeoNoOutroModelo.data_emissao)})` : ''}
+          {typeof dup.gemeoNoOutroModelo.valor_total === 'number' && dup.gemeoNoOutroModelo.valor_total >= 0
+            ? `, de ${brl(dup.gemeoNoOutroModelo.valor_total)}` : ''}.
+          {' '}Data e valor diferentes dos desta nota, então são documentos diferentes — acontece
+          {' '}quando o fornecedor manda peças e mão de obra separadas. Ainda assim,{' '}
+          <strong>confira o campo Tipo</strong> antes de gravar.
         </div>
       )}
 
