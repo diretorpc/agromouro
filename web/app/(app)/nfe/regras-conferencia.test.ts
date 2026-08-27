@@ -47,7 +47,7 @@ describe('cfopAposEscolha — trocar de família preserva o dígito de estado (a
 })
 
 describe('podeGravar', () => {
-  const BASE = { quantidadeItens: 2, semCfop: 0, familias: [COMPRA, ENTREGA_FATURADA, FATURAMENTO, BONIFICACAO], duplicataValendo: null, gravando: false, linhasSemQuantidade: 0 }
+  const BASE = { quantidadeItens: 2, semCfop: 0, familias: [COMPRA, ENTREGA_FATURADA, FATURAMENTO, BONIFICACAO], duplicataValendo: null, gravando: false, linhasSemQuantidade: 0, efeitoIncomumPendente: false }
 
   it('caso comum — tudo certo, pode gravar', () => {
     expect(podeGravar(BASE)).toBe(true)
@@ -115,6 +115,7 @@ describe('podeGravar — confirmacao de efeito incomum', () => {
   const base = {
     quantidadeItens: 3, semCfop: 0, familias: [{ chave: 'compra' }],
     duplicataValendo: null, gravando: false, linhasSemQuantidade: 0,
+    efeitoIncomumPendente: false,
   }
 
   it('trava enquanto o efeito incomum nao for confirmado', () => {
@@ -300,21 +301,33 @@ describe('sinaisDeNotaDeProduto — o papel contradiz o campo "Tipo"', () => {
     expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', ncm: '', cfopLido: '', quantidade: null, unidade: 'un' }])).toBe(0)
   })
 
-  it('quantidade IMPRESSA numa NFS-e já basta — o sinal que sobrevive ao rótulo errado', () => {
+  it('quantidade COM unidade de mercadoria acende — o sinal que sobrevive ao rótulo errado', () => {
     // O caso caro: a IA decide "isto é serviço" e, coerente com essa decisão,
-    // devolve ncm/cfop nulos — apagando a própria evidência. A quantidade não
-    // some junto: NFS-e não tem coluna de quantidade.
-    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 3 }])).toBe(1)
+    // devolve ncm/cfop nulos — apagando a própria evidência. Quantidade e
+    // unidade não somem junto: NFS-e não tem coluna de quantidade.
+    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 3, unidade: 'TON' }])).toBe(1)
+    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 165, unidade: 'MTN' }])).toBe(1)
+    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 2, unidade: 'sc' }])).toBe(1)
   })
 
-  it('unidade de mercadoria numa NFS-e também acende', () => {
-    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: null, unidade: 'KG' }])).toBe(1)
-    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: null, unidade: 'sc' }])).toBe(1)
+  it('quantidade SOZINHA não acende — NFS-e do padrão ABRASF traz "Qtde 1,00"', () => {
+    // Achado [médio] do Apolo, 4ª rodada (27/08/2026): com quantidade sozinha
+    // como sinal, o aviso acendia em nota de serviço legítima e virava ruído.
+    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 1, unidade: 'un' }])).toBe(0)
+    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 3, unidade: 'H' }])).toBe(0)
+    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 40, unidade: 'M2' }])).toBe(0)
   })
 
-  it('"un" e "h" NÃO acendem — é o que uma nota de serviço legítima traz', () => {
-    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: null, unidade: 'un' }])).toBe(0)
-    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: null, unidade: 'H' }])).toBe(0)
+  it('unidade de mercadoria SOZINHA também não acende — precisa do par', () => {
+    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: null, unidade: 'KG' }])).toBe(0)
+  })
+
+  it('TON e MTN estão na lista — são as unidades que este projeto realmente usa', () => {
+    // A 1ª lista não tinha nenhuma das duas: TON é a do fixture de DANFE do
+    // repo, MTN é a do contrato de adubo da SYAGRI.
+    for (const un of ['TON', 'ton', 'MTN', 'SACO', 'FD', 'CENTO', 'KIT']) {
+      expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 1, unidade: un }])).toBe(1)
+    }
   })
 
   it('nota de PRODUTO nunca dispara — lá o código é o normal', () => {
@@ -337,7 +350,7 @@ describe('linhasSemQuantidade — nota de produto exige quantidade impressa', ()
     expect(linhasSemQuantidade('nfe', itens)).toBe(1)
     expect(podeGravar({
       quantidadeItens: 1, semCfop: 0, familias: [{ chave: 'compra' }],
-      duplicataValendo: null, gravando: false,
+      duplicataValendo: null, gravando: false, efeitoIncomumPendente: false,
       linhasSemQuantidade: linhasSemQuantidade('nfe', itens),
     })).toBe(false)
   })
@@ -347,7 +360,7 @@ describe('linhasSemQuantidade — nota de produto exige quantidade impressa', ()
     expect(linhasSemQuantidade('nfse', itens)).toBe(0)
     expect(podeGravar({
       quantidadeItens: 1, semCfop: 0, familias: [{ chave: 'compra' }],
-      duplicataValendo: null, gravando: false,
+      duplicataValendo: null, gravando: false, efeitoIncomumPendente: false,
       linhasSemQuantidade: linhasSemQuantidade('nfse', itens),
     })).toBe(true)
   })
@@ -363,7 +376,7 @@ describe('linhasSemQuantidade — nota de produto exige quantidade impressa', ()
     // deixava as 281 verdes e o tsc limpo. Com o campo obrigatório, o
     // compilador é a guarda. Este teste existe para explicar o porquê — se
     // alguém voltar o `?`, ele some junto e o motivo se perde.
-    // @ts-expect-error — falta `linhasSemQuantidade`
+    // @ts-expect-error — faltam `linhasSemQuantidade` e `efeitoIncomumPendente`
     expect(() => podeGravar({
       quantidadeItens: 1, semCfop: 0, familias: [{ chave: 'compra' }],
       duplicataValendo: null, gravando: false,

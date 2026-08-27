@@ -274,7 +274,20 @@ export function ConferenciaPdf(
 
   function editar<K extends keyof NotaLida>(campo: K, valor: NotaLida[K]) {
     if (!nota) return
-    if (campo === 'numero' || campo === 'emitenteCnpj' || campo === 'modelo') setIdentidadeEditada(true)
+    // `modelo` NÃO entra aqui. Achado [alto] do Apolo, 4ª rodada (27/08/2026),
+    // executado: trocar o Tipo apagava o banner "Esta nota já está no sistema" e
+    // habilitava o gravar — e o servidor NÃO recupera, porque `modelo` faz parte
+    // da chave de duplicidade (`nfeJaProcessada(..., nota.modelo)` em
+    // gravarNotaDoPdf.ts + índice único da migration 011). A nota gravada como
+    // NFS-e não colide com a mesma nota gravada como NF-e: estoque e gasto
+    // entravam duas vezes, calados. O banner substituto ainda dizia "a
+    // conferência é refeita no servidor ao gravar", que para troca de modelo é
+    // falso por construção.
+    //
+    // A doutrina do campo é "o aviso envelheceu porque o número/CNPJ que o
+    // gerou estava errado". Trocar o modelo não invalida a coincidência — só
+    // desvia a consulta para outro lugar. Por isso o aviso fica de pé.
+    if (campo === 'numero' || campo === 'emitenteCnpj') setIdentidadeEditada(true)
     setNota({ ...nota, [campo]: valor })
   }
 
@@ -403,6 +416,9 @@ export function ConferenciaPdf(
           {' '}Gravar de novo somaria estoque e gasto duas vezes.
           {' '}Se o número ou o CNPJ estiverem lidos errado, corrija abaixo — o sistema confere
           de novo com o número corrigido.
+          {' '}<strong>Trocar o campo "Tipo" não resolve:</strong> o tipo faz parte da chave de
+          {' '}duplicidade, então a nota entraria uma SEGUNDA vez, com estoque e gasto contados
+          {' '}em dobro. Se a nota já gravada é que está com o tipo errado, apague ela primeiro.
         </div>
       )}
 
@@ -430,16 +446,20 @@ export function ConferenciaPdf(
           <p>
             <strong>Esta nota tem cara de nota de produto, mas o Tipo diz serviço.</strong>
             {' '}{pareceProduto} {pareceProduto === 1 ? 'linha traz' : 'linhas trazem'} código fiscal,
-            {' '}quantidade ou unidade de mercadoria — coisas que nota de serviço não tem.
+            {' '}ou quantidade com unidade de mercadoria — coisas que nota de serviço não tem.
             {' '}Gravada como NFS-e, <strong>nenhuma mercadoria desta nota entra no estoque</strong>.
+            {' '}Se for nota de produto, troque o campo <strong>"Tipo"</strong> acima.
           </p>
-          {/* Regra que este repo já escreveu, no comentário de
-              `aplicarFamiliaATodos`: quando a tela SABE qual é o conserto, ela
-              tem que oferecer o conserto, não só o aviso. Em 25/08/2026, 19
-              dropdowns perderam para 1 clique de dispensa. */}
-          <Button size="sm" variant="outline" onClick={() => editar('modelo', 'nfe')}>
-            É nota de produto — mudar o Tipo para NF-e
-          </Button>
+          {/* SEM botão de conserto, de propósito — e isto contraria de propósito o
+              comentário de `aplicarFamiliaATodos` ("quando a tela sabe o conserto,
+              ela oferece o conserto"). Duas razões, as duas medidas pelo Apolo na
+              4ª rodada (27/08/2026):
+              1. O botão apagava o aviso de duplicidade e deixava a nota entrar
+                 duas vezes (ver o comentário em `editar`).
+              2. `sinaisDeNotaDeProduto` não tem certeza suficiente para um botão.
+              E o precedente de 25/08 não se aplica: lá o conserto eram 19
+              dropdowns contra 1 clique de dispensa. Aqui é UM dropdown, o campo
+              "Tipo", que está logo acima nesta mesma tela. */}
         </div>
       )}
 
@@ -776,7 +796,7 @@ export function ConferenciaPdf(
             quantidadeItens: nota.itens.length, semCfop, familias: leitura.familias,
             linhasSemQuantidade: semQuantidade,
             duplicataValendo, gravando,
-            efeitoIncomumPendente: efeitoIncomum && !confirmouEfeito,
+            efeitoIncomumPendente: efeitoIncomum && !confirmouEfeito,   // obrigatório: ver regras-conferencia.ts
           })}
           title={semCfop > 0 && (leitura.familias?.length ?? 0) > 0 ? 'Escolha o que é cada item marcado em amarelo' : undefined}
         >

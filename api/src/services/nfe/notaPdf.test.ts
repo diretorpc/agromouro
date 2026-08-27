@@ -166,11 +166,16 @@ describe('validarNotaLida — descarta a linha, nunca a nota', () => {
     expect(r.status === 'nota' && r.itensDescartados).toBe(1)
   })
 
-  it('valor unitario absurdo NAO derruba a linha — vira zero', () => {
+  it('valor unitario absurdo NAO derruba a linha — vira total ÷ quantidade', () => {
     // O que importa da linha é o valor TOTAL (é o que soma no Financeiro).
     // Perder a linha inteira por causa do unitário custaria mais.
+    //
+    // Antes virava ZERO, e o zero era fabricado AQUI, não lido da IA. O
+    // `handleEdit` do Financeiro recalcula `valor_total = quantidade × unitário`
+    // ao salvar, então o zero apagava o gasto no primeiro clique — achado
+    // [alto] do Apolo, 4ª rodada (27/08/2026), medido.
     const r = validarNotaLida(lida({ itens: [item({ valorUnitario: 90_000_000 })] }), HOJE)
-    expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(0)
+    expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(880)   // 4400 ÷ 5
     expect(r.status === 'nota' && r.itensDescartados).toBe(0)
   })
 
@@ -607,9 +612,21 @@ describe('validarNotaLida — unitário do serviço inferido', () => {
     expect(it0.quantity * it0.unitValue).toBe(it0.totalValue)
   })
 
-  it('unitário absurdo numa DANFE continua virando zero, sem virar o total', () => {
-    const r = validarNotaLida(lida({ itens: [item({ valorUnitario: 90_000_000 })] }), HOJE)
+  it('a invariante vale para TODA linha, DANFE inclusive — nunca unitário fabricado como 0', () => {
+    // `quantidade × unitário === total` em qualquer nota, para que o recálculo
+    // do Financeiro nunca encolha um gasto.
+    for (const unitario of [null, 0, 90_000_000, 'nada']) {
+      const r = validarNotaLida(lida({ itens: [item({ valorUnitario: unitario })] }), HOJE)
+      if (r.status !== 'nota') throw new Error(`esperava nota, veio ${r.status}`)
+      const i = r.nota.itens[0]
+      expect(i.quantidade! * i.valorUnitario).toBeCloseTo(i.valorTotal, 6)
+    }
+  })
+
+  it('unitário 0 com total 0 é preservado — linha de bonificação existe de verdade', () => {
+    const r = validarNotaLida(lida({ itens: [item({ valorUnitario: 0, valorTotal: 0 })] }), HOJE)
     expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(0)
+    expect(r.status === 'nota' && r.itensDescartados).toBe(0)
   })
 })
 

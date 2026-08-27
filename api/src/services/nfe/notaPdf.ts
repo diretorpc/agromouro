@@ -460,9 +460,22 @@ export function validarNotaLida(bruto: unknown, hojeISO: string): ValidacaoNota 
       // (A justificativa antiga citava uma coluna de valor unitário na tela de
       // conferência. Ela não existe: aquela tabela mostra Produto, Qtd, Un,
       // Total, efeito e centro de custo. Conferido no arquivo.)
+      //
+      // O ramo do DANFE também não fabrica mais `0`: unitário ilegível ou
+      // absurdo vira `total / quantidade`, que preserva a mesma invariante.
+      // Achado [alto] do Apolo, 4ª rodada (27/08/2026), medido: um item
+      // `{q: 3, vu: null, vt: 6000}` era gravado com `vu: 0`, e o `handleEdit`
+      // do Financeiro zerava R$ 6.000 no primeiro salvar. O `0` não vinha da
+      // IA — era fabricado aqui. Centavo de arredondamento é o preço; R$ 6.000
+      // era o preço do outro jeito.
+      // Um `0` LIDO contra um total maior que zero é tão destrutivo quanto o
+      // fabricado — e cai no mesmo conserto. Zero só é aceito quando o total
+      // também é zero (linha de bonificação, que existe de verdade).
       valorUnitario: quantidadeFinal === null
         ? total
-        : (unitarioValido ? unitarioLido : 0),
+        : (unitarioValido && (unitarioLido > 0 || total === 0)
+            ? unitarioLido
+            : total / quantidadeFinal),
       valorTotal:    total,
       // O DANFE imprime uma quantidade só — não existe qTrib/uTrib no papel.
       // Espelhar as comerciais faz processarNFe pular a conversão de unidade

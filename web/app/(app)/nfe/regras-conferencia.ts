@@ -20,7 +20,7 @@ export type ItemComCfop = {
   familia?: string
   // O que a IA LEU no papel, congelado pela rota antes de qualquer escolha do
   // dono. É a evidência de que uma nota rotulada como serviço talvez seja de
-  // produto — ver `codigoFiscalEmNotaDeServico`.
+  // produto — ver `sinaisDeNotaDeProduto`.
   ncm?:      string
   cfopLido?: string
   // `null` = a nota não traz quantidade impressa (NFS-e). Ver `linhasSemQuantidade`.
@@ -143,9 +143,16 @@ export function pendenciasDeCfop(
 // caminho do XML (`parseXmlNFSe`) sempre produz um item 'un', e o do PDF cai no
 // mesmo 'un' quando não lê nada. Ver uma destas numa nota marcada como serviço
 // é o papel dizendo "sou nota de produto".
+// Achado [baixo] do Apolo, 4ª rodada (27/08/2026), medido contra o dado real do
+// projeto: a 1ª lista não tinha `TON` (a unidade do fixture de DANFE em
+// notaPdf.test.ts) nem `MTN` (a do contrato de adubo da SYAGRI) — o sinal de
+// unidade nunca disparava nos dois casos que o projeto realmente tem.
+// `M2`/`M3` SAÍRAM: são unidades corriqueiras de NFS-e de verdade (pintura,
+// terraplanagem, concreto), e falso positivo aqui é banner gritando à toa.
 const UNIDADES_DE_MERCADORIA = new Set([
-  'KG', 'G', 'TN', 'T', 'L', 'LT', 'ML', 'SC', 'BD', 'CX', 'PC', 'PÇ',
-  'M', 'M2', 'M3', 'DZ', 'GL', 'FR', 'PT', 'PAR', 'RL',
+  'KG', 'G', 'TN', 'TON', 'T', 'MTN', 'L', 'LT', 'ML',
+  'SC', 'SACO', 'BD', 'BAG', 'CX', 'FD', 'PC', 'PÇ', 'PT',
+  'DZ', 'CENTO', 'MI', 'MILHEIRO', 'GL', 'FR', 'PAR', 'RL', 'KIT', 'JG',
 ])
 
 // Quantas linhas mostram sinal de MERCADORIA numa nota marcada como serviço.
@@ -180,8 +187,13 @@ export function sinaisDeNotaDeProduto(
   return itens.filter(i =>
     !!i.ncm
     || !!i.cfopLido
-    || (i.quantidade !== null && i.quantidade !== undefined)
-    || UNIDADES_DE_MERCADORIA.has((i.unidade ?? '').trim().toUpperCase())
+    // Quantidade SOZINHA não conta. Achado [médio] do Apolo, 4ª rodada
+    // (27/08/2026): NFS-e no padrão ABRASF traz "Qtde 1,00" no corpo, e o
+    // SCHEMA não manda o modelo devolver null nesse caso — o aviso acenderia
+    // em nota de serviço legítima e viraria ruído. Quantidade + unidade de
+    // MERCADORIA é o par que só existe em nota de produto.
+    || ((i.quantidade !== null && i.quantidade !== undefined)
+        && UNIDADES_DE_MERCADORIA.has((i.unidade ?? '').trim().toUpperCase()))
   ).length
 }
 
@@ -219,7 +231,13 @@ export function podeGravar(params: {
   gravando:           boolean
   // true quando a nota inteira caiu fora de "compra normal" E o dono ainda não
   // confirmou que é isso mesmo. Ver precisaConfirmarEfeitoIncomum.
-  efeitoIncomumPendente?: boolean
+  //
+  // OBRIGATÓRIO pelo mesmo motivo do `linhasSemQuantidade` abaixo, e com mais
+  // razão: esta é a trava que impede o GASTO DOBRADO por CFOP incomum (o
+  // desastre de 25/08/2026). O Apolo mediu na 4ª rodada (27/08/2026) que dava
+  // para arrancar esta linha da chamada em conferencia-pdf.tsx com a suíte
+  // inteira verde e o `tsc` limpo.
+  efeitoIncomumPendente: boolean
   // Linhas sem quantidade impressa numa nota marcada como NF-e. Ver
   // `linhasSemQuantidade`: o servidor recusa essas linhas, então deixar gravar
   // é mandar o dono bater num 422 que ele não tem como entender olhando a tela.

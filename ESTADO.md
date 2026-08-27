@@ -22,7 +22,7 @@
 
 ---
 
-## 🔧 Nota de SERVIÇO não entrava pelo importador de PDF — 27/08/2026 — **revisado 3x, aguardando merge**
+## 🔧 Nota de SERVIÇO não entrava pelo importador de PDF — 27/08/2026 — **revisado 4x, aguardando merge**
 
 Ramo `fix/nfse-pdf-sem-quantidade`. Começou com o Matheus mandando uma NFS-e real
 (MAQNELSON AGRÍCOLA, licença de software) e dizendo "o importador não conseguiu ler".
@@ -88,8 +88,7 @@ rodada anterior e passou por mim:**
 7. **[médio] Fio do front sem guarda.** Dava para arrancar a trava do botão do JSX e a
    suíte ficava verde com `tsc` limpo. `linhasSemQuantidade` virou parâmetro
    **obrigatório** de `podeGravar` — o compilador é a guarda que o teste não é.
-8. **[médio] Detector cego no caso caro.** `codigoFiscalEmNotaDeServico` virou
-   `sinaisDeNotaDeProduto` e olha TRÊS sinais: código fiscal, quantidade impressa e
+8. **[médio] Detector cego no caso caro.** `sinaisDeNotaDeProduto` e olha TRÊS sinais: código fiscal, quantidade impressa e
    unidade de mercadoria. Motivo: o `SCHEMA` ensina que NFS-e é "sem CFOP/NCM", então a
    mesma decisão errada que rotula um DANFE como serviço tende a apagar os códigos dele
    — quantidade e unidade sobrevivem. O banner ganhou **botão** "É nota de produto —
@@ -106,10 +105,44 @@ rodada anterior e passou por mim:**
 testing-library instalada, é convenção do projeto. O fio mais perigoso (a trava do
 botão) passou a ser protegido pelo `tsc`; os banners não.
 
-**Backlog que saiu daqui, não consertado de propósito:** o Financeiro recalcular
-`valor_total` a partir de quantidade × unitário atinge também DANFE com unitário
-zerado (`{q: 2, vu: 0, vt: 1000}` → salvar zera R$ 1.000). É defeito pré-existente,
-com escopo próprio.
+**4ª rodada do Apolo — mais 6, e o [alto] de novo foi coisa minha da rodada anterior:**
+
+11. **[alto] O botão que eu adicionei desligava a trava de duplicidade.**
+    `editar('modelo', …)` marcava `identidadeEditada`, que apaga o banner "Esta nota já
+    está no sistema" e libera o gravar. E o servidor **não recupera**: `modelo` faz parte
+    da chave de duplicidade (`nfeJaProcessada(..., nota.modelo)` + índice único da
+    migration 011), então a nota gravada como NFS-e não colide com a mesma gravada como
+    NF-e — **estoque e gasto entrando duas vezes, calados**. O banner substituto ainda
+    dizia "a conferência é refeita no servidor ao gravar", falso por construção.
+    Conserto: `modelo` saiu do gatilho de `identidadeEditada`, e o banner vermelho passou
+    a dizer que trocar o Tipo não resolve.
+12. **[médio] O botão foi removido.** Além do item 11, ele era armado por um sinal com
+    falso positivo. E o precedente de 25/08 não se aplicava: lá o conserto eram 19
+    dropdowns contra 1 clique de dispensa; aqui é UM dropdown, na mesma tela.
+13. **[médio] Quantidade sozinha era falso positivo.** NFS-e do padrão ABRASF traz
+    "Qtde 1,00" — o aviso acenderia em nota de serviço legítima. Agora só conta
+    quantidade **com** unidade de mercadoria.
+14. **[médio] A trava mais antiga continuava opcional.** `efeitoIncomumPendente` — a que
+    impede o gasto dobrado por CFOP incomum — também virou obrigatória em `podeGravar`.
+15. **[alto] O `0` do valor unitário não vinha da IA: era fabricado por nós.** Um item
+    `{q: 3, vu: null, vt: 6000}` era gravado com `vu: 0`, e o Financeiro zerava R$ 6.000
+    no primeiro salvar. Agora unitário ilegível vira `total ÷ quantidade`, e um `0` lido
+    contra total maior que zero recebe o mesmo tratamento. Zero só sobrevive quando o
+    total também é zero (bonificação de verdade). Vale para DANFE e NFS-e.
+16. **[baixo] `UNIDADES_DE_MERCADORIA` errava nas duas unidades que este projeto usa** —
+    `TON` (fixture de DANFE) e `MTN` (contrato da SYAGRI). Corrigida; `M2`/`M3` saíram,
+    porque são unidades corriqueiras de NFS-e de verdade.
+
+**Backlog que saiu daqui, não consertado de propósito:** o Financeiro **recalcular**
+`valor_total = quantidade × valor_unitario` no `handleEdit`. O item 15 tapou a ORIGEM do
+zero, mas não a tela nem as linhas já gravadas com unitário 0 e total cheio — nessas,
+abrir para trocar o centro de custo ainda apaga o gasto. Subiu para o L3 do painel global.
+
+**Como medir a exposição das linhas já gravadas:**
+```sql
+select count(*) from itens_nfe
+where valor_unitario * quantidade <> valor_total;
+```
 
 ---
 
