@@ -22,7 +22,11 @@
 
 ---
 
-## 🔧 Nota de SERVIÇO não entrava pelo importador de PDF — 27/08/2026 — **revisado 4x, aguardando merge**
+## 🔧 Nota de SERVIÇO não entrava pelo importador de PDF — 27/08/2026 — **PR #74 aberto**
+
+> https://github.com/diretorpc/agromouro/pull/74 — 9 rodadas do Apolo, a última sem
+> nenhum [alto] e com veredito "pronta para PR". **Ordem de deploy: API antes da web**
+> (motivo no corpo do PR e no item 10 abaixo).
 
 Ramo `fix/nfse-pdf-sem-quantidade`. Começou com o Matheus mandando uma NFS-e real
 (MAQNELSON AGRÍCOLA, licença de software) e dizendo "o importador não conseguiu ler".
