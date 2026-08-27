@@ -130,7 +130,7 @@ export function ConferenciaPdf(
   // `modelo` entra aqui porque `travaDeDuplicidade` precisa saber o que a IA leu
   // no campo Tipo para distinguir a gêmea legítima da própria nota com o Tipo
   // virado à mão (achado [alto] do Apolo, 6ª rodada, 27/08/2026).
-  const [lidoOriginal, setLidoOriginal] = useState<{ numero: string; emitenteCnpj: string; modelo: 'nfe' | 'nfse' } | null>(null)
+  const [lidoOriginal, setLidoOriginal] = useState<{ numero: string; emitenteCnpj: string; modelo: 'nfe' | 'nfse'; valorTotal: number; dataEmissao: string } | null>(null)
   // Marcado pelo dono quando a nota INTEIRA caiu fora de "compra normal" e ele
   // confirma que é isso mesmo. Ver precisaConfirmarEfeitoIncomum.
   const [confirmouEfeito, setConfirmouEfeito] = useState(false)
@@ -164,7 +164,7 @@ export function ConferenciaPdf(
       const r = await api.post<RespostaLeitura>('/nfe/ler-pdf', { arquivo: base64, nomeArquivo })
       setLeitura(r)
       setNota(r.nota)
-      setLidoOriginal({ numero: r.nota.numero, emitenteCnpj: r.nota.emitenteCnpj, modelo: r.nota.modelo })
+      setLidoOriginal({ numero: r.nota.numero, emitenteCnpj: r.nota.emitenteCnpj, modelo: r.nota.modelo, valorTotal: r.nota.valorTotal, dataEmissao: r.nota.dataEmissao })
     } catch (err) {
       setErro(err instanceof Error ? err.message : 'Erro ao ler o PDF.')
     } finally {
@@ -403,8 +403,11 @@ export function ConferenciaPdf(
     numeroLido:     lidoOriginal?.numero,
     cnpjLido:       lidoOriginal?.emitenteCnpj,
     modeloLido:     lidoOriginal?.modelo,
-    valorTotalAtual:  nota.valorTotal,
-    dataEmissaoAtual: nota.dataEmissao,
+    // LIDOS, não os campos da tela: valor e data são editáveis e NÃO fazem
+    // parte da chave de duplicidade. Passar os da tela deixava o dono desligar
+    // a trava corrigindo um centavo (achado [alto] do Apolo, 7ª rodada).
+    valorTotalLido:  lidoOriginal?.valorTotal ?? nota.valorTotal,
+    dataEmissaoLida: lidoOriginal?.dataEmissao ?? nota.dataEmissao,
   })
   const duplicataValendo = dup.duplicataValendo
   // API antiga não manda `familias`: sem a lista não há como oferecer o conserto,
@@ -420,7 +423,7 @@ export function ConferenciaPdf(
       {/* Os três avisos de duplicidade saem todos de `travaDeDuplicidade`, que é
           função pura e testada — a decisão morava aqui dentro e foi de onde
           saíram os dois achados [alto] da 5ª rodada do Apolo (27/08/2026). */}
-      {duplicataValendo && !dup.travadoPeloTipo && (
+      {duplicataValendo && !dup.ehOMesmoDocumento && (
         <div className="rounded-md bg-red-50 text-red-700 px-3 py-2 text-sm">
           <strong>Esta nota já está no sistema</strong>
           {dup.modeloDoGemeoDesconhecido ? '' : ` como ${nota.modelo === 'nfe' ? 'nota de produto (NF-e)' : 'nota de serviço (NFS-e)'}`}
@@ -436,10 +439,13 @@ export function ConferenciaPdf(
           porquê. Achado [alto] do Apolo, 6ª rodada (27/08/2026): antes deste
           bloco, trocar o Tipo LIBERAVA o botão e a tela chamava o estado de
           "normal" — a mesma nota entrava uma segunda vez, sem estoque. */}
-      {dup.travadoPeloTipo && (
+      {dup.ehOMesmoDocumento && (
         <div className="rounded-md bg-red-50 text-red-700 px-3 py-2 text-sm">
-          <strong>Você trocou o Tipo, mas esta nota já está gravada com o tipo original</strong>
+          <strong>{dup.travadoPeloTipo
+            ? 'Você trocou o Tipo, mas esta nota já está gravada com o tipo original'
+            : `Esta nota já está gravada como ${dup.modeloDoOutroGemeo === 'nfe' ? 'nota de produto (NF-e)' : 'nota de serviço (NFS-e)'}`}</strong>
           {' '}— mesmo número, mesmo fornecedor, mesma data e mesmo valor. É o mesmo documento.
+          {dup.travadoPeloTipo ? '' : ' O campo "Tipo" desta leitura provavelmente saiu errado.'}
           {' '}Gravar assim entraria pela segunda vez, com estoque e gasto contados em dobro.
           {' '}Se a nota já gravada é que está com o tipo errado, <strong>apague ela primeiro</strong>
           {' '}na aba NF-e; se são notas diferentes, confira o número.

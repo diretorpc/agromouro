@@ -161,7 +161,12 @@ const UNIDADES_DE_SERVICO = new Set([
   '', 'UN', 'UND', 'UNID', 'UNIDADE', 'UNITARIO', 'UNITÁRIO',
   'H', 'HR', 'HRS', 'HORA', 'HORAS', 'HH',
   'DIA', 'DIAS', 'SEM', 'MES', 'MÊS', 'MESES', 'ANO', 'ANOS',
-  'M2', 'M²', 'MT2', 'M3', 'M³', 'MT3',
+  // `M2`/`M3` NÃO entram: areia, brita, pedra, madeira e concreto se vendem em
+  // m³, e o fornecedor do caso de 24/08 é loja de material de construção — uma
+  // DANFE dessas rotulada como serviço não acendia sinal nenhum. Serviço medido
+  // em m² existe (pintura, limpeza), mas aqui errar para o lado barulhento
+  // custa um banner, e errar para o lado calado custa o galpão. Achado [médio]
+  // do Apolo, 7ª rodada (27/08/2026).
   'SERV', 'SERVICO', 'SERVIÇO', 'VB', '%',
 ])
 // `PCT` NÃO entra: `nfeProcessor.ts` lista PAC/PACOTE como unidade comercial de
@@ -272,12 +277,29 @@ function cnpjNormalizado(v: string): string {
 // custa um clique, travar de menos custa gasto e estoque em dobro.
 export function pareceMesmoDocumento(
   gravada: NotaGravada,
-  atual: { valorTotal: number; dataEmissao: string },
+  // O que a IA LEU neste PDF, nunca o que o dono digitou depois. Valor e data
+  // não fazem parte da chave de duplicidade do servidor (`numero`,
+  // `emitente_cnpj`, `fazenda_id`, `modelo`), então editá-los não pode ter
+  // efeito nenhum sobre a trava — e tinha: achado [alto] do Apolo, 7ª rodada
+  // (27/08/2026), medido. Corrigir um centavo lido errado e trocar o Tipo
+  // liberava o botão, e a nota entrava pela segunda vez.
+  lido: { valorTotal: number; dataEmissao: string },
 ): boolean {
-  if (typeof gravada.valor_total !== 'number' || gravada.valor_total < 0) return true
-  if (!gravada.data_emissao) return true
-  return gravada.data_emissao === atual.dataEmissao
-    && Math.abs(gravada.valor_total - atual.valorTotal) <= 0.02
+  const temValor = typeof gravada.valor_total === 'number' && gravada.valor_total >= 0
+  const temData  = !!gravada.data_emissao
+
+  // Não sei nada sobre a gravada (sentinela -1 do fallback de corrida, ou API
+  // velha sem nenhum dos dois): responde "pode ser a mesma". Travar de mais
+  // custa um clique; travar de menos custa gasto em dobro.
+  if (!temValor && !temData) return true
+
+  // Cada campo CONHECIDO que diverge já basta para concluir "documento
+  // diferente". Campo ausente não vota — assim uma API velha, que sabe a data
+  // mas não o valor, ainda distingue o par legítimo emitido em dias diferentes,
+  // em vez de travar tudo e recriar o botão morto.
+  if (temData && gravada.data_emissao !== lido.dataEmissao) return false
+  if (temValor && Math.abs(gravada.valor_total! - lido.valorTotal) > 0.02) return false
+  return true
 }
 
 // ─── A trava de duplicidade ─────────────────────────────────────────────────
@@ -306,16 +328,20 @@ export function travaDeDuplicidade(params: {
   cnpjAtual:    string
   numeroLido:   string | undefined
   cnpjLido:     string | undefined
-  valorTotalAtual: number
-  dataEmissaoAtual: string
+  // LIDOS, não os da tela. Ver `pareceMesmoDocumento`.
+  valorTotalLido: number
+  dataEmissaoLida: string
 }): {
   gemeoNoModeloAtual: NotaGravada | null
   gemeoNoOutroModelo: NotaGravada | null
   modeloDoOutroGemeo: 'nfe' | 'nfse'
   identidadeMudou:    boolean
   duplicataValendo:   boolean
-  // true quando a trava vem do Tipo trocado, não da leitura original — a tela
-  // precisa dizer isso ao dono, senão ele não entende o que travou.
+  // true quando a gêmea do outro modelo É esta nota — mesmo documento, com o
+  // Tipo diferente. Quem trava é este campo.
+  ehOMesmoDocumento:  boolean
+  // true quando, além disso, foi o DONO que virou o campo Tipo. Só escolhe o
+  // TEXTO do banner: "você trocou o Tipo" contra "confira o Tipo".
   travadoPeloTipo:    boolean
   // true quando a tela não sabe em qual modelo a gêmea está (API velha) — sem
   // isso, o banner imprime um rótulo inventado. Achado [baixo] da 6ª rodada.
@@ -341,16 +367,27 @@ export function travaDeDuplicidade(params: {
   const gemeoNoModeloAtual = temForma ? (nb![params.modeloAtual] ?? null) : legado
   const gemeoNoOutroModelo = temForma ? (nb![outro] ?? null) : null
 
-  // O Tipo foi trocado à mão E a gêmea está justamente no modelo que a IA leu:
-  // é a própria nota, a menos que total ou data digam o contrário.
-  const trocouOTipo = params.modeloLido !== undefined && params.modeloAtual !== params.modeloLido
-  const gemeoNoModeloLido = trocouOTipo && temForma ? (nb![params.modeloLido!] ?? null) : null
-  const travadoPeloTipo = !!gemeoNoModeloLido
+  // A gêmea do OUTRO modelo é o mesmo documento? Se for, gravar entraria pela
+  // segunda vez — `modelo` faz parte da chave de duplicidade, então nem o
+  // servidor nem o índice único pegam.
+  //
+  // A pergunta NÃO é "quem virou o campo Tipo?". A versão anterior só olhava
+  // quando o DONO virava (`modeloAtual !== modeloLido`), e por isso não cobria
+  // o caso mais frequente: a IA errando o Tipo sozinha, que é o modo de falha
+  // documentado deste projeto — a razão de `sinaisDeNotaDeProduto` existir.
+  // Achado [alto] do Apolo, 7ª rodada (27/08/2026), medido: nota já gravada
+  // como NF-e, IA lê 'nfse', dono não mexe em nada, botão HABILITADO, gasto em
+  // dobro.
+  const ehOMesmoDocumento = !!gemeoNoOutroModelo
     && !identidadeMudou
-    && pareceMesmoDocumento(gemeoNoModeloLido, {
-      valorTotal:  params.valorTotalAtual,
-      dataEmissao: params.dataEmissaoAtual,
+    && pareceMesmoDocumento(gemeoNoOutroModelo, {
+      valorTotal:  params.valorTotalLido,
+      dataEmissao: params.dataEmissaoLida,
     })
+  // `travadoPeloTipo` só muda o TEXTO do banner: quando o dono virou o campo, a
+  // frase certa é "você trocou o Tipo"; quando foi a IA, é "confira o Tipo".
+  const trocouOTipo = params.modeloLido !== undefined && params.modeloAtual !== params.modeloLido
+  const travadoPeloTipo = ehOMesmoDocumento && trocouOTipo
 
   return {
     gemeoNoModeloAtual,
@@ -359,14 +396,16 @@ export function travaDeDuplicidade(params: {
     // - `identidadeMudou`: ele afirma "existe uma nota com ESTE mesmo número",
     //   e depois da correção isso deixa de ser verdade (achado [médio] do
     //   Apolo, 6ª rodada);
-    // - `travadoPeloTipo`: aí a "gêmea" É a própria nota. O aviso diria "data e
-    //   valor diferentes, são documentos diferentes" logo ao lado do banner
-    //   vermelho dizendo "é o mesmo documento" — dois avisos brigando na mesma
+    // - `ehOMesmoDocumento`: aí a "gêmea" É a própria nota. O aviso afirma "data
+    //   e valor diferentes, são documentos diferentes" — texto que o código
+    //   NUNCA tinha conferido (achado [médio] do Apolo, 7ª rodada) — e apareceria
+    //   ao lado do vermelho dizendo o contrário. Dois avisos brigando na mesma
     //   tela, e o dono acreditando no mais simpático.
-    gemeoNoOutroModelo: (identidadeMudou || travadoPeloTipo) ? null : gemeoNoOutroModelo,
+    gemeoNoOutroModelo: (identidadeMudou || ehOMesmoDocumento) ? null : gemeoNoOutroModelo,
     modeloDoOutroGemeo: outro,
     identidadeMudou,
-    duplicataValendo: (!!gemeoNoModeloAtual && !identidadeMudou) || travadoPeloTipo,
+    duplicataValendo: (!!gemeoNoModeloAtual && !identidadeMudou) || ehOMesmoDocumento,
+    ehOMesmoDocumento,
     travadoPeloTipo,
     modeloDoGemeoDesconhecido: !temForma,
   }

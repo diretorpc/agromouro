@@ -424,7 +424,6 @@ export function validarNotaLida(bruto: unknown, hojeISO: string): ValidacaoNota 
       continue
     }
 
-    const unitarioLido = numeroFinito(i.valorUnitario)
     const unidade      = texto(i.unidade) ?? 'un'
 
     // Serviço sem quantidade impressa vira "1 un", igual ao que parseXmlNFSe
@@ -454,9 +453,13 @@ export function validarNotaLida(bruto: unknown, hojeISO: string): ValidacaoNota 
     //              materializa depois — R$ 490 medidos numa linha de R$ 500 mil,
     //              e até ~R$ 2.000 no teto de VALOR_MAX_ITEM.
     //
-    // Derivar sempre tem deriva máxima de `quantidade × 0,00005` (o
-    // arredondamento do `numeric(12,4)` da coluna): R$ 0,05 na mesma linha de
-    // R$ 500 mil. E não se perde nada: o unitário lido não alimenta nenhuma
+    // Derivar sempre limita a deriva ao arredondamento da coluna —
+    // `quantidade × 0,00005`, uma FÓRMULA e não um número, porque número em
+    // comentário apodrece: a 1ª versão deste texto dizia "R$ 0,05" e só valia
+    // para quantidade ~1.000. Nas quantidades reais deste projeto (46.000 kg de
+    // adubo, 466.000 kg da SYAGRI) dá alguns reais, não centavos — ainda assim
+    // duas ordens de grandeza abaixo da régua anterior. E não se perde nada: o
+    // unitário lido não alimenta nenhuma
     // outra conta — `converterParaNFeData` só o repassa, e quem soma dinheiro é
     // o TOTAL, que é o número que a nota fiscal afirma.
     const valorUnitario = quantidadeFinal === null
@@ -477,10 +480,16 @@ export function validarNotaLida(bruto: unknown, hojeISO: string): ValidacaoNota 
     //    arredondamento: simula o que a coluna vai guardar e mede quanto o
     //    total se move. Linha que a coluna não consegue representar sem mexer
     //    no dinheiro é leitura errada, não compra.
-    const unitarioNaColuna = Math.round(valorUnitario * 10_000) / 10_000
-    const derivaDaColuna = quantidadeFinal === null
+    //    O `handleEdit` multiplica os DOIS valores já arredondados pelo banco:
+    //    `valor_unitario` é numeric(12,4) e `quantidade` é numeric(12,3). A 1ª
+    //    versão desta guarda simulava só metade do INSERT, e uma linha de
+    //    `q = 0,0005` passava com o total dobrando depois — achado [médio] do
+    //    Apolo, 7ª rodada (27/08/2026).
+    const unitarioNaColuna   = Math.round(valorUnitario * 10_000) / 10_000
+    const quantidadeNaColuna = quantidadeFinal === null ? null : Math.round(quantidadeFinal * 1_000) / 1_000
+    const derivaDaColuna = quantidadeNaColuna === null
       ? 0
-      : Math.abs(unitarioNaColuna * quantidadeFinal - total)
+      : Math.abs(unitarioNaColuna * quantidadeNaColuna - total)
     if (valorUnitario > VALOR_MAX_UNITARIO || derivaDaColuna > Math.max(0.02, total * 0.001)) {
       itensDescartados++
       continue

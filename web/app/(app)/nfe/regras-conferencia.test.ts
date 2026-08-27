@@ -315,7 +315,6 @@ describe('sinaisDeNotaDeProduto — o papel contradiz o campo "Tipo"', () => {
     // como sinal, o aviso acendia em nota de serviço legítima e virava ruído.
     expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 1, unidade: 'un' }])).toBe(0)
     expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 3, unidade: 'H' }])).toBe(0)
-    expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 40, unidade: 'M2' }])).toBe(0)
     // Sem unidade nenhuma, quantidade sozinha continua não bastando.
     expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 1 }])).toBe(0)
   })
@@ -333,14 +332,17 @@ describe('sinaisDeNotaDeProduto — o papel contradiz o campo "Tipo"', () => {
     // DANFE, MTN do contrato da SYAGRI), e uma DANFE de 8 linhas com
     // PEÇA/FRASCO/BALDE/PACOTE não acendia aviso nenhum.
     for (const un of ['TON', 'ton', 'MTN', 'SACO', 'FD', 'CENTO', 'KIT',
-                      'PEÇA', 'FRASCO', 'BALDE', 'PACOTE', 'PCT', 'MT', 'RESMA', 'xyz']) {
+                      'PEÇA', 'FRASCO', 'BALDE', 'PACOTE', 'PCT', 'MT', 'RESMA', 'xyz',
+                      // m³ é como se vende areia, brita, pedra e concreto — e o
+                      // fornecedor do caso de 24/08 é loja de material de construção.
+                      'M3', 'M³', 'M2', 'MT3']) {
       expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 1, unidade: un }])).toBe(1)
     }
   })
 
   it('as unidades de SERVIÇO de verdade continuam quietas', () => {
     for (const un of ['un', 'UN', 'UN.', 'UND', 'UNIDADE', 'H', 'HORA', 'HRS',
-                      'DIA', 'MES', 'M2', 'M³', 'SERV', 'VB', '']) {
+                      'DIA', 'MES', 'SERV', 'VB', '']) {
       expect(sinaisDeNotaDeProduto('nfse', [{ cfop: '', quantidade: 3, unidade: un }])).toBe(0)
     }
   })
@@ -401,13 +403,13 @@ describe('linhasSemQuantidade — nota de produto exige quantidade impressa', ()
 
 describe('travaDeDuplicidade — a gêmea legítima e a nota com o Tipo virado', () => {
   // A NOTA QUE ESTÁ NA TELA: nº 500, R$ 1.000, emitida em 10/08.
-  const ATUAL = { valorTotalAtual: 1000, dataEmissaoAtual: '2026-08-10' }
+  const LIDO = { valorTotalLido: 1000, dataEmissaoLida: '2026-08-10' }
   // A MESMA nota, já gravada: mesmo total, mesma data.
   const MESMA = { id: 'mesma', numero: '500', data_emissao: '2026-08-10', emitente_nome: 'X', valor_total: 1000 }
   // Documento DIFERENTE, mesmo número: o par peças/mão de obra da migration 011.
   const OUTRA = { id: 'outra', numero: '500', data_emissao: '2026-07-02', emitente_nome: 'X', valor_total: 380 }
   const base = {
-    ...ATUAL,
+    ...LIDO,
     numeroAtual: '500', cnpjAtual: '04063805000135',
     numeroLido: '500',  cnpjLido: '04063805000135',
   }
@@ -420,10 +422,39 @@ describe('travaDeDuplicidade — a gêmea legítima e a nota com o Tipo virado',
     const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfse', modeloLido: 'nfe',
       notasNoBanco: { nfe: MESMA, nfse: null }, jaExisteLegado: MESMA })
     expect(r.duplicataValendo).toBe(true)
-    expect(r.travadoPeloTipo).toBe(true)
-    // E o aviso da "gêmea legítima" CALA: ele diria "data e valor diferentes,
-    // são documentos diferentes" logo ao lado do vermelho dizendo o contrário.
+    expect(r.ehOMesmoDocumento).toBe(true)
+    expect(r.travadoPeloTipo).toBe(true)   // foi o dono que virou: muda só o texto
+    // E o aviso da "gêmea legítima" CALA: ele afirma "data e valor diferentes,
+    // são documentos diferentes" — texto que o código nunca tinha conferido —
+    // e apareceria ao lado do vermelho dizendo o contrário.
     expect(r.gemeoNoOutroModelo).toBeNull()
+  })
+
+  it('quando quem erra o Tipo é a IA, trava do mesmo jeito — o [alto] da 7ª rodada', () => {
+    // A nota já está gravada como NF-e (entrou pelo Make). O dono sobe o PDF
+    // dela e a IA lê 'nfse'. Ele não mexe em NADA. A versão anterior só olhava
+    // quando o DONO virava o campo, então aqui o botão ficava habilitado e o
+    // gasto entrava em dobro — e leitura errada do Tipo é o modo de falha
+    // documentado deste projeto, a razão de `sinaisDeNotaDeProduto` existir.
+    const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfse', modeloLido: 'nfse',
+      notasNoBanco: { nfe: MESMA, nfse: null }, jaExisteLegado: null })
+    expect(r.duplicataValendo).toBe(true)
+    expect(r.ehOMesmoDocumento).toBe(true)
+    expect(r.travadoPeloTipo).toBe(false)   // ninguém virou o campo: o texto muda
+  })
+
+  it('editar o VALOR ou a DATA não desliga a trava — não são chave de duplicidade', () => {
+    // Achado [alto] do Apolo, 7ª rodada: a função recebia os campos da TELA, que
+    // são editáveis. Corrigir um centavo lido errado e trocar o Tipo liberava o
+    // botão, e a nota entrava pela segunda vez — com um total diferente, o que
+    // ainda atrapalharia qualquer deduplicação futura.
+    //
+    // A chave do servidor é (numero, emitente_cnpj, fazenda_id, modelo). Valor e
+    // data não estão nela, então editá-los não pode ter efeito nenhum aqui: os
+    // valores comparados são sempre os LIDOS deste PDF.
+    const r = travaDeDuplicidade({ ...base, modeloAtual: 'nfse', modeloLido: 'nfe',
+      notasNoBanco: { nfe: MESMA, nfse: null }, jaExisteLegado: MESMA })
+    expect(r.duplicataValendo).toBe(true)
   })
 
   it('trocar o Tipo LIBERA quando é documento diferente — o par peças + mão de obra', () => {
@@ -474,7 +505,7 @@ describe('travaDeDuplicidade — a gêmea legítima e a nota com o Tipo virado',
 describe('travaDeDuplicidade — a identidade que o dono edita', () => {
   const NF = { id: 'a', numero: '500', data_emissao: '2026-08-10', emitente_nome: 'X', valor_total: 1000 }
   const base = {
-    valorTotalAtual: 1000, dataEmissaoAtual: '2026-08-10',
+    valorTotalLido: 1000, dataEmissaoLida: '2026-08-10',
     numeroAtual: '500', cnpjAtual: '04063805000135',
     numeroLido: '500',  cnpjLido: '04063805000135',
     modeloAtual: 'nfe' as const, modeloLido: 'nfe' as const,
@@ -518,7 +549,7 @@ describe('travaDeDuplicidade — a identidade que o dono edita', () => {
 describe('travaDeDuplicidade — API mais velha que a tela', () => {
   const NF = { id: 'a', numero: '500', data_emissao: '2026-08-10', emitente_nome: 'X', valor_total: 1000 }
   const base = {
-    valorTotalAtual: 1000, dataEmissaoAtual: '2026-08-10',
+    valorTotalLido: 1000, dataEmissaoLida: '2026-08-10',
     numeroAtual: '500', cnpjAtual: '040', numeroLido: '500', cnpjLido: '040',
     modeloLido: 'nfe' as const,
   }
@@ -559,8 +590,15 @@ describe('pareceMesmoDocumento', () => {
   it('data diferente = documento diferente', () => {
     expect(pareceMesmoDocumento(gravada({ valor_total: 1000, data_emissao: '2026-07-02' }), atual)).toBe(false)
   })
-  it('sem valor ou sem data, responde "pode ser a mesma"', () => {
-    expect(pareceMesmoDocumento(gravada({}), atual)).toBe(true)
-    expect(pareceMesmoDocumento(gravada({ valor_total: 380, data_emissao: '' }), atual)).toBe(true)
+  it('sem valor E sem data, responde "pode ser a mesma" — não sei nada', () => {
+    expect(pareceMesmoDocumento(gravada({ data_emissao: '' }), atual)).toBe(true)
+  })
+
+  it('campo AUSENTE não vota; o campo conhecido decide sozinho', () => {
+    // API velha sabe a data mas não o valor. Fazer a ausência travar tudo
+    // recriaria o botão morto da 5ª rodada no par legítimo NF-e/NFS-e.
+    expect(pareceMesmoDocumento(gravada({ data_emissao: '2026-07-02' }), atual)).toBe(false)
+    expect(pareceMesmoDocumento(gravada({ data_emissao: '2026-08-10' }), atual)).toBe(true)
+    expect(pareceMesmoDocumento(gravada({ valor_total: 380, data_emissao: '' }), atual)).toBe(false)
   })
 })

@@ -204,7 +204,37 @@ do modelo onde a gêmea ESTÁ — antes ele se invertia quando o dono obedecia a
     `{q: 700.000, vt: 100}` deriva 0,00014…, a coluna guarda 0,0001 e o total viraria
     R$ 70. A régua não é o valor do unitário, é o EFEITO do arredondamento.
 
-**Padrão que ficou claro em 6 rodadas, e a lição que ficou:** 3 dos [alto] nasceram em
+**7ª rodada do Apolo — 2 [alto], os dois "fio ligado no lugar errado":**
+
+30. **[alto] A trava comparava os campos da TELA, que são editáveis.** Valor e data não
+    fazem parte da chave de duplicidade do servidor, então corrigir um centavo lido errado
+    e trocar o Tipo liberava o botão — a nota entrava pela segunda vez, e com um total
+    diferente, atrapalhando qualquer deduplicação futura. Agora compara sempre o que a IA
+    LEU deste PDF (`lidoOriginal` guarda valor e data também).
+31. **[alto] Quando quem errava o Tipo era a IA, nada travava.** `travadoPeloTipo` exigia
+    que o DONO virasse o campo — e leitura errada do Tipo é o modo de falha documentado
+    deste projeto. Nota já gravada como NF-e + IA lendo 'nfse' + dono sem mexer em nada =
+    botão habilitado e gasto em dobro. A pergunta certa não é "quem virou o campo?", é
+    "a gêmea do outro modelo é o mesmo documento?". `travadoPeloTipo` agora só escolhe o
+    TEXTO do banner.
+32. **[médio] O banner âmbar afirmava um fato que o código nunca conferiu** ("data e valor
+    diferentes, são documentos diferentes"). Passa por `pareceMesmoDocumento` antes.
+33. **[médio] A guarda de arredondamento simulava metade do INSERT** — `valor_unitario` é
+    `numeric(12,4)` mas `quantidade` é `numeric(12,3)`, e o Financeiro multiplica os dois
+    já arredondados. `q = 0,0005` passava com o total dobrando depois.
+34. **[médio] `M2`/`M3` saíram da lista de serviço** — areia, brita, pedra e concreto se
+    vendem em m³, e o fornecedor do caso de 24/08 é loja de material de construção.
+35. **[baixo] O "R$ 0,05" que eu tinha escrito estava errado** para as quantidades deste
+    projeto (só valia para ~1.000 unidades). Virou fórmula: `quantidade × 0,00005`.
+    Número em comentário apodrece — a regra do `CLAUDE.md` pegou o próprio autor.
+
+**Fora do escopo, consertado na hora:** a memória `nfe-corrida-duas-portas` afirmava que
+"apagar nota não desfaz estoque". **Falso desde 05/08/2026** — a migration
+`009_excluir_nota_fiscal.sql` devolve o saldo item a item e apaga tudo numa transação. O
+texto ficou 22 dias mentindo em toda largada de sessão, e quase fez o Apolo abrir um
+[alto] errado contra o banner que manda apagar a nota duplicada.
+
+**Padrão que ficou claro em 7 rodadas, e a lição que ficou:** 3 dos [alto] nasceram em
 comportamento novo de TELA, e o `web` não tem testing-library — dá para arrancar uma trava
 do JSX com a suíte verde e o `tsc` limpo. **A resposta barata não foi instalar
 testing-library: foi tirar a decisão do JSX.** `travaDeDuplicidade` prova de mesa, em 9
