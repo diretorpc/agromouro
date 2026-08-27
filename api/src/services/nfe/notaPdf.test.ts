@@ -714,6 +714,25 @@ describe('validarNotaLida — a invariante quantidade × unitário === total', (
     expect(r.status === 'nota' && r.itensDescartados).toBe(1)
   })
 
+  it('a coluna da QUANTIDADE também arredonda — q com 4 casas derruba a linha', () => {
+    // `itens_nfe.quantidade` é numeric(12,3) e `valor_unitario` é numeric(12,4);
+    // o `handleEdit` multiplica os DOIS já arredondados. A 1ª versão desta
+    // guarda simulava só metade do INSERT, e {q: 0,0005, vt: 1000} passava com
+    // o total DOBRANDO depois (0,001 × 1.000.000 = 2.000). Achado [médio] do
+    // Apolo, 8ª rodada (27/08/2026) — o conserto tinha subido sem teste.
+    const r = validarNotaLida(lida({ itens: [item(), item({ quantidade: 0.0005, valorUnitario: null, valorTotal: 1000 })] }), HOJE)
+    expect(r.status === 'nota' && r.nota.itens).toHaveLength(1)
+    expect(r.status === 'nota' && r.itensDescartados).toBe(1)
+  })
+
+  it('quantidade de 3 casas (o que a coluna guarda) passa sem deriva', () => {
+    // 12,5 L de defensivo, 3,333 sc, 0,75 L: as quantidades reais do projeto.
+    for (const [q, vt] of [[12.5, 4400], [3.333, 1000], [0.75, 300], [46000, 137000]] as const) {
+      const r = validarNotaLida(lida({ itens: [item({ quantidade: q, valorUnitario: null, valorTotal: vt })] }), HOJE)
+      expect(r.status === 'nota' && r.itensDescartados).toBe(0)
+    }
+  })
+
   it('linha de bonificação (total 0) sobrevive — 0 ÷ qualquer coisa é 0', () => {
     const r = validarNotaLida(lida({ itens: [item({ quantidade: 5, valorUnitario: 880, valorTotal: 0 })] }), HOJE)
     expect(r.status === 'nota' && r.nota.itens[0].valorUnitario).toBe(0)

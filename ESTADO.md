@@ -245,13 +245,43 @@ passar por engano.
 **Limite honesto:** isso reduz de "troca invisível de um campo" para "troca visível de um
 objeto" — `lido: nota` ainda compilaria. Não elimina, mas põe o erro onde se lê.
 
-**Padrão que ficou claro em 7 rodadas, e a lição que ficou:** 3 dos [alto] nasceram em
+**8ª rodada do Apolo — a primeira SEM nenhum [alto]:**
+
+36. **[médio] O par legítimo do MESMO dia com o MESMO valor virou botão morto.** Peças e
+    mão de obra rachados meio a meio: `pareceMesmoDocumento` não tem como distinguir, e os
+    DOIS lados do campo Tipo travavam. As duas saídas que o banner oferecia estavam
+    erradas para ele — "apague a nota gravada" (é legítima) e "confira o número" (está
+    certo). *"Travar de mais custa um clique" só é verdade se o clique existir*, e não
+    existia. Ganhou caixa de confirmação, no mesmo padrão do `confirmouEfeito`.
+37. **[médio] A guarda das duas colunas tinha subido sem teste** — reverter o conserto
+    deixava as 736 verdes. O "736/736" do commit era verdadeiro e não provava nada sobre
+    ele. Coberto agora.
+38. **[médio] Havia um SEGUNDO fio que dava para religar errado**, e eu tinha registrado
+    só o primeiro: `atual: lidoOriginal!` compilava e recriava o botão morto que este ramo
+    inteiro existe para matar — custo de um `!`. **Fechado com marca nominal**
+    (`lidaPelaIA`) e `congelarLeitura`: agora `lido: nota` vira **TS2741** e
+    `atual: lidoOriginal!` vira **TS2322**, os dois conferidos sabotando o componente.
+39. **[baixo] O refactor da 7ª rodada apagou o teste da sentinela `-1`** sem querer, e ela
+    é código vivo. Recolocado no nível certo.
+40. **[baixo] `setLidoOriginal(r.nota)` guardava REFERÊNCIA, não cópia** — o congelamento
+    passou a depender de todo edit futuro continuar imutável. `congelarLeitura` copia os
+    5 campos.
+
+**E uma lição aplicada antes de virar achado:** a caixa do item 36 nasceu como booleano com
+reset à mão no JSX — exatamente o `identidadeEditada` da 5ª rodada. Virou **chave**
+(`tipo|número|CNPJ`) antes de subir: a confirmação expira sozinha, e não existe reset para
+alguém esquecer de escrever.
+
+**Padrão que ficou claro em 8 rodadas, e a lição que ficou:** 3 dos [alto] nasceram em
 comportamento novo de TELA, e o `web` não tem testing-library — dá para arrancar uma trava
 do JSX com a suíte verde e o `tsc` limpo. **A resposta barata não foi instalar
-testing-library: foi tirar a decisão do JSX.** `travaDeDuplicidade` prova de mesa, em 9
-testes, dois defeitos que cinco rodadas de leitura não tinham pegado. Mesmo padrão de
-`salvar-talhao.ts` e `deletar-linha.ts`. O que ainda não tem teste é só o que sobrou no
-JSX: o texto dos banners e a ligação entre eles e as funções puras.
+testing-library: foi tirar a decisão do JSX.** `travaDeDuplicidade` prova de mesa
+defeitos que rodadas de leitura não tinham pegado — conte quantos com
+`grep -c "it(" web/app/\(app\)/nfe/regras-conferencia.test.ts`, porque número
+escrito aqui apodrece (esta frase já dizia "9" quando eram 20). Mesmo padrão de
+`salvar-talhao.ts` e `deletar-linha.ts`. O que ainda não tem teste é o que
+sobrou no JSX: o texto dos banners. **A LIGAÇÃO entre o JSX e as funções puras
+deixou de ser buraco na 8ª rodada** — ver o item 38.
 
 **Como medir a exposição das linhas já gravadas** (duas classes, não uma — sem
 tolerância o número conta arredondamento honesto como defeito):

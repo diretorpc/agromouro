@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
 import { CATEGORIAS_FINANCEIRAS } from '@/lib/centro-custo'
-import { aplicarFamiliaATodos, cfopAposEscolha, sinaisDeNotaDeProduto, itemTrancado, linhasSemQuantidade, pendenciasDeCfop, podeGravar, travaDeDuplicidade, type FamiliaItem, type NotaComoLida, type NotasNoBanco } from './regras-conferencia'
+import { aplicarFamiliaATodos, cfopAposEscolha, sinaisDeNotaDeProduto, itemTrancado, linhasSemQuantidade, pendenciasDeCfop, podeGravar, travaDeDuplicidade, congelarLeitura, type FamiliaItem, type NotaComoLida, type NotasNoBanco } from './regras-conferencia'
 
 // Toda a UI do modo "Upload PDF" mora aqui, fora de page.tsx (que já passa de
 // 700 linhas). O fluxo tem DOIS passos porque a leitura é da IA, não do dado
@@ -134,6 +134,10 @@ export function ConferenciaPdf(
   // Marcado pelo dono quando a nota INTEIRA caiu fora de "compra normal" e ele
   // confirma que é isso mesmo. Ver precisaConfirmarEfeitoIncomum.
   const [confirmouEfeito, setConfirmouEfeito] = useState(false)
+  // Guarda a CHAVE do que foi confirmado (tipo + número + CNPJ), não um "sim".
+  // Assim a confirmação expira sozinha quando qualquer um dos três muda — sem
+  // reset à mão, que é onde o `identidadeEditada` da 5ª rodada se perdeu.
+  const [docDiferenteConfirmadoPara, setDocDiferenteConfirmadoPara] = useState<string | null>(null)
 
   function escolherArquivo(file: File) {
     setErro(''); setLeitura(null); setNota(null)
@@ -141,6 +145,7 @@ export function ConferenciaPdf(
     setBase64(null)
     setLidoOriginal(null)
     setConfirmouEfeito(false)
+    setDocDiferenteConfirmadoPara(null)
     if (file.size > LIMITE_BYTES) {
       setErro(`Arquivo grande demais (${(file.size / 1024 / 1024).toFixed(1)} MB). O limite é 10 MB.`)
       return
@@ -164,7 +169,7 @@ export function ConferenciaPdf(
       const r = await api.post<RespostaLeitura>('/nfe/ler-pdf', { arquivo: base64, nomeArquivo })
       setLeitura(r)
       setNota(r.nota)
-      setLidoOriginal(r.nota)   // a leitura inteira, congelada: quem escolhe o campo é a função pura
+      setLidoOriginal(congelarLeitura(r.nota))   // CÓPIA dos 5 campos, e a marca que o tsc cobra
     } catch (err) {
       setErro(err instanceof Error ? err.message : 'Erro ao ler o PDF.')
     } finally {
@@ -402,6 +407,7 @@ export function ConferenciaPdf(
     lido:           lidoOriginal,
     notasNoBanco:   leitura.notasNoBanco,
     jaExisteLegado: leitura.jaExiste,
+    confirmadoPara: docDiferenteConfirmadoPara,
   })
   const duplicataValendo = dup.duplicataValendo
   // API antiga não manda `familias`: sem a lista não há como oferecer o conserto,
@@ -442,7 +448,23 @@ export function ConferenciaPdf(
           {dup.travadoPeloTipo ? '' : ' O campo "Tipo" desta leitura provavelmente saiu errado.'}
           {' '}Gravar assim entraria pela segunda vez, com estoque e gasto contados em dobro.
           {' '}Se a nota já gravada é que está com o tipo errado, <strong>apague ela primeiro</strong>
-          {' '}na aba NF-e; se são notas diferentes, confira o número.
+          {' '}na aba NF-e.
+          {/* A saída de um clique. Sem ela, o par legítimo NF-e/NFS-e emitido no
+              MESMO dia com o MESMO valor (peças e mão de obra rachados meio a
+              meio) ficava sem caminho nenhum: os DOIS lados do campo Tipo
+              travavam, e as duas saídas oferecidas no texto acima estavam
+              erradas para ele — apagar a nota gravada (que é legítima) ou
+              conferir o número (que está certo). Achado [médio] do Apolo, 8ª
+              rodada (27/08/2026): "travar de mais custa um clique" só é verdade
+              se o clique existir, e não existia. */}
+          <label className="mt-2 flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={dup.confirmacaoValendo}
+              onChange={e => setDocDiferenteConfirmadoPara(e.target.checked ? dup.chaveDeConfirmacao : null)}
+            />
+            <span>Conferi no papel: são <strong>dois documentos diferentes</strong> com o mesmo número.</span>
+          </label>
         </div>
       )}
 

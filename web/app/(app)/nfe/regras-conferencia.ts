@@ -325,8 +325,41 @@ export function pareceMesmoDocumento(
 // `tsc` limpo — os dois candidatos têm o mesmo tipo, então nem o compilador nem
 // os testes da função pura enxergam. Com objetos, passar o errado exige trocar
 // `lido` por `atual` de propósito, e aí a diferença é visível na chamada.
-export type NotaNaTela  = { modelo: 'nfe' | 'nfse'; numero: string; emitenteCnpj: string }
-export type NotaComoLida = NotaNaTela & { valorTotal: number; dataEmissao: string }
+//
+// A MARCA `lidaPelaIA` é o que faz o compilador pegar o fio trocado. Sem ela,
+// os dois objetos são estruturalmente compatíveis e TRÊS trocas diferentes
+// compilavam com a suíte verde — o Apolo mediu na 8ª rodada (27/08/2026):
+//   `lido: nota`          → a foto vira o campo editável (defeito da 7ª rodada);
+//   `atual: lidoOriginal!` → `identidadeMudou` nunca liga, e corrigir número ou
+//                            CNPJ lido errado NUNCA libera o botão: o botão
+//                            morto que este ramo inteiro existe para matar.
+// Com a marca: `lido: nota` vira TS2741 e `atual: lidoOriginal!` vira TS2322.
+// Custa um campo e uma função de 6 linhas.
+export type NotaNaTela   = {
+  modelo: 'nfe' | 'nfse'; numero: string; emitenteCnpj: string
+  readonly lidaPelaIA?: never
+}
+export type NotaComoLida = {
+  modelo: 'nfe' | 'nfse'; numero: string; emitenteCnpj: string
+  valorTotal: number; dataEmissao: string
+  readonly lidaPelaIA: true
+}
+
+// Copia os 5 campos — a foto tem que ser CÓPIA, não referência. Guardar o mesmo
+// objeto que o estado editável fazia o congelamento depender de todo edit
+// futuro continuar imutável, coisa que nenhum tipo, teste ou lint garante:
+// um `nota.numero = x` num conserto futuro descongelaria a foto em silêncio.
+// Achado [baixo] do Apolo, 8ª rodada (27/08/2026).
+export function congelarLeitura(n: {
+  modelo: 'nfe' | 'nfse'; numero: string; emitenteCnpj: string
+  valorTotal: number; dataEmissao: string
+}): NotaComoLida {
+  return {
+    modelo: n.modelo, numero: n.numero, emitenteCnpj: n.emitenteCnpj,
+    valorTotal: n.valorTotal, dataEmissao: n.dataEmissao,
+    lidaPelaIA: true,
+  }
+}
 
 export function travaDeDuplicidade(params: {
   // O estado ATUAL da tela: o que o dono pode ter editado.
@@ -338,12 +371,34 @@ export function travaDeDuplicidade(params: {
   // API mais velha que esta web (rollback): só sabemos que existe UMA nota
   // repetida, não em qual modelo. Trava nos dois — direção segura.
   jaExisteLegado: NotaGravada | null | undefined
+  // O dono confirmou, na tela, que são dois documentos diferentes apesar de
+  // número, fornecedor, data e valor baterem. Existe porque "travar de mais
+  // custa um clique" só é verdade SE O CLIQUE EXISTIR — e não existia: o par
+  // legítimo NF-e/NFS-e emitido no mesmo dia com valores iguais ficava sem
+  // saída nenhuma nos dois lados do campo Tipo, e as duas saídas que o banner
+  // oferecia estavam erradas ("apague a nota gravada" — é legítima; "confira o
+  // número" — está certo). Achado [médio] do Apolo, 8ª rodada (27/08/2026).
+  //
+  // NÃO destrava a duplicata do MESMO modelo: ali a nota é a mesma, ponto, e a
+  // saída continua sendo corrigir número ou CNPJ.
+  //
+  // É a CHAVE do que foi confirmado, não um booleano com reset à mão. Booleano
+  // pegajoso já custou um [alto] neste mesmo arquivo (`identidadeEditada`, 5ª
+  // rodada): ligava com qualquer tecla, nunca desligava, e o reset morava no
+  // JSX, onde nenhum teste alcança. Sendo chave, a confirmação expira sozinha
+  // quando o dono mexe em Tipo, número ou CNPJ — não existe reset para alguém
+  // esquecer de escrever.
+  confirmadoPara: string | null
 }): {
   gemeoNoModeloAtual: NotaGravada | null
   gemeoNoOutroModelo: NotaGravada | null
   modeloDoOutroGemeo: 'nfe' | 'nfse'
   identidadeMudou:    boolean
   duplicataValendo:   boolean
+  // A chave a gravar quando o dono marcar a caixa, e se a marca atual ainda
+  // vale. A tela não monta chave nenhuma: ela só repassa o que esta função diz.
+  chaveDeConfirmacao: string
+  confirmacaoValendo: boolean
   // true quando a gêmea do outro modelo É esta nota — mesmo documento, com o
   // Tipo diferente. Quem trava é este campo.
   ehOMesmoDocumento:  boolean
@@ -355,6 +410,14 @@ export function travaDeDuplicidade(params: {
   modeloDoGemeoDesconhecido: boolean
 } {
   const modeloAtual = params.atual.modelo
+  // Normalizada, para reformatar o número não expirar a confirmação — mesma
+  // regra de `identidadeMudou`.
+  const chaveDeConfirmacao = [
+    params.atual.modelo,
+    numeroNormalizado(params.atual.numero),
+    cnpjNormalizado(params.atual.emitenteCnpj),
+  ].join('|')
+  const confirmacaoValendo = params.confirmadoPara === chaveDeConfirmacao
   const outro = modeloAtual === 'nfe' ? 'nfse' : 'nfe'
   const lido = params.lido ?? null
 
@@ -412,7 +475,10 @@ export function travaDeDuplicidade(params: {
     gemeoNoOutroModelo: (identidadeMudou || ehOMesmoDocumento) ? null : gemeoNoOutroModelo,
     modeloDoOutroGemeo: outro,
     identidadeMudou,
-    duplicataValendo: (!!gemeoNoModeloAtual && !identidadeMudou) || ehOMesmoDocumento,
+    duplicataValendo: (!!gemeoNoModeloAtual && !identidadeMudou)
+      || (ehOMesmoDocumento && !confirmacaoValendo),
+    chaveDeConfirmacao,
+    confirmacaoValendo,
     ehOMesmoDocumento,
     travadoPeloTipo,
     modeloDoGemeoDesconhecido: !temForma,
