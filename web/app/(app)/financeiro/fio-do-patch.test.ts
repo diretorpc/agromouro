@@ -23,10 +23,21 @@ import { join } from 'node:path'
 const PAGE = readFileSync(join(__dirname, 'page.tsx'), 'utf-8')
 
 // Todo trecho que escreve em `itens_nfe`, com o corpo até o fim da chamada.
-// Casa `.update(` e `.insert(` com literal OU com variável/spread.
+// Casa `.update(`, `.insert(` e `.upsert(` com literal OU com variável/spread.
+//
+// ⚠️ O QUE ESTA CATRACA **NÃO** PEGA, medido pelo Apolo na 3ª rodada
+// (28/08/2026) — escrito aqui de propósito, porque catraca que promete mais do
+// que prende é o defeito que a versão anterior deste arquivo tinha:
+//   - `.rpc('...')` chamando função do banco;
+//   - `.delete()` (é escrita, mas não grava dinheiro);
+//   - nome da tabela em variável (`const T = 'itens_nfe'`);
+//   - escrita movida para outro arquivo.
+// Os dois contornos REALISTAS — mutar `itemNovo` antes do insert e hoistar a
+// conta para uma variável espalhada — esses são pegos, por asserção própria
+// mais abaixo.
 function escritasEmItensNfe(): string[] {
   const trechos: string[] = []
-  const re = /from\(['"]itens_nfe['"]\)\s*(?:\r?\n\s*)?\.(update|insert)\(/g
+  const re = /from\(['"]itens_nfe['"]\)\s*(?:\r?\n\s*)?\.(update|insert|upsert)\(/g
   let m: RegExpExecArray | null
   while ((m = re.exec(PAGE)) !== null) {
     // Anda até fechar o parêntese da chamada, contando profundidade.
@@ -64,6 +75,26 @@ describe('o fio entre a tela e as funções puras', () => {
     }
   })
 
+  it('ninguém MUTA o item antes de gravar — o contorno realista', () => {
+    // `itemNovo.valor_total = qtd * vu || 1` uma linha antes do insert passa por
+    // qualquer inspeção do literal, e reintroduz o bug inteiro. Idem hoistar a
+    // conta para uma variável e espalhá-la. Achado [médio] do Apolo, 3ª rodada.
+    // Só a MUTAÇÃO é proibida. `valor_total` aparece legitimamente em leitura,
+    // ordenação e soma no resto do arquivo — proibir a palavra inteira seria a
+    // catraca prometendo mais do que consegue, de novo.
+    expect(PAGE).not.toMatch(/itemNovo\.\w+\s*=[^=]/)
+    expect(PAGE).not.toMatch(/const\s+\w*[Tt]otal\w*\s*=\s*[^=]*parseFloat\(/)
+  })
+
+  it('a PRÉVIA da adição usa a mesma função do insert', () => {
+    // A catraca prendia o insert e deixava a prévia solta: revertê-la à conta
+    // própria (`(parseFloat(...) || 0) * (parseFloat(...) || 0)`) matava ZERO
+    // testes, e a divergência que este ramo fechou reabria em silêncio.
+    // Achado [médio] do Apolo, 3ª rodada.
+    expect(PAGE).toMatch(/fmtBRL\(previaDoTotalNovo\(form\)\)/)
+    expect(PAGE).not.toMatch(/parseFloat\(form\./)
+  })
+
   it('as duas escritas de dinheiro saem das funções puras', () => {
     // O update passa a função direto; o insert espalha a variável que ela
     // produziu (`...itemNovo`), porque precisa somar `insumo_id` e `fazenda_id`.
@@ -97,10 +128,10 @@ describe('a premissa que faz o parseFloat estar certo', () => {
   // reintroduziria calado o bug de produção que gerou `lib/numeros-br.ts`
   // (R$ 1.234,56 lido como R$ 1,23). Achado [médio] do Apolo, 2ª rodada: a
   // premissa mora em OUTRO arquivo e só um comentário a protegia.
-  it('Quantidade e Valor Unitário continuam type="number"', () => {
-    const numericos = [...PAGE.matchAll(/type="number"/g)]
-    expect(numericos.length).toBeGreaterThanOrEqual(2)
-  })
+  // (Havia aqui um segundo teste contando `type="number"` no arquivo inteiro.
+  //  Ele NÃO PODIA FALHAR: das 4 ocorrências, uma é um `<XAxis type="number">`
+  //  do gráfico e outra é o diálogo de conta paga. Reverter o campo para
+  //  `type="text"` deixava ele verde. Barulho no canal — apagado na 3ª rodada.)
 
   it('nenhum dos dois virou type="text"', () => {
     // Se algum dia precisarem virar texto, o parser de `salvar-item.ts` TEM que

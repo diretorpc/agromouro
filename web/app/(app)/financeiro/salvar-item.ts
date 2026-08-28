@@ -171,14 +171,35 @@ export type ItemNovo = {
   valor_unitario: number
   valor_total:    number
   centro_custo:   string
-  data_manual:    string
+  // Ausente quando o dono não escolheu data. A coluna é `date` (migration 015)
+  // e mandar `''` para ela dá `invalid input syntax for type date`.
+  data_manual?:   string
+}
+
+// BRANCO NÃO É ZERO, e confundir os dois custou um [alto].
+//
+// O `parseFloat(...) || 1` que este arquivo veio matar fazia DUAS coisas: o mal
+// (o `"0"` digitado de propósito virava 1) e um bem (o campo apagado virava 1).
+// A 1ª versão daqui matou as duas — e aí "FRETE COLHEITA, quantidade em branco,
+// R$ 1.500" passou a gravar **R$ 0,00**. Achado [alto] do Apolo, 3ª rodada
+// (28/08/2026), executado. Pior: a prévia nem aparecia, porque a condição de
+// render exigia `form.quantidade` preenchido — tela e banco calavam juntos.
+//
+// E chegar ao branco não exige distração: `<input type="number">` devolve `""`
+// para vírgula (medido em Chromium pt-BR nesta mesma branch), então "2,5"
+// digitado no celular VIRA campo em branco.
+function numeroDigitado(texto: string, seEmBranco: number): number {
+  if (texto.trim() === '') return seEmBranco
+  const n = parseFloat(texto)
+  return Number.isFinite(n) ? n : seEmBranco
 }
 
 export function itemNovoDoFormulario(form: FormularioItem): ItemNovo {
-  // Sem original para preservar, campo ilegível vira 0 — e 0 é o que a prévia
-  // mostra, então tela e banco passam a contar a mesma história.
-  const quantidade    = numeroOuOriginal(form.quantidade, 0)
-  const valorUnitario = numeroOuOriginal(form.valor_unitario, 0)
+  // Quantidade em branco = 1 (o padrão do formulário, e o que o dono quer dizer
+  // ao lançar um frete). Quantidade "0" DIGITADA = 0, e a prévia mostra R$ 0,00.
+  const quantidade    = numeroDigitado(form.quantidade, 1)
+  // Unitário em branco = 0, mas o botão Salvar já barra unitário vazio.
+  const valorUnitario = numeroDigitado(form.valor_unitario, 0)
   return {
     descricao:      form.descricao.trim(),
     quantidade,
@@ -186,7 +207,7 @@ export function itemNovoDoFormulario(form: FormularioItem): ItemNovo {
     valor_unitario: valorUnitario,
     valor_total:    quantidade * valorUnitario,
     centro_custo:   form.centro_custo,
-    data_manual:    form.data,
+    ...(form.data ? { data_manual: form.data } : {}),
   }
 }
 

@@ -119,6 +119,35 @@ mas é efeito à distância que nenhuma tela avisa.
 
 ---
 
+**3ª rodada do Apolo — 1 [alto], e era regressão MINHA da rodada anterior:**
+
+10. **[alto] Matar o `|| 1` matou junto o único bem que ele fazia.** Ele confundia duas
+    coisas: `"0"` DIGITADO virando 1 (o mal) e campo em BRANCO virando 1 (o bem). Eu matei
+    os dois — e "FRETE COLHEITA, quantidade apagada, R$ 1.500" passou a gravar **R$ 0,00**.
+    Pior: a prévia nem aparecia, porque a condição de render exigia `form.quantidade`
+    preenchido. Tela e banco calavam juntos. E chegar ao branco não exige distração: eu
+    mesmo tinha medido nesta branch que `type="number"` devolve `""` para vírgula — "2,5"
+    digitado no celular VIRA campo em branco.
+11. **[médio] A prévia da adição não tinha cerca.** Revertê-la à conta própria matava ZERO
+    testes: a catraca prendia o insert e deixava a prévia solta, então a divergência que eu
+    tinha acabado de fechar reabria em silêncio.
+12. **[médio] A catraca deixava passar 5 de 12 contornos**, e o ESTADO dizia "conferido
+    matando os dois contornos" — eram mais que dois. Os dois realistas (mutar `itemNovo`
+    antes do insert, e `.upsert()`) agora são pegos; o que fica de fora está **escrito no
+    próprio arquivo**, porque catraca que promete mais do que prende é o defeito que a
+    versão anterior tinha.
+13. **[médio] Um dos dois testes que "prendiam" o `type="number"` não podia falhar** — ele
+    contava as 4 ocorrências do arquivo, e uma é um `<XAxis type="number">` do gráfico.
+    Apagado.
+14. **[baixo] `hojeLocal()` era a terceira cópia da mesma verdade.** `lib/mes.ts` já existia
+    com essa justificativa escrita, assinada como achado do próprio Apolo em 25/08. Mudou
+    para lá, com `agora` injetável e teste da virada do dia — e sobrou um `toISOString()`
+    no formulário vizinho, que também foi.
+15. **[baixo] `data_manual: ''`** ia para uma coluna `date` no insert (erro visível, não
+    silencioso), e `FORM_VAZIO.data` congelado era armadilha para o próximo.
+
+---
+
 ## 🔧 Nota de SERVIÇO não entrava pelo importador de PDF — 27/08/2026 — **PR #74 aberto**
 
 > https://github.com/diretorpc/agromouro/pull/74 — 9 rodadas do Apolo, a última sem

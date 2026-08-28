@@ -227,22 +227,37 @@ describe('itemNovoDoFormulario — a prévia e o insert contam a MESMA história
     valor_unitario: '', centro_custo: 'fertilizante_n', data: '2026-08-28',
   }
 
-  it('o caso medido: quantidade "0" com unitário "440" grava ZERO, como a prévia diz', () => {
-    const f = { ...vazio, quantidade: '0', valor_unitario: '440' }
-    expect(itemNovoDoFormulario(f).quantidade).toBe(0)
-    expect(itemNovoDoFormulario(f).valor_total).toBe(0)
-    expect(previaDoTotalNovo(f)).toBe(0)
-  })
-
   it('prévia e insert nunca divergem — a conta é a mesma função', () => {
-    for (const [q, vu] of [['0', '440'], ['', '440'], ['2', ''], ['3', '10'], ['abc', '10']]) {
+    for (const [q, vu] of [['0', '440'], ['', '440'], ['2', ''], ['3', '10'], ['abc', '10'], ['', '']]) {
       const f = { ...vazio, quantidade: q, valor_unitario: vu }
       expect(previaDoTotalNovo(f)).toBe(itemNovoDoFormulario(f).valor_total)
     }
   })
 
-  it('campo ilegível vira 0, não 1 — item novo não tem original para preservar', () => {
-    expect(itemNovoDoFormulario({ ...vazio, quantidade: 'abc' }).quantidade).toBe(0)
+  it('quantidade em BRANCO vira 1 — branco não é zero', () => {
+    // Achado [alto] do Apolo, 3ª rodada: matar o `|| 1` matou junto o único bem
+    // que ele fazia. "FRETE COLHEITA, quantidade apagada, R$ 1.500" passou a
+    // gravar R$ 0,00. E chegar ao branco não exige distração: `type="number"`
+    // devolve `""` para vírgula, então "2,5" digitado no celular vira branco.
+    const f = { ...vazio, quantidade: '', valor_unitario: '1500' }
+    expect(itemNovoDoFormulario(f).quantidade).toBe(1)
+    expect(itemNovoDoFormulario(f).valor_total).toBe(1500)
+  })
+
+  it('quantidade "0" DIGITADA continua zero — é o caso que motivou tudo', () => {
+    const f = { ...vazio, quantidade: '0', valor_unitario: '440' }
+    expect(itemNovoDoFormulario(f).quantidade).toBe(0)
+    expect(itemNovoDoFormulario(f).valor_total).toBe(0)
+  })
+
+  it('unitário em branco vira 0 — e o botão Salvar já barra esse caso', () => {
+    expect(itemNovoDoFormulario({ ...vazio, quantidade: '2' }).valor_unitario).toBe(0)
+  })
+
+  it('data vazia não vai para a coluna `date` como string vazia', () => {
+    // `invalid input syntax for type date: ""`. Achado [baixo] do Apolo, 3ª rodada.
+    expect(itemNovoDoFormulario({ ...vazio, data: '' }).data_manual).toBeUndefined()
+    expect(itemNovoDoFormulario(vazio).data_manual).toBe('2026-08-28')
   })
 
   it('descrição e unidade entram sem espaço sobrando', () => {

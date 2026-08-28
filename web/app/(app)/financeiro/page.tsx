@@ -33,7 +33,7 @@ import { supabase } from '@/lib/supabase'
 import { useFazenda } from '@/context/fazenda-context'
 import { CATEGORIAS_FINANCEIRAS, normalizarCategoria, categoriaLabel } from '@/lib/centro-custo'
 import { useColumnWidths } from '@/lib/use-column-widths'
-import { mesCorrente } from '@/lib/mes'
+import { mesCorrente, hojeLocal } from '@/lib/mes'
 import { ColumnResizeHandle } from '@/components/ui/column-resize-handle'
 
 type ItemFinanceiro = {
@@ -73,19 +73,13 @@ type FormData = {
   data: string
 }
 
-// `hojeLocal()` é FUNÇÃO, não constante: `new Date().toISOString()` roda em UTC
-// e congelava no carregamento do módulo. Às 21h de Brasília já é o dia seguinte
-// em UTC, e uma aba aberta desde ontem oferecia a data de ontem. Antes isso só
-// sujava o insert; agora `data_manual` também é gravado na EDIÇÃO, então o
-// padrão chegou a um caminho novo. Achado [baixo] do Apolo, 2ª rodada.
-function hojeLocal() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
+// `data: ''` DE PROPÓSITO: com uma data congelada aqui, `useState(FORM_VAZIO)`
+// e o próximo `setForm(FORM_VAZIO)` reintroduziriam o bug com cara de correto.
+// Quem abre o formulário carimba a data do dia — ver os `{ ...FORM_VAZIO, data:
+// hojeLocal() }`. Achado [baixo] do Apolo, 3ª rodada.
 const FORM_VAZIO: FormData = {
   descricao: '', quantidade: '1', unidade: 'UN',
-  valor_unitario: '', centro_custo: 'outro', data: hojeLocal(),
+  valor_unitario: '', centro_custo: 'outro', data: '',
 }
 
 // Edição de lançamento de conta paga: sem quantidade/unidade (lancamentos_financeiros
@@ -395,7 +389,11 @@ function FormFields({ form, setForm, original }: {
             </span>
           )}
         </p>
-      ) : form.quantidade && form.valor_unitario ? (
+      ) : form.valor_unitario ? (
+        /* A condição NÃO exige `form.quantidade`: com o campo em branco a
+           prévia sumia justo no caso que grava errado. Prévia que se esconde no
+           caso ruim é pior que prévia errada — achado [alto] do Apolo, 3ª
+           rodada (28/08/2026). */
         <p className="text-sm text-muted-foreground text-right">
           {/* MESMA conta do insert — ver `itemNovoDoFormulario`. */}
           Total: <span className="font-semibold text-foreground">{fmtBRL(previaDoTotalNovo(form))}</span>
