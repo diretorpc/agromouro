@@ -1,5 +1,6 @@
 'use client'
 
+import { patchDoItemEditado, previaDoTotal, previaDoTotalNovo, itemNovoDoFormulario, dataEhEditavel, type ItemOriginal } from './salvar-item'
 import { Fragment, useEffect, useState } from 'react'
 
 function setUrlParam(key: string, value: string, dflt = 'todos') {
@@ -32,7 +33,7 @@ import { supabase } from '@/lib/supabase'
 import { useFazenda } from '@/context/fazenda-context'
 import { CATEGORIAS_FINANCEIRAS, normalizarCategoria, categoriaLabel } from '@/lib/centro-custo'
 import { useColumnWidths } from '@/lib/use-column-widths'
-import { mesCorrente } from '@/lib/mes'
+import { mesCorrente, hojeLocal } from '@/lib/mes'
 import { ColumnResizeHandle } from '@/components/ui/column-resize-handle'
 
 type ItemFinanceiro = {
@@ -72,9 +73,13 @@ type FormData = {
   data: string
 }
 
+// `data: ''` DE PROPÓSITO: com uma data congelada aqui, `useState(FORM_VAZIO)`
+// e o próximo `setForm(FORM_VAZIO)` reintroduziriam o bug com cara de correto.
+// Quem abre o formulário carimba a data do dia — ver os `{ ...FORM_VAZIO, data:
+// hojeLocal() }`. Achado [baixo] do Apolo, 3ª rodada.
 const FORM_VAZIO: FormData = {
   descricao: '', quantidade: '1', unidade: 'UN',
-  valor_unitario: '', centro_custo: 'outro', data: new Date().toISOString().slice(0, 10),
+  valor_unitario: '', centro_custo: 'outro', data: '',
 }
 
 // Edição de lançamento de conta paga: sem quantidade/unidade (lancamentos_financeiros
@@ -151,11 +156,25 @@ const CENTRO_CUSTO_COLOR: Record<string, string> = {
   outros:             '#94A3B8',  // slate suave
 }
 
-function fmtBRL(value: number) {
+// `null | undefined` no tipo NÃO é paranoia: `itens_nfe.quantidade`,
+// `.valor_unitario` e `.valor_total` são NULLABLE no schema, e o importador de
+// documentos de Controle grava nulo DE PROPÓSITO (`documentoPdf.ts`:
+// "valorUnitario negativo/zero, mantido null"; extrato de contas a receber
+// frequentemente não traz quantidade nenhuma). `value.toLocaleString` num nulo
+// lança, e como `web/app` não tem NENHUM error.tsx, a exceção no render mata a
+// ROTA INTEIRA — "Application error: a client-side exception has occurred".
+//
+// Achado [alto] do Apolo (28/08/2026). Medido no banco no mesmo dia: 0 linhas
+// nulas hoje, então é bomba armada e não incêndio. Medir de novo:
+//   select count(*) from itens_nfe
+//   where quantidade is null or valor_unitario is null or valor_total is null;
+function fmtBRL(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—'
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
-function fmtBRLKpi(value: number) {
+function fmtBRLKpi(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—'
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
 }
 
@@ -274,7 +293,23 @@ function compararItensPorColuna(a: ItemFinanceiro, b: ItemFinanceiro, coluna: So
   return direcao === 'asc' ? cmp : -cmp
 }
 
-function FormFields({ form, setForm }: { form: FormData; setForm: React.Dispatch<React.SetStateAction<FormData>> }) {
+// `original` só existe na EDIÇÃO. Com ele, o rodapé para de mostrar o produto
+// `qtd × unit` (que não é o total gravado quando os dois não batem) e passa a
+// mostrar o total que VAI SER GRAVADO — e, quando ele muda, o de antes junto.
+// Medido em 28/08/2026: 31 das 368 linhas de `itens_nfe` têm
+// `quantidade × valor_unitario ≠ valor_total`, e o diálogo nunca mostrava o
+// total atual, então um valor prestes a cair de R$ 119 mil para zero não
+// aparecia em lugar nenhum.
+function FormFields({ form, setForm, original }: {
+  form: FormData
+  setForm: React.Dispatch<React.SetStateAction<FormData>>
+  original?: ItemOriginal
+}) {
+  const previa = original ? previaDoTotal(original, form) : null
+  // Na ADIÇÃO (`original` ausente) a data sempre vale. Na EDIÇÃO, só vale em
+  // item sem nota fiscal — ver `dataEhEditavel`. Mostrar um campo que não faz
+  // nada é pior que não mostrar campo nenhum.
+  const mostrarData = !original || dataEhEditavel(original)
   return (
     <div className="space-y-3">
       <div className="space-y-1.5">
@@ -313,14 +348,24 @@ function FormFields({ form, setForm }: { form: FormData; setForm: React.Dispatch
             onChange={e => setForm(f => ({ ...f, valor_unitario: e.target.value }))}
           />
         </div>
-        <div className="space-y-1.5">
-          <Label>Data</Label>
-          <Input
-            type="date"
-            value={form.data}
-            onChange={e => setForm(f => ({ ...f, data: e.target.value }))}
-          />
-        </div>
+        {mostrarData ? (
+          <div className="space-y-1.5">
+            <Label>Data</Label>
+            <Input
+              type="date"
+              value={form.data}
+              onChange={e => setForm(f => ({ ...f, data: e.target.value }))}
+            />
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <Label className="text-muted-foreground">Data</Label>
+            <p className="text-sm text-muted-foreground pt-2">
+              Vem da nota fiscal e não muda por aqui.
+              {' '}<span className="block">Hoje o sistema não tem tela para corrigir a data de uma nota.</span>
+            </p>
+          </div>
+        )}
       </div>
       <div className="space-y-1.5">
         <Label>Centro de Custo</Label>
@@ -331,13 +376,29 @@ function FormFields({ form, setForm }: { form: FormData; setForm: React.Dispatch
           </SelectContent>
         </Select>
       </div>
-      {form.quantidade && form.valor_unitario && (
-        <p className="text-sm text-muted-foreground text-right">
-          Total: <span className="font-semibold text-foreground">
-            {fmtBRL((parseFloat(form.quantidade) || 0) * (parseFloat(form.valor_unitario) || 0))}
-          </span>
+      {previa ? (
+        <p className={`text-sm text-right ${previa.vaiMudar ? 'text-amber-700' : 'text-muted-foreground'}`}>
+          {previa.vaiMudar && (
+            <>De <span className="line-through">{fmtBRL(previa.totalAtual)}</span> para{' '}</>
+          )}
+          {!previa.vaiMudar && 'Total: '}
+          <span className="font-semibold text-foreground">{fmtBRL(previa.totalNovo)}</span>
+          {previa.vaiMudar && (
+            <span className="block text-xs">
+              Você mexeu na quantidade ou no valor unitário, então o total é recalculado.
+            </span>
+          )}
         </p>
-      )}
+      ) : form.valor_unitario ? (
+        /* A condição NÃO exige `form.quantidade`: com o campo em branco a
+           prévia sumia justo no caso que grava errado. Prévia que se esconde no
+           caso ruim é pior que prévia errada — achado [alto] do Apolo, 3ª
+           rodada (28/08/2026). */
+        <p className="text-sm text-muted-foreground text-right">
+          {/* MESMA conta do insert — ver `itemNovoDoFormulario`. */}
+          Total: <span className="font-semibold text-foreground">{fmtBRL(previaDoTotalNovo(form))}</span>
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -641,8 +702,10 @@ export default function FinanceiroPage() {
 
     setSalvando(true)
     setAddErro(null)
-    const qtd = parseFloat(form.quantidade) || 1
-    const vUnit = parseFloat(form.valor_unitario) || 0
+    // Mesma função pura que a prévia usa — antes eram duas contas diferentes na
+    // mesma tela: a prévia com `|| 0` e o insert com `|| 1`. Achado [médio] do
+    // Apolo, 2ª rodada (28/08/2026).
+    const itemNovo = itemNovoDoFormulario(form)
 
     try {
       let insumoId: string | null = null
@@ -657,7 +720,7 @@ export default function FinanceiroPage() {
       } else {
         const { data: novo, error: errInsumo } = await supabase
           .from('insumos')
-          .insert({ nome: form.descricao.trim(), tipo: form.centro_custo, unidade: form.unidade, fazenda_id: fazendaAtiva.id })
+          .insert({ nome: itemNovo.descricao, tipo: form.centro_custo, unidade: itemNovo.unidade, fazenda_id: fazendaAtiva.id })
           .select('id')
           .single()
         if (errInsumo) throw errInsumo
@@ -666,20 +729,14 @@ export default function FinanceiroPage() {
 
       const { error: errItem } = await supabase.from('itens_nfe').insert({
         nota_fiscal_id: null,
-        descricao: form.descricao.trim(),
-        quantidade: qtd,
-        unidade: form.unidade,
-        valor_unitario: vUnit,
-        valor_total: qtd * vUnit,
+        ...itemNovo,
         insumo_id: insumoId,
-        data_manual: form.data,
         fazenda_id: fazendaAtiva.id,
-        centro_custo: form.centro_custo,
       })
       if (errItem) throw errItem
 
       setAddDialog(false)
-      setForm(FORM_VAZIO)
+      setForm({ ...FORM_VAZIO, data: hojeLocal() })
       load()
     } catch (err) {
       console.error('[Financeiro] Erro ao adicionar lançamento:', err)
@@ -697,7 +754,7 @@ export default function FinanceiroPage() {
       unidade: item.unidade,
       valor_unitario: String(item.valor_unitario),
       centro_custo: item.centro_custo,
-      data: item.data_emissao ? item.data_emissao.slice(0, 10) : new Date().toISOString().slice(0, 10),
+      data: item.data_emissao ? item.data_emissao.slice(0, 10) : hojeLocal(),
     })
     setEditErro(null)
     setEditItem(item)
@@ -706,19 +763,19 @@ export default function FinanceiroPage() {
   async function handleEdit() {
     if (!editItem || editItem.source_table !== 'itens_nfe') return
     setSalvando(true)
-    const qtd = parseFloat(form.quantidade) || 1
-    const vUnit = parseFloat(form.valor_unitario) || 0
 
     // Centro de custo é gravado por lançamento na própria itens_nfe (independente
     // do insumo/estoque) — itens não-estocáveis (peça, frete) não têm insumo_id.
-    const { data: updated, error } = await supabase.from('itens_nfe').update({
-      descricao: form.descricao.trim(),
-      quantidade: qtd,
-      unidade: form.unidade,
-      valor_unitario: vUnit,
-      valor_total: qtd * vUnit,
-      centro_custo: form.centro_custo,
-    }).eq('id', editItem.id).select('id')
+    //
+    // O patch sai INTEIRO de `patchDoItemEditado` (função pura, testada): esta
+    // linha gravava `valor_total: quantidade × valor_unitario`, recalculando o
+    // total em vez de preservar o que veio da nota. Como o diálogo existe
+    // principalmente para trocar o centro de custo, salvar essa troca era o
+    // bastante para o gasto mudar sozinho — R$ 413.495,52 expostos em 31 linhas,
+    // medidos no banco em 28/08/2026.
+    const { data: updated, error } = await supabase.from('itens_nfe')
+      .update(patchDoItemEditado(editItem, form))
+      .eq('id', editItem.id).select('id')
 
     setSalvando(false)
 
@@ -734,7 +791,7 @@ export default function FinanceiroPage() {
     }
 
     setEditItem(null)
-    setForm(FORM_VAZIO)
+    setForm({ ...FORM_VAZIO, data: hojeLocal() })
     load()
   }
 
@@ -920,7 +977,7 @@ export default function FinanceiroPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Financeiro</h1>
           <p className="text-sm text-muted-foreground mt-1 font-medium">Despesas e lançamentos da fazenda</p>
         </div>
-        <Button size="sm" className="shrink-0" onClick={() => { setForm(FORM_VAZIO); setAddErro(null); setAddDialog(true) }}>
+        <Button size="sm" className="shrink-0" onClick={() => { setForm({ ...FORM_VAZIO, data: hojeLocal() }); setAddErro(null); setAddDialog(true) }}>
           <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
           Adicionar
         </Button>
@@ -1586,7 +1643,9 @@ export default function FinanceiroPage() {
       <Dialog open={!!editItem} onOpenChange={open => { if (!open) { setEditItem(null); setEditErro(null) } }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Editar Lançamento</DialogTitle></DialogHeader>
-          <FormFields form={form} setForm={setForm} />
+          {/* `original={editItem}` é o que faz o rodapé mostrar o total GRAVADO
+              em vez do produto `qtd × unit` — e avisar quando ele vai mudar. */}
+          <FormFields form={form} setForm={setForm} original={editItem ?? undefined} />
           {editErro && (
             <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
               {editErro}
