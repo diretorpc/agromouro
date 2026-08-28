@@ -22,7 +22,10 @@
 
 ---
 
-## 🔧 Financeiro recalculava `valor_total` e apagava gasto — 28/08/2026 — **pronto, aguardando merge**
+## 🔧 Financeiro recalculava `valor_total` e apagava gasto — 28/08/2026 — **PR #75 aberto**
+
+> https://github.com/diretorpc/agromouro/pull/75 — 3 rodadas do Apolo. Só `web/`,
+> então não há ordem de deploy a respeitar.
 
 Ramo `fix/financeiro-recalculo-apaga-gasto`. Saiu do chip que o Apolo abriu revisando a
 NFS-e: **não é regressão daquele ramo**, é irmão do defeito que ele consertou.
