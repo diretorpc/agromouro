@@ -1,5 +1,6 @@
 'use client'
 
+import { patchDoItemEditado, previaDoTotal, type ItemOriginal } from './salvar-item'
 import { Fragment, useEffect, useState } from 'react'
 
 function setUrlParam(key: string, value: string, dflt = 'todos') {
@@ -274,7 +275,19 @@ function compararItensPorColuna(a: ItemFinanceiro, b: ItemFinanceiro, coluna: So
   return direcao === 'asc' ? cmp : -cmp
 }
 
-function FormFields({ form, setForm }: { form: FormData; setForm: React.Dispatch<React.SetStateAction<FormData>> }) {
+// `original` só existe na EDIÇÃO. Com ele, o rodapé para de mostrar o produto
+// `qtd × unit` (que não é o total gravado quando os dois não batem) e passa a
+// mostrar o total que VAI SER GRAVADO — e, quando ele muda, o de antes junto.
+// Medido em 28/08/2026: 31 das 368 linhas de `itens_nfe` têm
+// `quantidade × valor_unitario ≠ valor_total`, e o diálogo nunca mostrava o
+// total atual, então um valor prestes a cair de R$ 119 mil para zero não
+// aparecia em lugar nenhum.
+function FormFields({ form, setForm, original }: {
+  form: FormData
+  setForm: React.Dispatch<React.SetStateAction<FormData>>
+  original?: ItemOriginal
+}) {
+  const previa = original ? previaDoTotal(original, form) : null
   return (
     <div className="space-y-3">
       <div className="space-y-1.5">
@@ -331,13 +344,26 @@ function FormFields({ form, setForm }: { form: FormData; setForm: React.Dispatch
           </SelectContent>
         </Select>
       </div>
-      {form.quantidade && form.valor_unitario && (
+      {previa ? (
+        <p className={`text-sm text-right ${previa.vaiMudar ? 'text-amber-700' : 'text-muted-foreground'}`}>
+          {previa.vaiMudar && (
+            <>De <span className="line-through">{fmtBRL(previa.totalAtual)}</span> para{' '}</>
+          )}
+          {!previa.vaiMudar && 'Total: '}
+          <span className="font-semibold text-foreground">{fmtBRL(previa.totalNovo)}</span>
+          {previa.vaiMudar && (
+            <span className="block text-xs">
+              Você mexeu na quantidade ou no valor unitário, então o total é recalculado.
+            </span>
+          )}
+        </p>
+      ) : form.quantidade && form.valor_unitario ? (
         <p className="text-sm text-muted-foreground text-right">
           Total: <span className="font-semibold text-foreground">
             {fmtBRL((parseFloat(form.quantidade) || 0) * (parseFloat(form.valor_unitario) || 0))}
           </span>
         </p>
-      )}
+      ) : null}
     </div>
   )
 }
@@ -706,19 +732,19 @@ export default function FinanceiroPage() {
   async function handleEdit() {
     if (!editItem || editItem.source_table !== 'itens_nfe') return
     setSalvando(true)
-    const qtd = parseFloat(form.quantidade) || 1
-    const vUnit = parseFloat(form.valor_unitario) || 0
 
     // Centro de custo é gravado por lançamento na própria itens_nfe (independente
     // do insumo/estoque) — itens não-estocáveis (peça, frete) não têm insumo_id.
-    const { data: updated, error } = await supabase.from('itens_nfe').update({
-      descricao: form.descricao.trim(),
-      quantidade: qtd,
-      unidade: form.unidade,
-      valor_unitario: vUnit,
-      valor_total: qtd * vUnit,
-      centro_custo: form.centro_custo,
-    }).eq('id', editItem.id).select('id')
+    //
+    // O patch sai INTEIRO de `patchDoItemEditado` (função pura, testada): esta
+    // linha gravava `valor_total: quantidade × valor_unitario`, recalculando o
+    // total em vez de preservar o que veio da nota. Como o diálogo existe
+    // principalmente para trocar o centro de custo, salvar essa troca era o
+    // bastante para o gasto mudar sozinho — R$ 413.495,52 expostos em 31 linhas,
+    // medidos no banco em 28/08/2026.
+    const { data: updated, error } = await supabase.from('itens_nfe')
+      .update(patchDoItemEditado(editItem, form))
+      .eq('id', editItem.id).select('id')
 
     setSalvando(false)
 
@@ -1586,7 +1612,9 @@ export default function FinanceiroPage() {
       <Dialog open={!!editItem} onOpenChange={open => { if (!open) { setEditItem(null); setEditErro(null) } }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Editar Lançamento</DialogTitle></DialogHeader>
-          <FormFields form={form} setForm={setForm} />
+          {/* `original={editItem}` é o que faz o rodapé mostrar o total GRAVADO
+              em vez do produto `qtd × unit` — e avisar quando ele vai mudar. */}
+          <FormFields form={form} setForm={setForm} original={editItem ?? undefined} />
           {editErro && (
             <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
               {editErro}
