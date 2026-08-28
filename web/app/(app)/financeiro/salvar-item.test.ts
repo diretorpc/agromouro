@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { patchDoItemEditado, previaDoTotal, dataEhEditavel, type ItemOriginal, type FormularioItem } from './salvar-item'
+import { patchDoItemEditado, previaDoTotal, dataEhEditavel, itemNovoDoFormulario, previaDoTotalNovo, type ItemOriginal, type FormularioItem } from './salvar-item'
 
 // Os quatro casos abaixo NÃO são inventados: saíram de uma varredura no banco de
 // produção em 28/08/2026, quando 31 das 368 linhas de `itens_nfe` violavam
@@ -214,5 +214,67 @@ describe('dataEhEditavel — o campo Data mentia em item de nota fiscal', () => 
 describe('unidade entra sem espaço sobrando', () => {
   it('" KG " vira "KG"', () => {
     expect(patchDoItemEditado(NORMAL, formDe(NORMAL, { unidade: ' KG ' })).unidade).toBe('KG')
+  })
+})
+
+describe('itemNovoDoFormulario — a prévia e o insert contam a MESMA história', () => {
+  // Achado [médio] do Apolo, 2ª rodada (28/08/2026), executado: a prévia usava
+  // `|| 0` e o insert usava `|| 1`. Com quantidade "0" e unitário "440", a tela
+  // mostrava R$ 0,00 e o banco gravava R$ 440,00 — no mesmo clique. E
+  // quantidade 0 é exatamente o caso das linhas de cana.
+  const vazio: FormularioItem = {
+    descricao: '  ADUBO  ', quantidade: '', unidade: ' KG ',
+    valor_unitario: '', centro_custo: 'fertilizante_n', data: '2026-08-28',
+  }
+
+  it('o caso medido: quantidade "0" com unitário "440" grava ZERO, como a prévia diz', () => {
+    const f = { ...vazio, quantidade: '0', valor_unitario: '440' }
+    expect(itemNovoDoFormulario(f).quantidade).toBe(0)
+    expect(itemNovoDoFormulario(f).valor_total).toBe(0)
+    expect(previaDoTotalNovo(f)).toBe(0)
+  })
+
+  it('prévia e insert nunca divergem — a conta é a mesma função', () => {
+    for (const [q, vu] of [['0', '440'], ['', '440'], ['2', ''], ['3', '10'], ['abc', '10']]) {
+      const f = { ...vazio, quantidade: q, valor_unitario: vu }
+      expect(previaDoTotalNovo(f)).toBe(itemNovoDoFormulario(f).valor_total)
+    }
+  })
+
+  it('campo ilegível vira 0, não 1 — item novo não tem original para preservar', () => {
+    expect(itemNovoDoFormulario({ ...vazio, quantidade: 'abc' }).quantidade).toBe(0)
+  })
+
+  it('descrição e unidade entram sem espaço sobrando', () => {
+    const i = itemNovoDoFormulario(vazio)
+    expect(i.descricao).toBe('ADUBO')
+    expect(i.unidade).toBe('KG')
+  })
+
+  it('a data escolhida vai para data_manual', () => {
+    expect(itemNovoDoFormulario(vazio).data_manual).toBe('2026-08-28')
+  })
+})
+
+describe('null na conta original nunca dispara recálculo', () => {
+  // Achado [médio] do Apolo, 2ª rodada: `null * 480` dá 0 e `mudou(481, null)`
+  // dá true, então mexer na quantidade de uma linha de unitário nulo zerava
+  // R$ 100.000. As três colunas são NULLABLE e `documentoPdf.ts` grava
+  // `valorUnitario: null` DE PROPÓSITO quando o total já vem no documento.
+  const semUnitario = { quantidade: 60, valor_unitario: null as unknown as number, valor_total: 100000, nota_fiscal_id: null }
+  const semQuantidade = { quantidade: null as unknown as number, valor_unitario: 480, valor_total: 100000, nota_fiscal_id: null }
+
+  it('unitário nulo: mexer na quantidade NÃO zera o total', () => {
+    const p = patchDoItemEditado(semUnitario, formDe(semUnitario, { quantidade: '61' }))
+    expect(p.valor_total).toBe(100000)
+  })
+
+  it('quantidade nula: mexer no unitário NÃO zera o total', () => {
+    const p = patchDoItemEditado(semQuantidade, formDe(semQuantidade, { valor_unitario: '500' }))
+    expect(p.valor_total).toBe(100000)
+  })
+
+  it('e a prévia não promete uma mudança que não vai acontecer', () => {
+    expect(previaDoTotal(semUnitario, formDe(semUnitario, { quantidade: '61' })).vaiMudar).toBe(false)
   })
 })
