@@ -1,6 +1,6 @@
 'use client'
 
-import { patchDoItemEditado, previaDoTotal, dataEhEditavel, type ItemOriginal } from './salvar-item'
+import { patchDoItemEditado, previaDoTotal, previaDoTotalNovo, itemNovoDoFormulario, dataEhEditavel, type ItemOriginal } from './salvar-item'
 import { Fragment, useEffect, useState } from 'react'
 
 function setUrlParam(key: string, value: string, dflt = 'todos') {
@@ -73,9 +73,19 @@ type FormData = {
   data: string
 }
 
+// `hojeLocal()` é FUNÇÃO, não constante: `new Date().toISOString()` roda em UTC
+// e congelava no carregamento do módulo. Às 21h de Brasília já é o dia seguinte
+// em UTC, e uma aba aberta desde ontem oferecia a data de ontem. Antes isso só
+// sujava o insert; agora `data_manual` também é gravado na EDIÇÃO, então o
+// padrão chegou a um caminho novo. Achado [baixo] do Apolo, 2ª rodada.
+function hojeLocal() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 const FORM_VAZIO: FormData = {
   descricao: '', quantidade: '1', unidade: 'UN',
-  valor_unitario: '', centro_custo: 'outro', data: new Date().toISOString().slice(0, 10),
+  valor_unitario: '', centro_custo: 'outro', data: hojeLocal(),
 }
 
 // Edição de lançamento de conta paga: sem quantidade/unidade (lancamentos_financeiros
@@ -357,7 +367,8 @@ function FormFields({ form, setForm, original }: {
           <div className="space-y-1.5">
             <Label className="text-muted-foreground">Data</Label>
             <p className="text-sm text-muted-foreground pt-2">
-              Vem da nota fiscal — para mudar, corrija a nota na aba NF-e.
+              Vem da nota fiscal e não muda por aqui.
+              {' '}<span className="block">Hoje o sistema não tem tela para corrigir a data de uma nota.</span>
             </p>
           </div>
         )}
@@ -386,9 +397,8 @@ function FormFields({ form, setForm, original }: {
         </p>
       ) : form.quantidade && form.valor_unitario ? (
         <p className="text-sm text-muted-foreground text-right">
-          Total: <span className="font-semibold text-foreground">
-            {fmtBRL((parseFloat(form.quantidade) || 0) * (parseFloat(form.valor_unitario) || 0))}
-          </span>
+          {/* MESMA conta do insert — ver `itemNovoDoFormulario`. */}
+          Total: <span className="font-semibold text-foreground">{fmtBRL(previaDoTotalNovo(form))}</span>
         </p>
       ) : null}
     </div>
@@ -694,8 +704,10 @@ export default function FinanceiroPage() {
 
     setSalvando(true)
     setAddErro(null)
-    const qtd = parseFloat(form.quantidade) || 1
-    const vUnit = parseFloat(form.valor_unitario) || 0
+    // Mesma função pura que a prévia usa — antes eram duas contas diferentes na
+    // mesma tela: a prévia com `|| 0` e o insert com `|| 1`. Achado [médio] do
+    // Apolo, 2ª rodada (28/08/2026).
+    const itemNovo = itemNovoDoFormulario(form)
 
     try {
       let insumoId: string | null = null
@@ -710,7 +722,7 @@ export default function FinanceiroPage() {
       } else {
         const { data: novo, error: errInsumo } = await supabase
           .from('insumos')
-          .insert({ nome: form.descricao.trim(), tipo: form.centro_custo, unidade: form.unidade, fazenda_id: fazendaAtiva.id })
+          .insert({ nome: itemNovo.descricao, tipo: form.centro_custo, unidade: itemNovo.unidade, fazenda_id: fazendaAtiva.id })
           .select('id')
           .single()
         if (errInsumo) throw errInsumo
@@ -719,20 +731,14 @@ export default function FinanceiroPage() {
 
       const { error: errItem } = await supabase.from('itens_nfe').insert({
         nota_fiscal_id: null,
-        descricao: form.descricao.trim(),
-        quantidade: qtd,
-        unidade: form.unidade,
-        valor_unitario: vUnit,
-        valor_total: qtd * vUnit,
+        ...itemNovo,
         insumo_id: insumoId,
-        data_manual: form.data,
         fazenda_id: fazendaAtiva.id,
-        centro_custo: form.centro_custo,
       })
       if (errItem) throw errItem
 
       setAddDialog(false)
-      setForm(FORM_VAZIO)
+      setForm({ ...FORM_VAZIO, data: hojeLocal() })
       load()
     } catch (err) {
       console.error('[Financeiro] Erro ao adicionar lançamento:', err)
@@ -750,7 +756,7 @@ export default function FinanceiroPage() {
       unidade: item.unidade,
       valor_unitario: String(item.valor_unitario),
       centro_custo: item.centro_custo,
-      data: item.data_emissao ? item.data_emissao.slice(0, 10) : new Date().toISOString().slice(0, 10),
+      data: item.data_emissao ? item.data_emissao.slice(0, 10) : hojeLocal(),
     })
     setEditErro(null)
     setEditItem(item)
@@ -787,7 +793,7 @@ export default function FinanceiroPage() {
     }
 
     setEditItem(null)
-    setForm(FORM_VAZIO)
+    setForm({ ...FORM_VAZIO, data: hojeLocal() })
     load()
   }
 
@@ -973,7 +979,7 @@ export default function FinanceiroPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Financeiro</h1>
           <p className="text-sm text-muted-foreground mt-1 font-medium">Despesas e lançamentos da fazenda</p>
         </div>
-        <Button size="sm" className="shrink-0" onClick={() => { setForm(FORM_VAZIO); setAddErro(null); setAddDialog(true) }}>
+        <Button size="sm" className="shrink-0" onClick={() => { setForm({ ...FORM_VAZIO, data: hojeLocal() }); setAddErro(null); setAddDialog(true) }}>
           <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
           Adicionar
         </Button>

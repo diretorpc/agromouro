@@ -71,10 +71,51 @@ errado para `<input type="number">`, cujo `value` é sempre en-US.
    (memória `financeiro-soma-itens-nao-lancamentos`), e agora o recálculo intencional está
    documentado como o jeito certo de arrumar as linhas de cana — então a divergência tem
    um caminho novo até ela.
-3. **`salvar-talhao.ts` tem o mesmo risco que eu recusei aqui:** usa `parseNumeroBR` num
-   `<input type="number">`. Uma área de `1.234` ha seria lida como 1234. Não medi quantos
-   talhões estão nessa faixa, e não mexi (escopo).
-   Medir: `select count(*) from talhoes where area_ha::text ~ '^\d{1,3}\.\d{3}$';`
+3. ~~`salvar-talhao.ts` tem o mesmo risco~~ — **ERRADO, e o medidor que eu deixei aqui
+   era pior que o erro.** O SQL que eu escrevi (`area_ha::text ~ '^\d{1,3}\.\d{3}$'`)
+   **nunca pode dar diferente de zero**: `area_ha` é `numeric(10,2)`, então o texto sempre
+   tem 2 decimais e a regex jamais casa. Era um comando que só sabe dizer "tudo certo" —
+   e o `CLAUDE.md` manda escrever comando em vez de número justamente porque número
+   apodrece; **comando que não pode falhar mente com carimbo de medição**, que é pior.
+   O Apolo leu os 18 talhões: **0 expostos**, e a ida-e-volta é impossível por construção.
+   Sobra só o caso de alguém DIGITAR "1.234" num campo de hectares — e aí, em pt-BR,
+   `parseNumeroBR` está certo em ler 1234. Nada a consertar lá.
+
+---
+
+**2ª rodada do Apolo — nenhum [alto], e ele retirou o próprio achado:**
+
+Ele havia pedido `parseNumeroBR` [alto]; refez a medição sem olhar a minha, bateu nas
+mesmas 5 linhas, **e trouxe o argumento que fecha a discussão** — rodou Chromium headless
+com `--lang=pt-BR`: `SET[1.234,56] → value=""`. Ou seja, `type="number"` **nunca** entrega
+vírgula. Não era "risco maior que o ganho": o ganho é **zero**, medido.
+
+4. **[médio] O caminho de ADIÇÃO tinha os mesmos defeitos que a edição acabou de perder.**
+   `handleAdd` seguia com `|| 1` e `valor_total: qtd × vUnit` — e a prévia usava `|| 0`.
+   Com quantidade "0" e unitário "440", **a tela mostrava R$ 0,00 e o banco gravava
+   R$ 440,00, no mesmo clique**. Agora sai de `itemNovoDoFormulario`, a mesma função que
+   a prévia usa.
+5. **[médio] `null` em quantidade ou unitário zerava um total real na edição.**
+   `null * 480` dá 0 e `mudou(481, null)` dá true, então mexer na quantidade de uma linha
+   de unitário nulo zerava R$ 100.000. Agora, com qualquer um dos dois nulo, nunca
+   recalcula.
+6. **[médio] A mensagem nova mandava para uma porta que não existe.** Eu escrevi "corrija
+   a nota na aba NF-e" e o Apolo varreu: **não existe edição de data de nota em lugar
+   nenhum da interface**, e isso atinge 283 dos 395 itens. Instrução impossível é pior que
+   campo morto. O texto agora diz a verdade.
+7. **[médio] O teste de fio passava em 3 de 5 contornos** — inclusive o realista (um
+   `.update()` novo logo abaixo) — e **quebrava numa reformatação inofensiva**, treinando
+   o próximo a colar a string. Virou **catraca**: conta as escritas em `itens_nfe` e
+   recusa `valor_total` em qualquer uma. Conferido matando os dois contornos.
+8. **[médio] Nada prendia o `type="number"`**, que é a premissa inteira do `parseFloat`.
+   Dois testes prendem agora.
+9. **[baixo] A data padrão era UTC e congelava na importação do módulo** — às 21h de
+   Brasília já oferecia o dia seguinte. Virou função, em hora local.
+
+**Fica sem teste, e o Apolo mediu:** a edição do Financeiro grava direto no Supabase pelo
+navegador, sem passar pela rota de Controle. E mudar a data pelo Financeiro **move o item
+de mês no Controle também** (a migration 020 usa `data_manual` como eixo) — é coerente,
+mas é efeito à distância que nenhuma tela avisa.
 
 ---
 

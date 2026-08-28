@@ -111,7 +111,17 @@ export function patchDoItemEditado(original: ItemOriginal, form: FormularioItem)
   // somam tabelas diferentes). Ele só muda quando o dono mexeu, de propósito,
   // em quantidade ou unitário — aí recalcular é a intenção dele, e a tela
   // mostra o novo total antes de gravar.
-  const mexeuNaConta = mudou(quantidade, original.quantidade) || mudou(valorUnitario, original.valor_unitario)
+  //
+  // COM UM DOS DOIS NULO, nunca recalcula. `null * 480` dá 0 em JavaScript, e
+  // `mudou(481, null)` dá true — então mexer na quantidade de uma linha de
+  // unitário nulo ZERAVA um total de R$ 100.000. As três colunas são NULLABLE
+  // no schema e `documentoPdf.ts` grava `valorUnitario: null` DE PROPÓSITO
+  // quando o total já vem pronto no documento. Medido em 28/08/2026: 0 linhas
+  // nulas hoje (395 itens), então é latente — mas a primeira nota assim que
+  // entrar arma a bomba. Achado [médio] do Apolo, 2ª rodada.
+  const contaEhConhecida = Number.isFinite(original.quantidade) && Number.isFinite(original.valor_unitario)
+  const mexeuNaConta = contaEhConhecida
+    && (mudou(quantidade, original.quantidade) || mudou(valorUnitario, original.valor_unitario))
 
   return {
     descricao:      form.descricao.trim(),
@@ -141,4 +151,47 @@ export function previaDoTotal(original: ItemOriginal, form: FormularioItem): {
     totalNovo,
     vaiMudar:   mudou(totalNovo, original.valor_total),
   }
+}
+
+
+// ─── O caminho de ADIÇÃO ────────────────────────────────────────────────────
+// Item novo não tem original, então aqui recalcular É a única opção — o total
+// nasce do que o dono digitou. O que NÃO pode continuar é o `|| 1`.
+//
+// Achado [médio] do Apolo, 2ª rodada (28/08/2026), executado: com quantidade
+// "0" e unitário "440", a prévia do diálogo mostrava **R$ 0,00** (ela usa
+// `|| 0`) e o insert gravava **R$ 440,00** (ele usava `|| 1`). Duas contas
+// diferentes na mesma tela, no mesmo clique, e quantidade 0 é exatamente o caso
+// das linhas de cana. `FormFields` já era compartilhado entre adicionar e
+// editar; a regra não era.
+export type ItemNovo = {
+  descricao:      string
+  quantidade:     number
+  unidade:        string
+  valor_unitario: number
+  valor_total:    number
+  centro_custo:   string
+  data_manual:    string
+}
+
+export function itemNovoDoFormulario(form: FormularioItem): ItemNovo {
+  // Sem original para preservar, campo ilegível vira 0 — e 0 é o que a prévia
+  // mostra, então tela e banco passam a contar a mesma história.
+  const quantidade    = numeroOuOriginal(form.quantidade, 0)
+  const valorUnitario = numeroOuOriginal(form.valor_unitario, 0)
+  return {
+    descricao:      form.descricao.trim(),
+    quantidade,
+    unidade:        form.unidade.trim(),
+    valor_unitario: valorUnitario,
+    valor_total:    quantidade * valorUnitario,
+    centro_custo:   form.centro_custo,
+    data_manual:    form.data,
+  }
+}
+
+// A prévia do diálogo de ADIÇÃO sai da MESMA conta do insert — era isso que
+// estava divergindo.
+export function previaDoTotalNovo(form: FormularioItem): number {
+  return itemNovoDoFormulario(form).valor_total
 }
