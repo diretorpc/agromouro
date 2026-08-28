@@ -1,6 +1,6 @@
 'use client'
 
-import { patchDoItemEditado, previaDoTotal, type ItemOriginal } from './salvar-item'
+import { patchDoItemEditado, previaDoTotal, dataEhEditavel, type ItemOriginal } from './salvar-item'
 import { Fragment, useEffect, useState } from 'react'
 
 function setUrlParam(key: string, value: string, dflt = 'todos') {
@@ -152,11 +152,25 @@ const CENTRO_CUSTO_COLOR: Record<string, string> = {
   outros:             '#94A3B8',  // slate suave
 }
 
-function fmtBRL(value: number) {
+// `null | undefined` no tipo NÃO é paranoia: `itens_nfe.quantidade`,
+// `.valor_unitario` e `.valor_total` são NULLABLE no schema, e o importador de
+// documentos de Controle grava nulo DE PROPÓSITO (`documentoPdf.ts`:
+// "valorUnitario negativo/zero, mantido null"; extrato de contas a receber
+// frequentemente não traz quantidade nenhuma). `value.toLocaleString` num nulo
+// lança, e como `web/app` não tem NENHUM error.tsx, a exceção no render mata a
+// ROTA INTEIRA — "Application error: a client-side exception has occurred".
+//
+// Achado [alto] do Apolo (28/08/2026). Medido no banco no mesmo dia: 0 linhas
+// nulas hoje, então é bomba armada e não incêndio. Medir de novo:
+//   select count(*) from itens_nfe
+//   where quantidade is null or valor_unitario is null or valor_total is null;
+function fmtBRL(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—'
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
-function fmtBRLKpi(value: number) {
+function fmtBRLKpi(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—'
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
 }
 
@@ -288,6 +302,10 @@ function FormFields({ form, setForm, original }: {
   original?: ItemOriginal
 }) {
   const previa = original ? previaDoTotal(original, form) : null
+  // Na ADIÇÃO (`original` ausente) a data sempre vale. Na EDIÇÃO, só vale em
+  // item sem nota fiscal — ver `dataEhEditavel`. Mostrar um campo que não faz
+  // nada é pior que não mostrar campo nenhum.
+  const mostrarData = !original || dataEhEditavel(original)
   return (
     <div className="space-y-3">
       <div className="space-y-1.5">
@@ -326,14 +344,23 @@ function FormFields({ form, setForm, original }: {
             onChange={e => setForm(f => ({ ...f, valor_unitario: e.target.value }))}
           />
         </div>
-        <div className="space-y-1.5">
-          <Label>Data</Label>
-          <Input
-            type="date"
-            value={form.data}
-            onChange={e => setForm(f => ({ ...f, data: e.target.value }))}
-          />
-        </div>
+        {mostrarData ? (
+          <div className="space-y-1.5">
+            <Label>Data</Label>
+            <Input
+              type="date"
+              value={form.data}
+              onChange={e => setForm(f => ({ ...f, data: e.target.value }))}
+            />
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <Label className="text-muted-foreground">Data</Label>
+            <p className="text-sm text-muted-foreground pt-2">
+              Vem da nota fiscal — para mudar, corrija a nota na aba NF-e.
+            </p>
+          </div>
+        )}
       </div>
       <div className="space-y-1.5">
         <Label>Centro de Custo</Label>

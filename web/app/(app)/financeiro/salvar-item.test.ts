@@ -1,26 +1,27 @@
 import { describe, it, expect } from 'vitest'
-import { patchDoItemEditado, previaDoTotal, type ItemOriginal, type FormularioItem } from './salvar-item'
+import { patchDoItemEditado, previaDoTotal, dataEhEditavel, type ItemOriginal, type FormularioItem } from './salvar-item'
 
 // Os quatro casos abaixo NÃO são inventados: saíram de uma varredura no banco de
 // produção em 28/08/2026, quando 31 das 368 linhas de `itens_nfe` violavam
 // `quantidade × valor_unitario === valor_total`.
 
 // Linha normal: a conta fecha.
-const NORMAL: ItemOriginal = { quantidade: 5, valor_unitario: 880, valor_total: 4400 }
+const NORMAL: ItemOriginal = { quantidade: 5, valor_unitario: 880, valor_total: 4400, nota_fiscal_id: 'nf-1' }
 
 // CANA DE AÇÚCAR, nota fiscal real: quantidade e unitário nunca foram lidos.
 // Recalcular zerava R$ 119.938,34.
-const CANA: ItemOriginal = { quantidade: 0, valor_unitario: 0, valor_total: 119938.34 }
+const CANA: ItemOriginal = { quantidade: 0, valor_unitario: 0, valor_total: 119938.34, nota_fiscal_id: 'nf-2' }
 
 // Documento de Controle real (VERDAVIS): quantidade e unitário existem, mas não
 // batem com o total. 60 × 480 = 28.800 contra 100.000 gravados — qual dos dois
 // números é o certo é outra pergunta, e este conserto protege sem precisar
 // respondê-la.
-const CONTRATO: ItemOriginal = { quantidade: 60, valor_unitario: 480, valor_total: 100000 }
+// Documento de Controle: sem nota fiscal, então a data É editável aqui.
+const CONTRATO: ItemOriginal = { quantidade: 60, valor_unitario: 480, valor_total: 100000, nota_fiscal_id: null }
 
 // Cana com quantidade enorme: o unitário tem 4 casas e o total é preciso, então
 // o produto erra alguns reais para cima.
-const ARREDONDA: ItemOriginal = { quantidade: 711730, valor_unitario: 0.0837, valor_total: 59546.18 }
+const ARREDONDA: ItemOriginal = { quantidade: 711730, valor_unitario: 0.0837, valor_total: 59546.18, nota_fiscal_id: 'nf-3' }
 
 function formDe(o: ItemOriginal, over: Partial<FormularioItem> = {}): FormularioItem {
   return {
@@ -29,6 +30,7 @@ function formDe(o: ItemOriginal, over: Partial<FormularioItem> = {}): Formulario
     unidade:        'KG',
     valor_unitario: String(o.valor_unitario),
     centro_custo:   'outro',
+    data:           '2026-08-10',
     ...over,
   }
 }
@@ -141,5 +143,76 @@ describe('previaDoTotal — a tela precisa mostrar o que vai gravar', () => {
     expect(p.totalAtual).toBe(119938.34)
     expect(p.totalNovo).toBe(0)
     expect(p.vaiMudar).toBe(true)
+  })
+})
+
+describe('o parser é parseFloat DE PROPÓSITO — medido, não copiado', () => {
+  // O Apolo pediu `parseNumeroBR` aqui (achado [alto], 28/08/2026), pelo
+  // precedente de `salvar-talhao.ts`. Eu segui, o teste quebrou, e a medição no
+  // banco mostrou que seguir era pior: 5 linhas REAIS seriam lidas 1000× maiores,
+  // porque `parseNumeroBR` trata `NNN.NNN` como agrupamento de milhar — certo
+  // para texto digitado, errado para `<input type="number">`, cujo `value` é
+  // sempre en-US e que nasce preenchido com `String(numero)`.
+  const REAIS: Array<[string, number]> = [
+    ['117.505', 117.505],   // ESPALHANTE TRIOMAX 5L
+    ['335.999', 335.999],   // HERBICIDA DONTOR 20L
+    ['0.082',     0.082],   // CANA DE ACUCAR
+    ['303.131', 303.131],   // FILTRO DE AR
+    ['578.431', 578.431],   // KIT FILTRO COMBUSTIVEL
+  ]
+
+  it('valores reais do banco são lidos como decimais, não como milhar', () => {
+    for (const [texto, esperado] of REAIS) {
+      const p = patchDoItemEditado(NORMAL, formDe(NORMAL, { valor_unitario: texto }))
+      expect(p.valor_unitario).toBe(esperado)
+    }
+  })
+
+  it('a linha de cana NÃO vira R$ 88 milhões', () => {
+    // q = 1.084.374 e vu = 0,082. Lendo o unitário como 82, o total explodiria.
+    const cana: ItemOriginal = { quantidade: 1084374, valor_unitario: 0.082, valor_total: 88939.27, nota_fiscal_id: 'nf' }
+    const p = patchDoItemEditado(cana, formDe(cana, { centro_custo: 'insumo' }))
+    expect(p.valor_unitario).toBe(0.082)
+    expect(p.valor_total).toBe(88939.27)
+  })
+})
+
+describe('a tolerância do mudou() é regra, não enfeite', () => {
+  // Sem estes dois, alargar a tolerância para 0,01 passava despercebido — e aí
+  // trocar o unitário de 480,00 para 480,005 gravaria o unitário novo mantendo
+  // o total velho, criando a inconsistência que este arquivo combate.
+  it('diferença abaixo do epsilon NÃO recalcula', () => {
+    const p = patchDoItemEditado(CONTRATO, formDe(CONTRATO, { valor_unitario: '480.0000000001' }))
+    expect(p.valor_total).toBe(100000)
+  })
+
+  it('diferença de um milésimo JÁ recalcula', () => {
+    const p = patchDoItemEditado(CONTRATO, formDe(CONTRATO, { valor_unitario: '480.001' }))
+    expect(p.valor_total).toBeCloseTo(60 * 480.001, 6)
+  })
+})
+
+describe('dataEhEditavel — o campo Data mentia em item de nota fiscal', () => {
+  // A tela monta `notas_fiscais.data_emissao ?? data_manual`: com nota, a data
+  // da NOTA vence e `data_manual` é campo morto. O dono corrigia, via "salvo",
+  // e a lista voltava com a data velha.
+  it('item de nota fiscal: não é editável, e o patch não leva data_manual', () => {
+    expect(dataEhEditavel(NORMAL)).toBe(false)
+    expect(patchDoItemEditado(NORMAL, formDe(NORMAL, { data: '2026-01-01' })).data_manual).toBeUndefined()
+  })
+
+  it('item sem nota (Controle/avulso): é editável, e o patch leva a data', () => {
+    expect(dataEhEditavel(CONTRATO)).toBe(true)
+    expect(patchDoItemEditado(CONTRATO, formDe(CONTRATO, { data: '2026-01-01' })).data_manual).toBe('2026-01-01')
+  })
+
+  it('data vazia não grava string vazia por cima', () => {
+    expect(patchDoItemEditado(CONTRATO, formDe(CONTRATO, { data: '' })).data_manual).toBeUndefined()
+  })
+})
+
+describe('unidade entra sem espaço sobrando', () => {
+  it('" KG " vira "KG"', () => {
+    expect(patchDoItemEditado(NORMAL, formDe(NORMAL, { unidade: ' KG ' })).unidade).toBe('KG')
   })
 })

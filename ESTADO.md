@@ -22,6 +22,62 @@
 
 ---
 
+## 🔧 Financeiro recalculava `valor_total` e apagava gasto — 28/08/2026 — **pronto, aguardando merge**
+
+Ramo `fix/financeiro-recalculo-apaga-gasto`. Saiu do chip que o Apolo abriu revisando a
+NFS-e: **não é regressão daquele ramo**, é irmão do defeito que ele consertou.
+
+**O defeito:** `handleEdit` gravava `valor_total: quantidade × valor_unitario`,
+recalculando o total em vez de preservar o da nota. O diálogo existe principalmente para
+trocar o CENTRO DE CUSTO — então salvar essa troca já mudava o gasto.
+
+**Medido no banco de produção, não suposto** (395 itens no dia): 31 linhas violam
+`quantidade × valor_unitario === valor_total`, 8 delas ENCOLHEM o gasto — R$ 413.495,52.
+Quatro são CANA DE AÇÚCAR de NF-e com quantidade e unitário ZERADOS contra totais de
+R$ 9 mil a R$ 119 mil.
+
+**Medir de novo (o número apodrece, o comando não):**
+```sql
+select count(*) filter (where abs(coalesce(quantidade,0)*coalesce(valor_unitario,0)-valor_total) > 0.02) as violam,
+       sum(valor_total - coalesce(quantidade,0)*coalesce(valor_unitario,0))
+         filter (where coalesce(quantidade,0)*coalesce(valor_unitario,0) < valor_total - 0.02) as perda_se_recalcular
+from itens_nfe;
+```
+
+**O conserto:** função pura `financeiro/salvar-item.ts` (29 testes, com os casos reais
+tirados do banco). O total só recalcula quando o dono MEXEU em quantidade ou unitário,
+por comparação derivada do original. Morreu o `parseFloat(...) || 1`, que virava campo
+vazio — e o zero legítimo — em 1. O diálogo passou a mostrar o total GRAVADO e avisa
+"De R$ X para R$ Y".
+
+**Onde eu discordei do Apolo, com medição:** ele pediu `parseNumeroBR` no lugar do
+`parseFloat`, pelo precedente de `salvar-talhao.ts`. Segui, o teste quebrou, e a medição
+mostrou que seguir era pior: **5 linhas reais seriam lidas 1000× maiores** (`117.505` →
+117505; `0.082` → 82, e essa linha tem quantidade 1.084.374 — o total iria a R$ 88,9
+milhões). `parseNumeroBR` lê `NNN.NNN` como milhar, o que é certo para texto digitado e
+errado para `<input type="number">`, cujo `value` é sempre en-US.
+
+**⚠️ ABERTO — 3 perguntas para o Matheus:**
+
+1. **As 8 linhas já gravadas.** O conserto impede o estrago novo; não conserta o passado.
+   Arrumar as 4 de cana exige saber a quantidade real. As 3 de Controle (DUAL GOLD
+   `200 × 42` contra R$ 50.000) provavelmente NÃO são erro — o Apolo mostrou que
+   `documentoPdf.ts` prefere o total impresso, e no layout Syagri o total vem da tabela de
+   DUPLICATAS enquanto quantidade e unitário vêm da tabela de PRODUTOS. Dois fatos
+   diferentes do mesmo PDF.
+2. **Recálculo legítimo deixa o Dashboard mentindo.** `nfeProcessor` grava um
+   `lancamentos_financeiros` por nota; o Dashboard soma essa tabela inteira, o Financeiro
+   soma `itens_nfe`. Mexer no item não mexe no lançamento irmão. Já era assim
+   (memória `financeiro-soma-itens-nao-lancamentos`), e agora o recálculo intencional está
+   documentado como o jeito certo de arrumar as linhas de cana — então a divergência tem
+   um caminho novo até ela.
+3. **`salvar-talhao.ts` tem o mesmo risco que eu recusei aqui:** usa `parseNumeroBR` num
+   `<input type="number">`. Uma área de `1.234` ha seria lida como 1234. Não medi quantos
+   talhões estão nessa faixa, e não mexi (escopo).
+   Medir: `select count(*) from talhoes where area_ha::text ~ '^\d{1,3}\.\d{3}$';`
+
+---
+
 ## 🔧 Nota de SERVIÇO não entrava pelo importador de PDF — 27/08/2026 — **PR #74 aberto**
 
 > https://github.com/diretorpc/agromouro/pull/74 — 9 rodadas do Apolo, a última sem

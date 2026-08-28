@@ -23,6 +23,10 @@ export type ItemOriginal = {
   quantidade:     number
   valor_unitario: number
   valor_total:    number
+  // Item de nota fiscal tem a data mandada pela NOTA: a tela monta
+  // `notas_fiscais.data_emissao ?? data_manual`, então `data_manual` num item
+  // com nota é campo morto. Ver `dataEhEditavel`.
+  nota_fiscal_id: string | null
 }
 
 export type FormularioItem = {
@@ -31,6 +35,7 @@ export type FormularioItem = {
   unidade:        string
   valor_unitario: string
   centro_custo:   string
+  data:           string
 }
 
 export type PatchItem = {
@@ -40,6 +45,17 @@ export type PatchItem = {
   valor_unitario: number
   valor_total:    number
   centro_custo:   string
+  // Só aparece quando a data é editável — ver `dataEhEditavel`.
+  data_manual?:   string
+}
+
+// A data só pode ser mudada aqui em item SEM nota fiscal. Com nota, a tela lê
+// `notas_fiscais.data_emissao ?? data_manual`, então gravar `data_manual`
+// seria escrever num campo que ninguém lê — o dono corrige a data, vê "salvo",
+// e a lista volta com a data velha. Achado [médio] do Apolo (28/08/2026): o
+// campo mentia, e mentia desde antes deste conserto.
+export function dataEhEditavel(original: ItemOriginal): boolean {
+  return original.nota_fiscal_id === null
 }
 
 // Campo numérico vazio, em branco ou ilegível significa "o dono não mexeu
@@ -47,6 +63,32 @@ export type PatchItem = {
 // `parseFloat(form.quantidade) || 1`, que transformava campo vazio — e o próprio
 // zero legítimo — em **1**, calado: nas linhas de cana com `quantidade 0` isso
 // sozinho já reescrevia o dado.
+//
+// `parseFloat`, e NÃO `parseNumeroBR` — esta é a exceção à regra do repo, e ela
+// foi MEDIDA antes de ser escrita.
+//
+// O Apolo pediu `parseNumeroBR` aqui (achado [alto], 28/08/2026), pelo
+// precedente de `salvar-talhao.ts` e do bug de produção que gerou
+// `lib/numeros-br.ts`. Segui, o teste quebrou, e a medição no banco mostrou que
+// seguir era pior: **5 linhas reais de `itens_nfe` seriam lidas 1000× maiores.**
+//
+//   ESPALHANTE TRIOMAX   valor_unitario 117.505  ->  117505
+//   HERBICIDA DONTOR     valor_unitario 335.999  ->  335999
+//   CANA DE ACUCAR       valor_unitario   0.082  ->      82
+//
+// Nessa última, `quantidade` é 1.084.374: o total iria de R$ 88.939 para
+// R$ 88,9 MILHÕES num salvar.
+//
+// A causa: `parseNumeroBR` lê `NNN.NNN` como AGRUPAMENTO DE MILHAR, que é o
+// certo para texto que uma pessoa digita ou cola do Excel. Mas este campo é
+// `<input type="number">`, e por especificação o `value` dele é sempre "" ou um
+// número em formato en-US (ponto decimal) — vírgula não sai daí. Além disso o
+// campo nasce preenchido com `String(item.valor_unitario)`, que também é en-US.
+// Aqui não existe entrada pt-BR para proteger, e proteger dela quebra a real.
+//
+// ⚠️ O MESMO risco existe em `salvar-talhao.ts`, que usa `parseNumeroBR` num
+// `<input type="number">`: uma área de `1.234` ha seria lida como 1234. Não
+// mexi lá (escopo), mas está registrado no ESTADO.md.
 function numeroOuOriginal(texto: string, original: number): number {
   const n = parseFloat(texto)
   return Number.isFinite(n) ? n : original
@@ -74,10 +116,13 @@ export function patchDoItemEditado(original: ItemOriginal, form: FormularioItem)
   return {
     descricao:      form.descricao.trim(),
     quantidade,
-    unidade:        form.unidade,
+    // `.trim()` como na descrição: " KG " gravado com espaços vira sujeira de
+    // agrupamento. Achado [baixo] do Apolo (28/08/2026).
+    unidade:        form.unidade.trim(),
     valor_unitario: valorUnitario,
     valor_total:    mexeuNaConta ? quantidade * valorUnitario : original.valor_total,
     centro_custo:   form.centro_custo,
+    ...(dataEhEditavel(original) && form.data ? { data_manual: form.data } : {}),
   }
 }
 
