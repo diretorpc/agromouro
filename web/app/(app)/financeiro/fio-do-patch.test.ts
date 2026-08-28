@@ -83,7 +83,7 @@ describe('o fio entre a tela e as funções puras', () => {
     // ordenação e soma no resto do arquivo — proibir a palavra inteira seria a
     // catraca prometendo mais do que consegue, de novo.
     expect(PAGE).not.toMatch(/itemNovo\.\w+\s*=[^=]/)
-    expect(PAGE).not.toMatch(/const\s+\w*[Tt]otal\w*\s*=\s*[^=]*parseFloat\(/)
+    expect(PAGE).not.toMatch(/\bconst\s+\w*[Tt]otal\w*\s*=\s*[^=]*\bparseFloat\(/)
   })
 
   it('a PRÉVIA da adição usa a mesma função do insert', () => {
