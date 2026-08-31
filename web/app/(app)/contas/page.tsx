@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import {
-  CalendarClock, AlertTriangle, Clock, Plus, CalendarCheck, Wallet,
+  CalendarClock, AlertTriangle, Clock, Plus, CalendarCheck, Wallet, Download,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -15,6 +15,8 @@ import { Separator } from '@/components/ui/separator'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Combobox } from '@/components/ui/combobox'
 import { api } from '@/lib/api'
+import { useFazenda } from '@/context/fazenda-context'
+import { gerarXlsx, baixarBlob } from '@/lib/xlsx'
 import { CATEGORIAS_CONTAS_A_PAGAR } from '@/lib/centro-custo'
 import type { ResultadoGravarDocumento } from '@/lib/types'
 import { DialogoImportar } from '../controle/components/dialogo-importar'
@@ -23,7 +25,12 @@ import { FormularioContaAvulsa } from './formulario-conta-avulsa'
 import { DialogoVencimento } from './dialogo-vencimento'
 import { ListaContas, fmtBRL, fmtDate, type SortColuna } from './lista-contas'
 import { ENCERRADAS, PREFIXO_CONFERIR, type Conta, type ContaAPI } from './tipos'
-import { hojeISO, diasEntre } from './datas'
+import {
+  contaBateFiltro, contaBateMes, contaBateTipo, mesDaConta, FILTROS, FILTROS_TIPO,
+  type FiltroStatus, type FiltroTipo,
+} from './filtros'
+import { hojeISO, diasEntre, labelMes } from './datas'
+import { colunasExport, montarRodape, nomeArquivoExport, pareceTruncado } from './exportar'
 
 // ─── Cálculo dos três números (task-9-brief.md, verbatim — não alterar) ───────
 // Erra calada se mexido: um total que soma confirmado + estimado vira um
@@ -98,65 +105,9 @@ export function totalPagoNoMes(contas: ContaAPI[], filtroMes: string): { total: 
 
 // ─── Tipos da página ────────────────────────────────────────────────────────
 
-type FiltroStatus = 'todas' | 'sem-vencimento' | 'aguardando' | 'aberta' | 'atrasada' | 'paga' | 'dispensada'
-type FiltroTipo   = 'todos' | 'fixas' | 'nota'
-
-const FILTROS: { value: FiltroStatus; label: string }[] = [
-  { value: 'todas',          label: 'Todas' },
-  { value: 'sem-vencimento', label: 'Falta vencimento' },
-  { value: 'aguardando',     label: 'Aguardando' },
-  { value: 'aberta',         label: 'Abertas' },
-  { value: 'atrasada',       label: 'Atrasadas' },
-  { value: 'paga',           label: 'Pagas' },
-  { value: 'dispensada',     label: 'Dispensadas' },
-]
-
-// Conta fixa veio de uma regra recorrente; boleto veio de uma nota fiscal.
-// Nenhuma coluna nova no banco: a informação já existe nas duas chaves.
-const FILTROS_TIPO: { value: FiltroTipo; label: string }[] = [
-  { value: 'todos', label: 'Todas' },
-  { value: 'fixas', label: 'Contas fixas' },
-  { value: 'nota',  label: 'Boletos de nota' },
-]
-
-function contaBateTipo(c: ContaAPI, filtroTipo: FiltroTipo): boolean {
-  if (filtroTipo === 'todos') return true
-  if (filtroTipo === 'fixas') return c.nota_fiscal_id === null
-  return c.nota_fiscal_id !== null
-}
-
-// "Todas" esconde dispensada sempre, e paga com mais de 30 dias (pedido de
-// 10/08/2026): a aba deixa de ser um histórico infinito e vira "o que ainda
-// pede atenção ou foi resolvido recentemente". Quem quiser o histórico
-// completo de pagamento usa a aba "Pagas" — essa continua sem limite de data.
-function contaBateFiltro(c: ContaAPI, filtro: FiltroStatus, hoje: string): boolean {
-  if (filtro === 'todas') {
-    if (c.status === 'dispensada') return false
-    if (c.status === 'paga')       return diasEntre(c.data_pagamento ?? hoje, hoje) <= 30
-    return true
-  }
-  if (filtro === 'sem-vencimento') return !ENCERRADAS.has(c.status) && !c.vencimento
-  if (filtro === 'atrasada')       return !ENCERRADAS.has(c.status) && !!c.vencimento && diasEntre(hoje, c.vencimento) < 0
-  return c.status === filtro
-}
-
-// Contas atrasadas e sem vencimento pedem ação urgente, então sempre aparecem —
-// nunca somem por causa do filtro de mês (pedido do Matheus, 10/08/2026): esconder
-// dívida ativa atrás de um filtro de data seria perigoso.
-function contaBateMes(c: ContaAPI, filtroMes: string, hoje: string): boolean {
-  if (filtroMes === 'todos') return true
-  if (!c.vencimento) return true
-  if (!ENCERRADAS.has(c.status) && diasEntre(hoje, c.vencimento) < 0) return true
-  return c.vencimento.startsWith(filtroMes)
-}
-
-// "2026-08" → "agosto de 2026". Único lugar de verdade — estava duplicado 2x
-// no JSX (seletor de mês da lista); o card "Total de contas pagas" (novo,
-// 18/08/2026) é o 3º uso.
-function labelMes(mes: string): string {
-  const [y, mo] = mes.split('-')
-  return new Date(+y, +mo - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
-}
+// Quem entra na lista mora em `filtros.ts` desde 31/08/2026: a planilha
+// precisa DESCREVER esse recorte por escrito, e regra copiada à mão de um
+// `.tsx` (que teste nenhum importa) já divergiu do texto no dia em que nasceu.
 
 // Ordena o RESTO da lista (abaixo do grupo "sem data" fixo no topo — ver
 // contasFiltradas). Não decide sozinha quem fica em cima; isso continua sendo
@@ -197,6 +148,9 @@ export default function ContasPage() {
   const [sortDirecao, setSortDirecao] = useState<'asc' | 'desc'>('asc')
   const [visivelCount, setVisivelCount] = useState(50)
   const [salvando, setSalvando]       = useState(false)
+  const [exportando, setExportando]   = useState(false)
+  const [erroExport, setErroExport]   = useState<string | null>(null)
+  const { fazendaAtiva }              = useFazenda()
 
   function handleSort(coluna: SortColuna) {
     if (coluna === sortColuna) {
@@ -285,10 +239,14 @@ export default function ContasPage() {
   const proximaConta = proximoVencimentoDoMes(contas, hoje)
   const pagoNoMes = totalPagoNoMes(contas, filtroMes)
 
+  // `mesDaConta` e não `c.vencimento`: o filtro joga a conta encerrada sem
+  // vencimento no mês do PAGAMENTO, e um seletor montado só por vencimento
+  // deixaria esse mês de fora — a conta existiria apenas em "Todos os meses",
+  // sem nada avisando que ela está lá.
   const meses = Array.from(
     new Set([
       hoje.slice(0, 7),
-      ...contas.filter(c => c.vencimento).map(c => c.vencimento!.slice(0, 7)),
+      ...contas.map(mesDaConta).filter((m): m is string => m !== null),
     ])
   ).sort((a, b) => b.localeCompare(a))
 
@@ -317,6 +275,64 @@ export default function ContasPage() {
     })
 
   const contasExibidas = contasFiltradas.slice(0, visivelCount)
+
+  // Suspeita de lista cortada. Precisa aparecer na TELA, e não só no nome do
+  // arquivo: o nome some no primeiro "salvar como" e os KPIs acima continuariam
+  // somando dados incompletos sem dizer nada.
+  const listaTruncada = pareceTruncado(contas.length)
+
+  // ─── Exportar para Excel ─────────────────────────────────────────────────
+
+  // Exporta o que está NA TELA — os mesmos filtros de status, tipo e mês. Duas
+  // telas mostrando números diferentes do "mesmo" relatório é confusão
+  // garantida na hora de conferir gasto.
+  //
+  // `contasFiltradas`, não `contasExibidas`: a tela pagina de 50 em 50, e um
+  // arquivo com as 50 primeiras de 180 contas seria um relatório errado sem
+  // avisar que é.
+  async function handleExportar() {
+    if (contasFiltradas.length === 0) return
+    setExportando(true)
+    setErroExport(null)
+    try {
+      // Um contexto só para o rodapé e para o nome: se os dois lessem filtros
+      // diferentes, o arquivo poderia se chamar "pagas" e trazer a descrição de
+      // outro recorte dentro.
+      const ctx = {
+        filtroStatus: filtro,
+        filtroTipo,
+        filtroMes,
+        fazenda: fazendaAtiva?.codigo ?? null,
+        geradoEm: hoje,
+        parcial: listaTruncada,
+      }
+      // Uma lista de colunas só, usada pelas duas chamadas: o rodapé precisa
+      // pôr o total embaixo da coluna que o arquivo REALMENTE tem.
+      const colunas = colunasExport()
+      const blob = await gerarXlsx(
+        colunas,
+        contasFiltradas,
+        'Contas a Pagar',
+        montarRodape(contasFiltradas, ctx, colunas),
+      )
+      baixarBlob(blob, nomeArquivoExport(ctx))
+    } catch (err) {
+      // Sem este log, a falha mais provável em campo — o pedaço do jszip não
+      // baixar numa conexão ruim — vira "Tente novamente" para sempre, e
+      // tentar de novo refaz o mesmo download que falhou. Ninguém diagnostica
+      // isso por telefone.
+      console.error('[Contas] Erro ao gerar planilha:', err)
+      // "Tente novamente" é resposta certa pro jszip não baixar numa conexão
+      // ruim, e resposta ERRADA pro defeito de configuração da planilha: esse
+      // vai falhar igual na segunda, na terceira e na centésima tentativa.
+      const defeitoDeCodigo = err instanceof Error && err.message.includes('exportar.ts')
+      setErroExport(defeitoDeCodigo
+        ? 'A planilha está mal configurada e não pode ser gerada. Avise o suporte — tentar de novo não resolve.'
+        : 'Erro ao gerar a planilha. Tente novamente.')
+    } finally {
+      setExportando(false)
+    }
+  }
 
   // ─── Ações: registrar valor real ─────────────────────────────────────────
 
@@ -510,6 +526,23 @@ export default function ContasPage() {
               pergunta dele. Na aba Controle o mesmo aviso apareceria em toda
               importação normal e treinaria o dono a ignorar o âmbar. */}
           <DialogoImportar onImportar={importarContrato} titulo="Importar contrato (PDF)" mostrarAvisoDeExtrato />
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleExportar}
+            // Espera a fazenda carregar: exportar antes disso geraria um
+            // arquivo SEM o código da fazenda no nome, indistinguível do de
+            // outra propriedade na pasta de Downloads.
+            disabled={exportando || contasFiltradas.length === 0 || !fazendaAtiva}
+            title={
+              contasFiltradas.length === 0
+                ? 'Nada para exportar com os filtros atuais'
+                : `Baixar ${contasFiltradas.length} contas em Excel`
+            }
+          >
+            <Download className="h-4 w-4 mr-1.5" aria-hidden="true" />
+            {exportando ? 'Gerando…' : 'Exportar Excel'}
+          </Button>
           <Button size="sm" variant="outline" onClick={() => setNovaAvulsaOpen(true)}>
             <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
             Nova conta avulsa
@@ -520,6 +553,20 @@ export default function ContasPage() {
           </Button>
         </div>
       </div>
+
+      {listaTruncada && (
+        <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+          A lista carregou <strong>{contas.length.toLocaleString('pt-BR')}</strong> contas — um número
+          redondo, que costuma significar consulta cortada no limite.{' '}
+          <strong>Pode haver contas de fora</strong> dos totais acima e do arquivo exportado.
+        </p>
+      )}
+
+      {erroExport && (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+          {erroExport}
+        </p>
+      )}
 
       {/* ── KPIs ── */}
       <div className="space-y-4">
@@ -602,6 +649,13 @@ export default function ContasPage() {
               <p className="text-2xl font-bold text-green-600 tabular-nums">{fmtBRL(pagoNoMes.total)}</p>
               <p className="text-xs text-muted-foreground mt-1">
                 {pagoNoMes.qtd} {pagoNoMes.qtd === 1 ? 'conta paga' : 'contas pagas'} — {filtroMes === 'todos' ? 'todos os meses' : labelMes(filtroMes)}
+              </p>
+              {/* O botão "Exportar Excel" fica a dois centímetros daqui, e o
+                  total da planilha respeita TODOS os filtros da tela. Este card
+                  respeita só o de mês (decisão de 18/08/2026). Sem esta linha,
+                  os dois números discordam e ninguém sabe qual está certo. */}
+              <p className="text-xs text-muted-foreground/70 mt-1">
+                mostra sempre só as pagas, qualquer que seja o filtro de status ou tipo
               </p>
             </CardContent>
           </Card>

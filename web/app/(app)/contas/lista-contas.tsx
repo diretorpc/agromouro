@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/action-menu'
 import { SortableTableHead } from '@/components/ui/sortable-table-head'
-import { ENCERRADAS, PREFIXO_CONFERIR, type ContaAPI, type Conta } from './tipos'
+import { ENCERRADAS, PREFIXO_CONFERIR, STATUS_LABEL, type ContaAPI, type Conta } from './tipos'
 import { categoriaLabel } from '@/lib/centro-custo'
 
 // Declarado aqui (não em page.tsx) para não duplicar a mesma verdade em dois
@@ -45,13 +45,6 @@ export function fmtBRL(value: number) {
 export function fmtDate(dateStr: string) {
   const [year, month, day] = dateStr.slice(0, 10).split('-').map(Number)
   return new Date(year, month - 1, day).toLocaleDateString('pt-BR')
-}
-
-const STATUS_LABEL: Record<Conta['status'], string> = {
-  aguardando: 'Aguardando',
-  aberta:     'Aberta',
-  paga:       'Paga',
-  dispensada: 'Dispensada',
 }
 
 const STATUS_STYLE: Record<Conta['status'], string> = {

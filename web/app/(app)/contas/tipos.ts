@@ -37,6 +37,18 @@ export type ContaAPI = Conta & {
   notas_fiscais: { numero: string } | null
 }
 
+// Rótulo de cada status para o usuário final. Mora aqui, e não em
+// lista-contas.tsx, porque a exportação para Excel (exportar.ts) precisa do
+// MESMO texto: um relatório que chama de "Quitada" o que a tela chama de
+// "Paga" faz o leitor duvidar se são a mesma coisa. E `exportar.ts` é lógica
+// pura — importar de um .tsx arrastaria React e ícones pro teste unitário.
+export const STATUS_LABEL: Record<Conta['status'], string> = {
+  aguardando: 'Aguardando',
+  aberta:     'Aberta',
+  paga:       'Paga',
+  dispensada: 'Dispensada',
+}
+
 // Começo do texto que a API grava em `observacao` quando o boleto nasceu apesar de a
 // nota dizer cartão/dinheiro (PREFIXO_CONFERIR em api/src/services/contas/deNotaFiscal.ts).
 // Repetido aqui porque o front não importa do back — os dois lados PRECISAM mudar juntos
