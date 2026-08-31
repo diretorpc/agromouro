@@ -22,12 +22,15 @@
 
 ---
 
-## 🚧 Exportar Excel na aba Contas a Pagar — 31/08/2026 — **PR #76 aberto**
+## ✅ Exportar Excel na aba Contas a Pagar — 31/08/2026 — **NO AR** (PR #76)
 
-> https://github.com/diretorpc/agromouro/pull/76 — 4 rodadas do Apolo. Só `web/`,
-> então não há ordem de deploy a respeitar.
+> Mergeado em 31/08/2026 (`666ef18`), 4 rodadas do Apolo. Só `web/` — nenhuma
+> migration, nenhuma ordem de deploy. Conferido por CONTEÚDO na `main`, não pelo
+> identificador do commit: o squash troca o SHA e já enganou este projeto antes.
 
-Ramo `feat/contas-exportar-excel`, rebasado sobre a main depois de #73/#74/#75.
+Ramo `feat/contas-exportar-excel` (já apagado), rebasado sobre a main depois de
+#73/#74/#75. O `ESTADO.md` conflitou no rebase — resolvido mantendo os QUATRO
+blocos, com conferência de que zero linhas da main sumiram.
 Motivo do pedido: relatório mensal de "contas que paguei" para enviar por email,
 que o Matheus refazia à mão toda vez.
 
@@ -103,10 +106,19 @@ rota devolver `count: 'exact'`, como Cartões já faz consultando o Supabase dir
 cd web && npx tsc --noEmit && npx vitest run && npm run build
 ```
 
+### Verificado com dado real, não só com teste
+
+Botão clicado na tela em 31/08/2026, filtro Pagas + agosto, arquivo lido de volta:
+`autoFilter A1:L22`, rodapé nas linhas 23–26 (fora do filtro), `TOTAL CONFIRMADO ·
+21 contas`. O card "Total de contas pagas" da mesma tela mostrava o MESMO número —
+que era o achado mais grave da revisão, agora fechado contra dado de produção.
+
+Doze mutantes que em algum momento passaram pelos testes hoje morrem. Para
+reexecutar a ideia: trocar uma condição em `filtros.ts` e conferir que `vitest`
+fica vermelho.
+
 ### O que ficou aberto
 
-- **Não foi clicado no navegador.** O app pede login e o assistente não digita senha.
-  Falta o teste de ponta a ponta com dado real.
 - **`count: 'exact'` no `GET /contas`** — muda o contrato da rota (hoje devolve array
   puro, e o único consumidor é `contas/page.tsx`). Decisão do dono, não feita.
 - **Achado 7 da rodada 1, pré-existente e não reproduzido:** o código da fazenda no
