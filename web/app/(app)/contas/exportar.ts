@@ -20,8 +20,8 @@ import type { CelulaXlsx, ColunaXlsx } from '@/lib/xlsx'
 import { categoriaLabel } from '@/lib/centro-custo'
 import { labelMes } from './datas'
 import {
-  filtroDeMesSeAplica, podeTerAtrasadaDeOutroMes, podeTerContaSemVencimento,
-  soTrazEncerradas, type FiltroStatus, type FiltroTipo,
+  comoEntraContaSemVencimento, filtroDeMesSeAplica, podeTerAtrasadaDeOutroMes,
+  type FiltroStatus, type FiltroTipo,
 } from './filtros'
 import { STATUS_LABEL, type ContaAPI } from './tipos'
 
@@ -218,21 +218,24 @@ export function descricaoDoFiltro(ctx: ContextoNome): string {
     partes.push(`de qualquer mês — o filtro de ${labelMes(ctx.filtroMes)} não altera este recorte`)
   } else {
     partes.push(`vencimento em ${labelMes(ctx.filtroMes)}`)
-    if (podeTerContaSemVencimento(ctx.filtroStatus)) {
-      // Em recorte só de encerradas, a conta sem vencimento NÃO entra sempre:
-      // entra pelo mês do pagamento (ver `mesDaConta`). Dizer só "inclui contas
-      // sem vencimento" deixaria o leitor achar que veio de qualquer época —
-      // que era justamente o defeito, e ele foi consertado.
-      partes.push(soTrazEncerradas(ctx.filtroStatus)
-        ? 'inclui contas sem vencimento, pelo mês do pagamento'
-        : 'inclui contas sem vencimento informado')
+    // Conta sem vencimento entra de três jeitos diferentes, e o leitor do
+    // arquivo não tem como adivinhar qual. Uma frase por jeito.
+    const semVenc = comoEntraContaSemVencimento(ctx.filtroStatus)
+    if (semVenc === 'sempre') {
+      partes.push('inclui contas sem vencimento informado')
+    } else if (semVenc === 'pelo-pagamento') {
+      partes.push('inclui contas sem vencimento, pelo mês do pagamento')
+    } else if (semVenc === 'ambos') {
+      partes.push('inclui contas sem vencimento informado — as já pagas, pelo mês do pagamento')
     }
     if (podeTerAtrasadaDeOutroMes(ctx.filtroStatus)) {
       partes.push('inclui contas atrasadas de meses anteriores')
     }
   }
 
-  if (ctx.fazenda) partes.push(`fazenda ${ctx.fazenda}`)
+  // Maiúsculo: `codigo` vem minúsculo do banco, e "fazenda mg" num relatório
+  // que vai por e-mail parece descuido. É código de propriedade, não nome.
+  if (ctx.fazenda) partes.push(`fazenda ${ctx.fazenda.toUpperCase()}`)
   partes.push(`gerado em ${dataBR(ctx.geradoEm)}`)
 
   const frase = `Filtro: ${partes.join(' · ')}`

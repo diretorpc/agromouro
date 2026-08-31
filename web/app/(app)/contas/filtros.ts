@@ -91,10 +91,13 @@ export function contaBateMes(c: ContaAPI, filtroMes: string, hoje: string): bool
 
 // ─── Propriedades do recorte (o que a planilha precisa DIZER) ─────────────────
 //
-// As três respostas abaixo são lidas por `exportar.ts` para montar a frase que
+// As respostas abaixo são lidas por `exportar.ts` para montar a frase que
 // descreve o arquivo. Moram aqui, coladas nas funções que decidem de verdade, e
-// `filtros.test.ts` confere cada uma contra o comportamento REAL das funções
+// `filtros.test.ts` confere CADA UMA contra o comportamento REAL das funções
 // acima — para a frase nunca mais prometer o que o filtro não entrega.
+//
+// Predicado novo aqui exige `it.each` novo lá. A 4ª resposta nasceu sem teste e
+// já mentia no dia seguinte (achado 3 da rodada 4).
 
 /**
  * O filtro de mês tem algum efeito neste recorte?
@@ -108,9 +111,33 @@ export function filtroDeMesSeAplica(filtro: FiltroStatus): boolean {
   return filtro !== 'atrasada' && filtro !== 'sem-vencimento'
 }
 
-/** `atrasada` exige `!!c.vencimento` — conta sem data nunca entra. */
+/**
+ * POR QUE uma conta sem vencimento entrou neste recorte. Três realidades
+ * diferentes, e a planilha precisa dizer a certa:
+ *
+ * - `sempre`         — `mesDaConta` é `null`, então ela passa em QUALQUER mês;
+ * - `pelo-pagamento` — encerrada COM `data_pagamento`, entra só no mês em que
+ *                      foi paga;
+ * - `ambos`          — o recorte mistura os dois casos;
+ * - `nenhuma`        — não entra conta sem vencimento nenhuma.
+ *
+ * `dispensada` é `sempre`, e não `pelo-pagamento`: `POST /contas/:id/dispensar`
+ * grava só `{ status }`, e `data_pagamento` só é escrito pela rota de pagar —
+ * conta dispensada NUNCA tem data de pagamento. Dizer "pelo mês do pagamento"
+ * ali prometia um recorte mais estreito do que o real (achado 2 da rodada 4).
+ */
+export type EntradaSemVencimento = 'nenhuma' | 'sempre' | 'pelo-pagamento' | 'ambos'
+
+export function comoEntraContaSemVencimento(filtro: FiltroStatus): EntradaSemVencimento {
+  if (filtro === 'atrasada') return 'nenhuma'  // exige `!!c.vencimento`
+  if (filtro === 'paga')     return 'pelo-pagamento'
+  if (filtro === 'todas')    return 'ambos'    // não encerrada + paga recente
+  return 'sempre'
+}
+
+/** Derivado, para não existirem duas verdades sobre a mesma pergunta. */
 export function podeTerContaSemVencimento(filtro: FiltroStatus): boolean {
-  return filtro !== 'atrasada'
+  return comoEntraContaSemVencimento(filtro) !== 'nenhuma'
 }
 
 /**
@@ -123,11 +150,4 @@ export function podeTerAtrasadaDeOutroMes(filtro: FiltroStatus): boolean {
   return filtro !== 'paga' && filtro !== 'dispensada' && filtro !== 'sem-vencimento'
 }
 
-/**
- * Recorte que só devolve conta encerrada. A planilha usa para dizer QUE data
- * fez a conta entrar: em `paga`/`dispensada`, a conta sem vencimento entra pelo
- * mês do PAGAMENTO, não "sempre" (achado 7 da rodada 3).
- */
-export function soTrazEncerradas(filtro: FiltroStatus): boolean {
-  return filtro === 'paga' || filtro === 'dispensada'
-}
+

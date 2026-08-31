@@ -22,9 +22,12 @@
 
 ---
 
-## 🚧 Exportar Excel na aba Contas a Pagar — 31/08/2026 — **NA BRANCH, sem PR**
+## 🚧 Exportar Excel na aba Contas a Pagar — 31/08/2026 — **PR #76 aberto**
 
-Branch: `claude/pdf-import-nfe-bug-caf75d` (worktree `reverent-satoshi-2ebab4`).
+> https://github.com/diretorpc/agromouro/pull/76 — 4 rodadas do Apolo. Só `web/`,
+> então não há ordem de deploy a respeitar.
+
+Ramo `feat/contas-exportar-excel`, rebasado sobre a main depois de #73/#74/#75.
 Motivo do pedido: relatório mensal de "contas que paguei" para enviar por email,
 que o Matheus refazia à mão toda vez.
 
@@ -74,6 +77,17 @@ TOTAL em negrito. Três defeitos da 1ª versão eram a mesma coisa:
   arrasta React pro vitest" — o Apolo importou `page.tsx` no vitest e rodou em 662 ms.
   O motivo de mover os filtros é ortogonalidade, não impossibilidade técnica.
 
+### Por que uma conta sem vencimento entrou: três respostas, não uma
+
+`comoEntraContaSemVencimento()` devolve `sempre`, `pelo-pagamento`, `ambos` ou
+`nenhuma`, e a planilha escreve uma frase por caso. A primeira tentativa usava um
+predicado grosso (`soTrazEncerradas`) que agrupava `paga` com `dispensada` — e
+**dispensada nunca tem `data_pagamento`**, porque `POST /contas/:id/dispensar`
+grava só o status. A frase prometia um recorte mais estreito do que o real.
+
+A disciplina do arquivo é: **predicado novo aqui exige `it.each` novo em
+`filtros.test.ts`**. A 4ª resposta nasceu sem teste e mentia no dia seguinte.
+
 ### Truncamento: SUSPEITA, não fato
 
 `GET /contas` não tem `.limit()`, mas o `db-max-rows` do Supabase pode cortar sem
@@ -111,10 +125,14 @@ cd web && npx tsc --noEmit && npx vitest run && npm run build
   `data_pagamento` entra na planilha e não no card. `POST /contas/:id/pagar` exige
   `data_pagamento` por Zod e é o único caminho de escrita de `status='paga'` — só SQL
   manual produz isso.
+- **`labelMes` continua sendo uma cópia.** Existem 6 implementações da mesma
+  linha `toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })` em `web/`
+  (cartoes, contas, dashboard, financeiro ×2, nfe). A main já tem `web/lib/mes.ts`,
+  que é o destino natural. Dívida PRÉ-EXISTENTE — este PR só mudou uma cópia de
+  arquivo, não criou a sétima.
 - **Achado 8 da rodada 2, aceito:** o total do rodapé é estático. Quem FILTRAR dentro
   do Excel vê o total antigo embaixo de menos linhas. O sufixo "· N contas" no rótulo
   é o que denuncia.
-- Sem PR aberto.
 ## 🔧 Financeiro recalculava `valor_total` e apagava gasto — 28/08/2026 — **PR #75 aberto**
 
 > https://github.com/diretorpc/agromouro/pull/75 — 3 rodadas do Apolo. Só `web/`,

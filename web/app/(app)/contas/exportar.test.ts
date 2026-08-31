@@ -262,6 +262,9 @@ describe('descricaoDoFiltro', () => {
     const d = descricaoDoFiltro({ ...CTX, filtroTipo: 'nota' })
     expect(d).toContain('somente boletos de nota fiscal')
     expect(d).toContain('fazenda MG')
+    // `codigo` chega minúsculo do banco: 'fazenda mg' num anexo de e-mail
+    // parece descuido (visto no arquivo real de 31/08/2026).
+    expect(descricaoDoFiltro({ ...CTX, fazenda: 'mg' })).toContain('fazenda MG')
     expect(d).toContain('gerado em 31/08/2026')
   })
 
@@ -293,7 +296,23 @@ describe('descricaoDoFiltro', () => {
   it('diz por QUE data a conta sem vencimento entrou no recorte de pagas', () => {
     expect(descricaoDoFiltro({ ...CTX, filtroStatus: 'paga' }))
       .toContain('inclui contas sem vencimento, pelo mês do pagamento')
-    expect(descricaoDoFiltro(CTX)).toContain('inclui contas sem vencimento informado')
+  })
+
+  // "Dispensar" grava só o status — conta dispensada NUNCA tem data de
+  // pagamento, então ela entra em qualquer mês. A 1a tentativa de conserto
+  // agrupou dispensada com paga e passou a mentir aqui (achado 2, rodada 4).
+  it('NÃO promete mês de pagamento no filtro "dispensada"', () => {
+    const d = descricaoDoFiltro({ ...CTX, filtroStatus: 'dispensada' })
+    expect(d).toContain('inclui contas sem vencimento informado')
+    expect(d).not.toContain('pelo mês do pagamento')
+  })
+
+  // Em "Todas" (o padrão da tela) os dois casos convivem: conta em aberto sem
+  // vencimento entra sempre, conta paga sem vencimento entra pelo pagamento.
+  // A frase única prometia inclusão que não acontecia (achado 5, rodada 4).
+  it('separa os dois casos no filtro "todas"', () => {
+    expect(descricaoDoFiltro(CTX))
+      .toContain('inclui contas sem vencimento informado — as já pagas, pelo mês do pagamento')
   })
 
   it('grita quando a lista pode estar incompleta', () => {

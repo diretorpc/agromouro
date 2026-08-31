@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   contaBateFiltro, contaBateMes, contaBateTipo, mesDaConta, FILTROS,
-  filtroDeMesSeAplica, podeTerAtrasadaDeOutroMes, podeTerContaSemVencimento,
-  type FiltroStatus,
+  comoEntraContaSemVencimento, filtroDeMesSeAplica, podeTerAtrasadaDeOutroMes,
+  podeTerContaSemVencimento, type FiltroStatus,
 } from './filtros'
 import type { ContaAPI } from './tipos'
 
@@ -36,6 +36,11 @@ const SONDAS: Record<string, ContaAPI> = {
   aguardandoSemVenc:    conta({ status: 'aguardando', vencimento: null }),
   aguardandoAtrasada:   conta({ status: 'aguardando', vencimento: '2026-03-20' }),
   dispensadaSemVenc:    conta({ status: 'dispensada', vencimento: null, data_pagamento: null }),
+  // Vencimento e pagamento em MESES DIFERENTES. Era o buraco que faltava: sem
+  // ela, inverter a ordem dentro de `mesDaConta` (preferir o pagamento) passava
+  // nos 311 testes -- e e justamente a regra que `page.tsx` documenta, "conta de
+  // agosto paga em setembro continua contando como de agosto" (achado 4, rodada 4).
+  vencJulhoPagaAgosto:  conta({ status: 'paga',       vencimento: '2026-07-20', data_pagamento: '2026-08-05' }),
   abertaDeOutroMes:     conta({ status: 'aberta',     vencimento: '2026-09-10' }),
   atrasadaDeMarco:      conta({ status: 'aberta',     vencimento: '2026-03-15' }),
   semVencimento:        conta({ status: 'aberta',     vencimento: null }),
@@ -71,6 +76,16 @@ describe('contaBateFiltro', () => {
     expect(contaBateFiltro(SONDAS.abertaVencidaNoMes, 'todas', HOJE)).toBe(true)
   })
 
+  // A planilha escreve esta regra por extenso dentro do arquivo ("exceto
+  // dispensadas e pagas há mais de 30 dias"), então ela virou promessa a
+  // terceiros. Sem sonda na borda, trocar 30 por 60 passava batido.
+  it('a janela de "Todas" corta exatamente em 30 dias', () => {
+    const noLimite  = conta({ status: 'paga', vencimento: '2026-08-01', data_pagamento: '2026-08-01' })
+    const umDiaAlem = conta({ status: 'paga', vencimento: '2026-07-31', data_pagamento: '2026-07-31' })
+    expect(contaBateFiltro(noLimite, 'todas', HOJE)).toBe(true)
+    expect(contaBateFiltro(umDiaAlem, 'todas', HOJE)).toBe(false)
+  })
+
   it('"atrasada" exige vencimento no passado e conta não encerrada', () => {
     expect(contaBateFiltro(SONDAS.atrasadaDeMarco, 'atrasada', HOJE)).toBe(true)
     expect(contaBateFiltro(SONDAS.semVencimento, 'atrasada', HOJE)).toBe(false)
@@ -96,6 +111,20 @@ describe('mesDaConta', () => {
   it('cai no pagamento só para conta encerrada sem vencimento', () => {
     expect(mesDaConta(SONDAS.pagaSemVencMarco)).toBe('2026-03')
     expect(mesDaConta(SONDAS.semVencimento)).toBeNull()
+  })
+
+  // O vencimento MANDA quando existe: conta de julho paga em agosto continua
+  // sendo de julho. É a mesma regra que o card "Total de contas pagas" segue.
+  it('o vencimento ganha do pagamento quando os dois existem', () => {
+    expect(mesDaConta(SONDAS.vencJulhoPagaAgosto)).toBe('2026-07')
+  })
+
+  // A guarda `ENCERRADAS.has(...)` precisa ser exercitada, senão o "só" do
+  // título acima não passa de intenção. Estado não alcançável pela API hoje —
+  // `data_pagamento` só é escrito ao pagar —, mas a regra é essa.
+  it('ignora o pagamento de conta que não está encerrada', () => {
+    const estranha = conta({ status: 'aberta', vencimento: null, data_pagamento: '2026-03-10' })
+    expect(mesDaConta(estranha)).toBeNull()
   })
 
   it('devolve null quando não há data nenhuma', () => {
@@ -126,6 +155,14 @@ describe('contaBateMes', () => {
 
   it('esconde conta de outro mês que não está atrasada', () => {
     expect(contaBateMes(SONDAS.abertaDeOutroMes, MES, HOJE)).toBe(false)
+  })
+
+  // Fronteira: vencer HOJE não é estar atrasada. Sem esta asserção, trocar
+  // `< 0` por `<= 0` passava batido — e a conta que vence hoje passaria a
+  // aparecer em todo mês, discordando do filtro "Atrasadas", que mantém `< 0`.
+  it('conta que vence HOJE não pega a carona das atrasadas', () => {
+    expect(contaBateMes(SONDAS.abertaAVencerNoMes, '2026-09', HOJE)).toBe(false)
+    expect(contaBateFiltro(SONDAS.abertaAVencerNoMes, 'atrasada', HOJE)).toBe(false)
   })
 
   // ACHADO 1 da rodada 2 do Apolo. Sem isto, o boleto sem vencimento pago em
@@ -160,6 +197,26 @@ describe('propriedades do recorte batem com o filtro real', () => {
   // defeito que estes predicados existem para impedir.
   it.each(TODOS)('podeTerContaSemVencimento("%s") diz a verdade', filtro => {
     expect(podeTerContaSemVencimento(filtro)).toBe(passam(filtro).some(c => !c.vencimento))
+  })
+
+  // A 4a resposta, que nasceu sem teste e mentia em "dispensada". Mede POR QUE
+  // a conta sem vencimento entrou: se `mesDaConta` e null ela entra sempre; se
+  // nao e, entra pelo mes do pagamento. Varre todos os meses porque uma conta
+  // que entra "pelo pagamento" so aparece no mes dela.
+  it.each(TODOS)('comoEntraContaSemVencimento("%s") diz a verdade', filtro => {
+    const meses = ['2026-01', '2026-03', '2026-08', '2026-09', '2026-12']
+    const jeitos = new Set(
+      Object.values(SONDAS)
+        .filter(c => !c.vencimento)
+        .filter(c => contaBateFiltro(c, filtro, HOJE))
+        .filter(c => meses.some(m => contaBateMes(c, m, HOJE)))
+        .map(c => (mesDaConta(c) === null ? 'sempre' : 'pelo-pagamento')),
+    )
+    const real =
+      jeitos.size === 0 ? 'nenhuma' :
+      jeitos.size === 2 ? 'ambos' :
+      [...jeitos][0]
+    expect(comoEntraContaSemVencimento(filtro)).toBe(real)
   })
 
   it.each(TODOS)('podeTerAtrasadaDeOutroMes("%s") diz a verdade', filtro => {

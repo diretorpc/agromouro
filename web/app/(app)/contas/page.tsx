@@ -655,7 +655,7 @@ export default function ContasPage() {
                   respeita só o de mês (decisão de 18/08/2026). Sem esta linha,
                   os dois números discordam e ninguém sabe qual está certo. */}
               <p className="text-xs text-muted-foreground/70 mt-1">
-                não considera os filtros de status e tipo
+                mostra sempre só as pagas, qualquer que seja o filtro de status ou tipo
               </p>
             </CardContent>
           </Card>
