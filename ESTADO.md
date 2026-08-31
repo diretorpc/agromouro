@@ -22,6 +22,86 @@
 
 ---
 
+## 🚧 Importar SÓ o boleto de uma nota que já está no sistema — 31/08/2026 — **NA BRANCH**
+
+Ramo `feat/contas-importar-boleto`. Pedido do Matheus: a nota 4507 da MIKAMI
+entrou em julho, quando o sistema ainda não puxava boleto, e a conta a pagar
+nunca nasceu — o vencimento de 03/11 (R$ 37.644,00) ia passar em silêncio.
+Reimportar a nota duplicaria os itens.
+
+### O perigo não estava onde o pedido apontava
+
+Ele pediu "importar apenas o boleto". Fazer isso do jeito óbvio — conta SOLTA,
+sem nota — é **pior** que reimportar a nota, e de um jeito calado:
+`precisaCriarLancamento()` devolve `true` quando `nota_fiscal_id` é nulo, então
+marcar essa conta como paga cria um lançamento no Financeiro EM CIMA do gasto
+que a nota já lançou. Medido no banco: existe `lancamentos_financeiros` "NF-e
+4507 — MIKAMI", R$ 37.644,00, de 31/07/2026. Por isso a feature **grampeia** o
+boleto na nota.
+
+### Metade já existia
+
+`boletoPdf.ts` e `gravarBoletoPdf.ts` (14/08) já liam boleto e já aceitavam o id
+da nota no 4º parâmetro. Faltava PORTA: eles só eram chamados pelo robô do
+e-mail. O que foi construído é a entrada pela tela, em dois passos — ler e
+sugerir, depois gravar o que o dono confirmou. **Casamento automático foi
+recusado de propósito:** grampear na nota errada some com a despesa do
+Financeiro, e ninguém percebe.
+
+### As travas, e por que cada uma existe
+
+| Trava | O que impede |
+|---|---|
+| `lancouGasto` na nota | Amarrar em nota que não lançou gasto faz o dinheiro **SUMIR** — pior que dobrado, porque dobrado o dono enxerga. A regra já existia em `nfeProcessor.ts`; faltava aqui |
+| `contaIgualDaNota` (valor **E** vencimento) | Recusa o mesmo boleto sem proibir a 2ª parcela. A 1ª versão proibia qualquer nota com conta e empurrava o dono para "nenhuma nota" — o caminho do gasto dobrado |
+| `podeSerAdotada` | A adoção de conta solta é escrita nova em cima de linha existente. Sem isto ela tocaria conta **paga**, **dispensada**, **recorrente** ou de **contrato**. Medido: 25 das 28 contas soltas da produção são desse tipo |
+| Bloco inteiro no nº da nota | `includes` aceitava **11** números diferentes para o documento `2 -0004507-001` — um certo e dez errados, e o errado chegava pré-selecionado |
+| `sugestaoParaPreSelecionar` | Exige `mesmo valor`, segunda colocada mais fraca e `lancouGasto`. A regra morava dentro do JSX, sem teste |
+
+### Como conferir
+
+```bash
+cd api && npx tsc --noEmit && npx vitest run
+cd web && npx tsc --noEmit && npx vitest run && npm run build
+```
+
+Bateria de mutação reexecutável com 16 mutantes, um por trava — todos morrem.
+O caminho para reproduzir: trocar uma condição em `casarNota.ts`,
+`importarBoleto.ts` ou `notasCandidatas.ts` e conferir que o `vitest` fica
+vermelho.
+
+### Verificado com dado real
+
+Boleto da MIKAMI (PDF de verdade), Supabase e Anthropic de produção: leitura
+devolveu valor, vencimento e documento certos; o casamento achou a NF 4507 pelos
+três sinais; a conta foi criada pela TELA com `nota_fiscal_id` preenchido e
+`lancamento_id` nulo, e os lançamentos "MIKAMI" continuaram sendo 1. Reimportar
+o mesmo boleto agora devolve `parcela-repetida` apontando a conta que existe.
+
+### O que ficou aberto
+
+- **`count: 'exact'` no `GET /contas`** — segue sendo o conserto de verdade do
+  detector de truncamento. Não feito (muda contrato de rota).
+- **Terceira cópia da regra "duas palavras" do fornecedor.** São três
+  (`casarNota.ts`, `importarBoleto.ts`, `gravarBoletoPdf.ts`), duplicadas de
+  propósito porque decidem coisas diferentes. As duas primeiras têm teste na
+  fronteira; **`gravarBoletoPdf.ts` não tem** — dívida anterior a esta feature.
+- **`numeroNoDocumento` por bloco inteiro** perde o sinal quando o número da
+  nota vem grudado num bloco maior (nosso-número longo). Sem amostra para medir:
+  o campo `documento` não é persistido. Conferir nos primeiros boletos reais.
+- **Os R$ 21.145,60 a mais nos itens da nota 4507** — os 3 itens somam
+  R$ 58.789,60 e a nota vale R$ 37.644,00. Problema separado, não mexido aqui.
+
+### Medição que o projeto declarava não ter
+
+O teto do `db-max-rows` do Supabase, que `exportar.ts` e este arquivo diziam
+"NUNCA FOI MEDIDO": uma consulta a `lancamentos_financeiros` devolveu 594 de 594
+(`Content-Range: 0-593/594`). O teto é **≥ 594** — a hipótese "pode ser 500"
+morreu. Onde ele está de verdade continua em aberto, e o palpite de 1.000 no
+`pareceTruncado()` segue palpite.
+
+---
+
 ## ✅ Exportar Excel na aba Contas a Pagar — 31/08/2026 — **NO AR** (PR #76)
 
 > Mergeado em 31/08/2026 (`666ef18`), 4 rodadas do Apolo. Só `web/` — nenhuma

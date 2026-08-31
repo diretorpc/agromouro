@@ -284,12 +284,18 @@ export function montarRodape(
 // nenhum campo de "tem mais". A única pista disponível hoje é o total voltar
 // num número redondo suspeito.
 //
-// ISTO É SUSPEITA, NÃO FATO, e quem usa precisa tratar como tal. O teto real
-// deste projeto NUNCA FOI MEDIDO — se for 500 ou 2.000, esta função devolve
-// `false` e o arquivo se apresenta como completo (achado 3 do Apolo). O
-// conserto de verdade é a rota devolver `count: 'exact'`, como a tela de
-// Cartões já faz consultando o Supabase direto (cartoes/page.tsx:272). Até lá,
-// o mínimo honesto é: marcar o nome do arquivo, avisar na tela, e dizer
+// ISTO É SUSPEITA, NÃO FATO. Uma medição parcial existe desde 31/08/2026: uma
+// consulta a `lancamentos_financeiros` devolveu 594 de 594 linhas
+// (`Content-Range: 0-593/594`), então o teto real é **pelo menos 594** — a
+// hipótese "pode ser 500" morreu. Onde ele está de verdade continua sem
+// resposta, e 1.000 segue sendo palpite.
+//
+// Para medir você mesmo, sem depender desta linha:
+//   curl -sI -H "Range: 0-" "$SUPABASE_URL/rest/v1/<tabela>?select=id" //     -H "apikey: $SUPABASE_SERVICE_KEY" | grep -i content-range
+//
+// O conserto de verdade é a rota devolver `count: 'exact'`, como a tela de
+// Cartões já faz consultando o Supabase direto (cartoes/page.tsx). Até lá, o
+// mínimo honesto é: marcar o nome do arquivo, avisar na tela, e dizer
 // "pode estar" em vez de "está".
 const TETOS_SUSPEITOS = new Set([1000, 10000])
 
