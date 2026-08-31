@@ -22,6 +22,99 @@
 
 ---
 
+## 🚧 Exportar Excel na aba Contas a Pagar — 31/08/2026 — **NA BRANCH, sem PR**
+
+Branch: `claude/pdf-import-nfe-bug-caf75d` (worktree `reverent-satoshi-2ebab4`).
+Motivo do pedido: relatório mensal de "contas que paguei" para enviar por email,
+que o Matheus refazia à mão toda vez.
+
+Botão "Exportar Excel" no cabeçalho de `/contas`. Exporta **`contasFiltradas`, não
+`contasExibidas`** — a tela pagina de 50 em 50 e um arquivo com as 50 primeiras de
+180 seria um relatório errado sem avisar que é. **Reusou o gerador dos Cartões**
+(`web/lib/xlsx.ts`), que ganhou parâmetro opcional `rodape` e um estilo
+negrito+moeda; o rodapé fica FORA do `autoFilter`.
+
+### A lição que sobreviveu a duas rodadas de revisão
+
+**O arquivo sai da máquina.** Tudo que a TELA diz por FORA da tabela — os chips de
+filtro, o crachá âmbar de "estimado" — some no anexo de e-mail, onde só resta um
+TOTAL em negrito. Três defeitos da 1ª versão eram a mesma coisa:
+
+1. O rodapé somava **estimativa com valor confirmado** num número só, contrariando
+   regra escrita à mão em `calcularTotais`. Num filtro de "Contas fixas" o total era
+   100% palpite, porque toda ocorrência recorrente nasce estimada. Hoje há coluna
+   `Estimado` e duas linhas separadas: `TOTAL CONFIRMADO` e `TOTAL ESTIMADO`.
+2. O **nome do arquivo mentia por omissão**: `contas-mg-todas-2026-08.xlsx` também
+   traz atrasadas de outros meses e esconde dispensadas. Hoje uma linha dentro da
+   planilha (`descricaoDoFiltro`) descreve o recorte inteiro.
+3. O **boleto sem vencimento pago em março** entrava no relatório de agosto, e o
+   total discordava do card "Total de contas pagas" logo acima. `mesDaConta` agora
+   diz de que mês a conta é (vencimento, ou pagamento quando encerrada), e o filtro
+   E o seletor de meses da tela leem essa mesma função — **mudança de comportamento
+   da TELA, não só do arquivo**. O primeiro conserto usava a data do pagamento só no
+   filtro e deixou o seletor montado por vencimento: conta paga em março podia não
+   ter março na lista de meses e ficar inalcançável (achado 1 da rodada 3).
+
+### Decisões que contrariam o pedido original, medidas no código
+
+- **Não existe coluna "Valor pago".** `POST /contas/:id/pagar` sobrescreve `valor`
+  com `valor_pago` — numa conta paga os dois campos são o mesmo número.
+- **A coluna "Tipo" separa três casos** (Boleto de nota / Conta fixa / Avulsa), onde
+  a tela só tem dois.
+
+### Ortogonalidade: o que saiu de onde e por quê
+
+- `filtros.ts` **(novo)** — `contaBateFiltro`/`contaBateMes`/`contaBateTipo` saíram de
+  `page.tsx`. A planilha precisa DESCREVER o recorte por escrito, e a descrição
+  copiada à mão de um `.tsx` já nasceu errada em 2 dos 7 filtros. Agora
+  `filtros.test.ts` roda o filtro DE VERDADE e confere cada ressalva contra ele.
+- `datas.ts` ganhou `labelMes`; `tipos.ts` ganhou `STATUS_LABEL` — tela e planilha
+  escrevendo o mesmo mês e o mesmo status.
+- **Correção de uma afirmação que este arquivo trazia errada:** "importar `.tsx`
+  arrasta React pro vitest" — o Apolo importou `page.tsx` no vitest e rodou em 662 ms.
+  O motivo de mover os filtros é ortogonalidade, não impossibilidade técnica.
+
+### Truncamento: SUSPEITA, não fato
+
+`GET /contas` não tem `.limit()`, mas o `db-max-rows` do Supabase pode cortar sem
+erro. `pareceTruncado()` desconfia de total redondo (1.000 / 10.000), marca `parcial`
+no nome do arquivo, avisa em banner âmbar na tela e grita dentro da planilha.
+**O teto real deste projeto NUNCA FOI MEDIDO** — se for 500 ou 2.000, o detector
+devolve `false` e o arquivo se apresenta como completo. O conserto de verdade é a
+rota devolver `count: 'exact'`, como Cartões já faz consultando o Supabase direto.
+
+### Como conferir o que está nesta branch
+
+```bash
+cd web && npx tsc --noEmit && npx vitest run && npm run build
+```
+
+### O que ficou aberto
+
+- **Não foi clicado no navegador.** O app pede login e o assistente não digita senha.
+  Falta o teste de ponta a ponta com dado real.
+- **`count: 'exact'` no `GET /contas`** — muda o contrato da rota (hoje devolve array
+  puro, e o único consumidor é `contas/page.tsx`). Decisão do dono, não feita.
+- **Achado 7 da rodada 1, pré-existente e não reproduzido:** o código da fazenda no
+  nome do arquivo vem do `fazendaAtiva` do front (`fazenda-context.tsx`, que cai em
+  `data[0]` quando o id ativo não está na lista), enquanto as linhas vêm do
+  `fazenda_ativa_id` do JWT lido pela API. Se os dois discordarem, sai arquivo
+  rotulado `contas-mg-…` com linhas de outra fazenda. O rótulo é uma SEGUNDA fonte de
+  verdade, não a mesma — o export é a primeira feature a carimbar fazenda em arquivo
+  que sai da máquina.
+- **Card "Total de contas pagas" x planilha, nos eixos TIPO e STATUS:** o card lê
+  `contas` cru e respeita só o filtro de mês; a planilha respeita todos. Com o filtro
+  "Contas fixas" ligado, medido: card R$ 1.700 / 2 contas contra R$ 700 na planilha.
+  Foi colocada a ressalva "não considera os filtros de status e tipo" abaixo do card —
+  o conserto de verdade (o card respeitar `contaBateTipo`) não foi feito.
+- **Estado inalcançável, medido e aceito:** conta `paga` sem vencimento E sem
+  `data_pagamento` entra na planilha e não no card. `POST /contas/:id/pagar` exige
+  `data_pagamento` por Zod e é o único caminho de escrita de `status='paga'` — só SQL
+  manual produz isso.
+- **Achado 8 da rodada 2, aceito:** o total do rodapé é estático. Quem FILTRAR dentro
+  do Excel vê o total antigo embaixo de menos linhas. O sufixo "· N contas" no rótulo
+  é o que denuncia.
+- Sem PR aberto.
 ## 🔧 Financeiro recalculava `valor_total` e apagava gasto — 28/08/2026 — **PR #75 aberto**
 
 > https://github.com/diretorpc/agromouro/pull/75 — 3 rodadas do Apolo. Só `web/`,
