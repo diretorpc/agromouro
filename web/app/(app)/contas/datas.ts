@@ -15,3 +15,12 @@ export function diasEntre(aISO: string, bISO: string): number {
   const [by, bm, bd] = bISO.split('-').map(Number)
   return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86_400_000)
 }
+
+// "2026-08" -> "agosto de 2026". Estava só em page.tsx; subiu pra cá quando a
+// exportação passou a precisar do mesmo texto dentro da planilha. Mês escrito
+// de dois jeitos diferentes na tela e no arquivo faz quem confere duvidar se
+// são o mesmo recorte.
+export function labelMes(mes: string): string {
+  const [y, mo] = mes.split('-')
+  return new Date(+y, +mo - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+}
