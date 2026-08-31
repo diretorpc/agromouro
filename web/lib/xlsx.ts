@@ -12,10 +12,12 @@
 // precisar de qualquer um desses, é hora de reconsiderar a biblioteca — não
 // de esticar este arquivo.
 
+/** `null` vira célula VAZIA (não a palavra "null" nem zero). */
+export type CelulaXlsx = string | number | Date | null
+
 export type ColunaXlsx<T> = {
   header: string
-  /** `null` vira célula VAZIA (não a palavra "null" nem zero). */
-  valor: (linha: T) => string | number | Date | null
+  valor: (linha: T) => CelulaXlsx
   /** Largura em caracteres. Sem isto o Excel abre tudo no padrão estreito. */
   largura?: number
 }
@@ -112,6 +114,10 @@ const ESTILO_PADRAO = 0
 const ESTILO_CABECALHO = 1
 const ESTILO_DATA = 2
 const ESTILO_VALOR = 3
+// Negrito + moeda, só para o total do rodapé. Sem um xf próprio seria preciso
+// escolher entre negrito (perdendo as duas casas decimais) e moeda (perdendo o
+// destaque) — e um total que não parece total passa batido em relatório.
+const ESTILO_VALOR_NEGRITO = 4
 
 const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
@@ -120,7 +126,7 @@ const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
 <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>
+<cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="164" fontId="1" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/></cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`
 // Os dois `fill` acima não são decoração: o Excel exige que os índices 0
@@ -148,7 +154,7 @@ const MAX_LARGURA_COLUNA = 255
 
 // ─── Geração ──────────────────────────────────────────────────────────────────
 
-function celula(ref: string, valor: string | number | Date | null): string {
+function celula(ref: string, valor: CelulaXlsx, negrito = false): string {
   if (valor === null || valor === undefined) return ''
 
   if (valor instanceof Date) {
@@ -160,7 +166,7 @@ function celula(ref: string, valor: string | number | Date | null): string {
     // NaN/Infinity não têm representação em XML de planilha — vira vazio em
     // vez de corromper o arquivo.
     if (!Number.isFinite(valor)) return ''
-    return `<c r="${ref}" s="${ESTILO_VALOR}"><v>${valor}</v></c>`
+    return `<c r="${ref}" s="${negrito ? ESTILO_VALOR_NEGRITO : ESTILO_VALOR}"><v>${valor}</v></c>`
   }
 
   // `inlineStr` em vez de `sharedStrings`: dispensa um XML inteiro e a tabela
@@ -180,11 +186,13 @@ function celula(ref: string, valor: string | number | Date | null): string {
   // Excel — `ÉCÉL.VAZIA()` responde FALSO e `CONT.VALORES` conta a linha.
   if (texto === '') return ''
 
-  return `<c r="${ref}" t="inlineStr" s="${ESTILO_PADRAO}"><is><t xml:space="preserve">${texto}</t></is></c>`
+  return `<c r="${ref}" t="inlineStr" s="${negrito ? ESTILO_CABECALHO : ESTILO_PADRAO}"><is><t xml:space="preserve">${texto}</t></is></c>`
 }
 
-function montarPlanilha<T>(colunas: ColunaXlsx<T>[], linhas: T[]): string {
+function montarPlanilha<T>(colunas: ColunaXlsx<T>[], linhas: T[], rodape: CelulaXlsx[][]): string {
   const ultimaColuna = letraColuna(colunas.length - 1)
+  // Última linha de DADOS — o rodapé fica de fora de propósito (ver o comentário
+  // do autoFilter lá embaixo).
   const ultimaLinha = linhas.length + 1
 
   const cols = colunas
@@ -209,6 +217,21 @@ function montarPlanilha<T>(colunas: ColunaXlsx<T>[], linhas: T[]): string {
     })
     .join('')
 
+  // O rodapé (total) entra DEPOIS dos dados e nunca vira linha de dado: quem
+  // chama passa as células já prontas, incluindo a linha em branco que separa.
+  // Linha mais curta que o número de colunas é normal — o total ocupa duas ou
+  // três células, não a largura toda.
+  const rodapeXml = rodape
+    .map((celulasDaLinha, iLinha) => {
+      const r = linhas.length + 2 + iLinha
+      const celulas = celulasDaLinha
+        .slice(0, colunas.length)
+        .map((v, iCol) => celula(`${letraColuna(iCol)}${r}`, v, true))
+        .join('')
+      return `<row r="${r}">${celulas}</row>`
+    })
+    .join('')
+
   // A ordem das tags abaixo NÃO é livre — o schema do OOXML exige
   // sheetViews → cols → sheetData → autoFilter, nesta sequência. Fora de
   // ordem, o Excel recusa o arquivo.
@@ -217,7 +240,7 @@ function montarPlanilha<T>(colunas: ColunaXlsx<T>[], linhas: T[]): string {
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
 <cols>${cols}</cols>
-<sheetData>${cabecalho}${corpo}</sheetData>
+<sheetData>${cabecalho}${corpo}${rodapeXml}</sheetData>
 <autoFilter ref="A1:${ultimaColuna}${ultimaLinha}"/>
 </worksheet>`
 }
@@ -255,6 +278,13 @@ export async function gerarXlsx<T>(
   colunas: ColunaXlsx<T>[],
   linhas: T[],
   nomeAba = 'Planilha',
+  /**
+   * Linhas soltas depois dos dados (total, assinatura, aviso). Ficam FORA do
+   * autoFilter: dentro dele, ordenar a planilha jogaria o total pro meio dos
+   * lançamentos e o número deixaria de bater com a coluna que ele soma.
+   * Não são calculadas aqui — quem chama já manda o número pronto.
+   */
+  rodape: CelulaXlsx[][] = [],
 ): Promise<Blob> {
   if (colunas.length === 0) throw new Error('gerarXlsx: nenhuma coluna informada.')
 
@@ -272,7 +302,7 @@ export async function gerarXlsx<T>(
   )
   zip.file('xl/_rels/workbook.xml.rels', RELS_WORKBOOK)
   zip.file('xl/styles.xml', STYLES_XML)
-  zip.file('xl/worksheets/sheet1.xml', montarPlanilha(colunas, linhas))
+  zip.file('xl/worksheets/sheet1.xml', montarPlanilha(colunas, linhas, rodape))
 
   // `uint8array` e não `blob`: o `blob` do jszip só existe no navegador, e o
   // teste roda em Node. Envelopar num Blob depois funciona nos dois.

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import JSZip from 'jszip'
-import { gerarXlsx, letraColuna, dataParaSerial, MIME_XLSX, type ColunaXlsx } from '@/lib/xlsx'
+import { gerarXlsx, letraColuna, dataParaSerial, MIME_XLSX, type ColunaXlsx, type CelulaXlsx } from '@/lib/xlsx'
 
 // O .xlsx é montado na unha (ver o cabeçalho de `xlsx.ts`): um caractere de
 // controle ou uma tag fora de ordem faz o Excel recusar o arquivo INTEIRO com
@@ -15,8 +15,8 @@ const COLUNAS: ColunaXlsx<Linha>[] = [
   { header: 'Valor', valor: l => l.valor },
 ]
 
-async function abrirPlanilha(linhas: Linha[]): Promise<string> {
-  const blob = await gerarXlsx(COLUNAS, linhas, 'Lançamentos')
+async function abrirPlanilha(linhas: Linha[], rodape?: CelulaXlsx[][]): Promise<string> {
+  const blob = await gerarXlsx(COLUNAS, linhas, 'Lançamentos', rodape)
   const zip = await JSZip.loadAsync(await blob.arrayBuffer())
   const sheet = zip.file('xl/worksheets/sheet1.xml')
   expect(sheet).not.toBeNull()
@@ -289,5 +289,57 @@ describe('gerarXlsx — entrada suja não corrompe o arquivo', () => {
     expect(xml).not.toContain('NaN')
     expect(xml).not.toContain('r="A2"')
     expect(xml).not.toContain('r="C2"')
+  })
+})
+
+// ─── Rodapé ───────────────────────────────────────────────────────────────────
+// Existe por um motivo só: um relatório que sai daqui e vai por email precisa
+// mostrar o total SEM que quem recebe tenha que selecionar a coluna. E ele
+// precisa ficar FORA do autoFilter — dentro, ordenar a planilha joga a linha
+// de total pro meio dos dados e o número deixa de bater com a coluna.
+
+describe('gerarXlsx — rodapé', () => {
+  const UMA: Linha = { data: new Date(2024, 0, 1, 12), texto: 'Posto Shell', valor: 100 }
+
+  it('escreve as linhas do rodapé depois dos dados', async () => {
+    const xml = await abrirPlanilha([UMA, UMA], [[], ['TOTAL — 2 contas', null, 200]])
+    // 1 cabeçalho + 2 dados + 1 branca + 1 total = 5 linhas
+    expect(xml).toContain('<row r="4"></row>')
+    expect(xml).toContain('<row r="5">')
+    expect(xml).toContain('<t xml:space="preserve">TOTAL — 2 contas</t>')
+    expect(xml).toContain('<v>200</v>')
+  })
+
+  it('deixa o rodapé FORA do autoFilter', async () => {
+    const xml = await abrirPlanilha([UMA, UMA], [[], ['TOTAL', null, 200]])
+    // A3 é a última linha de DADOS. O rodapé (4 e 5) não entra.
+    expect(xml).toContain('<autoFilter ref="A1:C3"/>')
+  })
+
+  it('mantém o autoFilter intacto quando não há rodapé', async () => {
+    const xml = await abrirPlanilha([UMA, UMA, UMA])
+    expect(xml).toContain('<autoFilter ref="A1:C4"/>')
+  })
+
+  it('destaca o rodapé em negrito — texto e número', async () => {
+    const xml = await abrirPlanilha([UMA], [['TOTAL', null, 200]])
+    // s="1" é a fonte em negrito (mesma do cabeçalho); s="4" é negrito COM
+    // o formato de moeda — sem ele o total sairia sem as duas casas.
+    expect(xml).toContain('<c r="A3" t="inlineStr" s="1">')
+    expect(xml).toContain('<c r="C3" s="4"><v>200</v></c>')
+  })
+
+  it('aceita rodapé mais curto que o número de colunas', async () => {
+    const xml = await abrirPlanilha([UMA], [['TOTAL']])
+    expect(xml).toContain('<row r="3">')
+    expect(xml).toContain('<t xml:space="preserve">TOTAL</t>')
+  })
+
+  // Rodapé sem dado nenhum acima acontece de verdade: filtro que não casa com
+  // nada. A planilha ainda precisa ser um arquivo VÁLIDO.
+  it('funciona com zero linhas de dados', async () => {
+    const xml = await abrirPlanilha([], [[], ['TOTAL — 0 contas', null, 0]])
+    expect(xml).toContain('<autoFilter ref="A1:C1"/>')
+    expect(xml).toContain('<t xml:space="preserve">TOTAL — 0 contas</t>')
   })
 })
