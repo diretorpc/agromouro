@@ -150,4 +150,30 @@ a cor de tema 1 (que É preto) para preto literal:
 - Não mexe na exportação de Cartões nem em `lib/xlsx.ts` além de exportar o `esc`.
 - Não traduz nossas categorias para o vocabulário do modelo (`Supermercado`,
   `diversos`). Sai `categoriaLabel` como está.
-- Não filtra para "só contas pagas". Exporta o que está na tela, como hoje.
+- Não filtra para "só contas pagas". Exporta o que está na tela (menos estimadas e
+  dispensadas). **Ponto em aberto**, levantado pelo achado 1 do Apolo: uma conta
+  ainda não paga entra com valor cheio, sinal negativo e "D" de débito — num livro
+  caixa, dinheiro que saiu. Só a data fica em branco, e data em branco não grita.
+  Mitigado por tarja âmbar na tela; o conserto de verdade é `contasExportaveis`
+  exigir `status === 'paga'`, e isso é decisão do dono, não minha.
+
+## Revisão do Apolo — 01/09/2026
+
+11 achados. Corrigidos nesta branch:
+
+| # | Achado | O que foi feito |
+|---|---|---|
+| 1 | Conta não paga entra com valor e "D" de débito, sem nada distinguir | Tarja âmbar na tela; exclusão por status fica como decisão do dono |
+| 2 | Conta **dispensada** saía como "Custo" negativo | Excluída em `contasExportaveis` — dado errado, não recorte |
+| 3 | Ordem das linhas herdava o sort da TELA (podia ser alfabética) | `ordenarPorData` dentro de `linhasLivroCaixa` |
+| 4 | A regra escrita de "majoritário" era falsa — o majoritário é `s=7` em tudo | Regra corrigida para "copie a **linha 6** do modelo" |
+| 5 | Estilos do corpo eram os únicos não conferidos contra o modelo | Teste passou a ler a linha 6 do modelo do disco |
+| 6 | O aviso âmbar era só JSX, sem teste | Texto extraído para `avisosDoArquivo`, com teste |
+| 7 | Teste de caractere de controle passava sem os caracteres | Escapes por código + caso misturado (`AB` → `AB`) |
+| 8 | Comentário de `ESTILO_VALOR_NEGATIVO` contradizia o modelo | Corrigido |
+| 9 | "Cabeçalho amarelo = preenche à mão" não bate com o modelo | Justificativa reescrita |
+| 10 | `CC` pode virar 'TEJUCO' onde o contador filtra 'TJ' | Documentado como risco latente, com o conserto indicado |
+
+**Não corrigido, de propósito:** achado 11 — `PREFIXO_CONFERIR` ("Conferir antes de
+pagar:") vai inteiro para a coluna OBS. É recado interno vazando para o contador,
+mas é anotação do dono no campo dele; filtrar seria apagar texto que ele escreveu.

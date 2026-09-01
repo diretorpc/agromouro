@@ -148,33 +148,40 @@ describe('cabeçalho igual ao do modelo', () => {
 })
 
 describe('estilos do corpo', () => {
-  // Cravados porque o modelo é INCONSISTENTE consigo mesmo — foi editado à mão
-  // e a mesma coluna aparece com estilos diferentes entre as 4 linhas de
-  // exemplo. A escolha (majoritário, contando as 225 linhas de gabarito) está
-  // justificada no comentário de COLUNAS. Sem este teste, "arrumar" um índice
-  // aqui repinta a planilha sem nada reclamar.
-  it('cada coluna usa o índice escolhido a partir do modelo', async () => {
+  // Lê a LINHA 6 DO MODELO do disco, em vez de comparar com uma lista digitada
+  // à mão. É a regra que o código diz seguir (ver o comentário de COLUNAS), e
+  // aqui ela vira contrato: trocar o modelo versionado quebra este teste em vez
+  // de deixá-lo verde mentindo. Achado 5 do Apolo — o teste do cabeçalho ao
+  // lado já lia o disco; o do corpo era o único que não.
+  const COLUNAS_DE_DATA = [3, 4, 5] // D, E, F — a exceção declarada, ver abaixo
+
+  it('cada coluna usa o estilo da linha 6 do modelo', async () => {
     const { sheet } = await gerar([LINHA_BASE])
-    expect(estilosDaLinha(sheet, 2)).toEqual([
-      5,  // A BANCO
-      6,  // B AG
-      6,  // C CC
-      11, // D DIA
-      11, // E MÊS
-      11, // F ANO
-      8,  // G DEPENDÊNCIA ORIGEM
-      7,  // H HISTÓRICO
-      6,  // I CUSTO/RECEITA
-      6,  // J TRANSAÇÃO
-      6,  // K Nº DOCUMENTO
-      10, // L VALOR — negativo (custo). Positivo vira 9; ver teste próprio.
-      6,  // M C/D
-      15, // N CC (centro de custo) — é o índice do gabarito, não o das 3 linhas de dado
-      7,  // O OBS
-      7,  // P TERCEIRO
-      7,  // Q IMÓVEL
-      7,  // R INSCRIÇÃO IMÓVEL
-    ])
+    const modelo = await partesDoModelo()
+    const doModelo = estilosDaLinha(modelo.sheet, 6)
+    const nosso = estilosDaLinha(sheet, 2)
+    const semAsDatas = (lista: number[]) => lista.filter((_, i) => !COLUNAS_DE_DATA.includes(i))
+    expect(semAsDatas(nosso)).toEqual(semAsDatas(doModelo))
+  })
+
+  // A ÚNICA divergência permitida contra a linha 6. As três são a mesma data
+  // partida em três colunas: copiar a inconsistência do modelo (que usa `s=7`
+  // em DIA e `s=11` em MÊS/ANO nas linhas de dado) faria uma alinhar diferente
+  // das irmãs. Ambos os índices existem no modelo e exibem 2026 igual.
+  it('DIA, MÊS e ANO usam s=11 nas três — a exceção declarada', async () => {
+    const { sheet } = await gerar([LINHA_BASE])
+    const nosso = estilosDaLinha(sheet, 2)
+    expect(COLUNAS_DE_DATA.map(i => nosso[i])).toEqual([11, 11, 11])
+    // E o s=11 tem que existir no modelo — a exceção é escolher outro índice
+    // DELE, nunca inventar um.
+    const modelo = await partesDoModelo()
+    expect(estilosDaLinha(modelo.sheet, 4)).toContain(11)
+  })
+
+  it('VALOR negativo usa o estilo vinho da linha 6 do modelo', async () => {
+    const { sheet } = await gerar([{ valor: -1 }])
+    const modelo = await partesDoModelo()
+    expect(estilosDaLinha(sheet, 2)[11]).toBe(estilosDaLinha(modelo.sheet, 6)[11])
   })
 
   // Todo índice usado tem que EXISTIR no modelo — é a diferença entre copiar e
@@ -223,9 +230,21 @@ describe('células vazias', () => {
     expect(estilosDaLinha(sheet, 2)).toHaveLength(18)
   })
 
+  // Escrito por ESCAPE e nunca como caractere literal — controle invisível some
+  // numa cópia, e o teste ficaria verde sem exercitar a limpeza. Mesma lição do
+  // NBSP em `lib/numeros-br.ts`. Achado 7 do Apolo.
   it('texto feito só de caractere de controle vira célula vazia com estilo', async () => {
-    const { sheet } = await gerar([{ historico: '', valor: -1 }])
+    const { sheet } = await gerar([{ historico: '\u0001\u0002', valor: -1 }])
     expect(celula(sheet, 'H2')).toBe('<c r="H2" s="7"/>')
+  })
+
+  // O caso MISTURADO é o único que distingue "limpou os controles" de "a string
+  // já era vazia" — sem ele o teste acima passa igual com `historico: ''`.
+  it('caractere de controle no MEIO do texto some, e o resto fica', async () => {
+    const { sheet } = await gerar([{ historico: 'A\u0001B', valor: -1 }])
+    const h2 = celula(sheet, 'H2')
+    expect(h2).toContain('>AB<')
+    expect(h2).not.toContain('\u0001')
   })
 })
 

@@ -25,10 +25,17 @@ import type { LinhaLivroCaixa } from '@/lib/xlsx-livro-caixa'
 import type { FiltroStatus, FiltroTipo } from './filtros'
 import type { ContaAPI } from './tipos'
 
-// A data no banco é 'AAAA-MM-DD' (só o dia, sem hora). Virar Date às 12h
-// LOCAIS de propósito: `new Date('2026-08-01')` é meia-noite UTC, que no
-// Brasil (UTC-3) é 31/07 às 21h — o dia 1º sairia como último dia do mês
-// anterior na planilha. Mesmo cuidado do `fmtDate` da tela.
+// A data no banco é 'AAAA-MM-DD' (só o dia, sem hora) — `data_pagamento` é
+// coluna `DATE` em `004_contas_a_pagar.sql`, não `timestamptz`, e é por isso
+// que a concatenação abaixo funciona. Virar Date às 12h LOCAIS de propósito:
+// `new Date('2026-08-01')` é meia-noite UTC, que no Brasil (UTC-3) é 31/07 às
+// 21h — o dia 1º sairia como último dia do mês anterior na planilha. Mesmo
+// cuidado do `fmtDate` da tela.
+//
+// SE A COLUNA VIRAR TIMESTAMP, isto quebra CALADO: o valor chega
+// '2026-08-01T00:00:00+00:00', a concatenação vira lixo, `Date` dá
+// `Invalid Date` e a linha sai com DIA/MÊS/ANO em branco — sem erro em lugar
+// nenhum. É aqui que se mexe.
 function dataDoBanco(iso: string | null | undefined): Date | null {
   if (!iso) return null
   const d = new Date(iso + 'T12:00:00')
@@ -36,28 +43,88 @@ function dataDoBanco(iso: string | null | undefined): Date | null {
 }
 
 /**
- * Quais contas entram no arquivo.
+ * Quais contas entram no arquivo. Duas ficam de fora, por motivos diferentes.
  *
- * ESTIMADA FICA DE FORA. Decisão do Matheus em 01/09/2026, tomada com o custo
- * na mesa. O motivo dela: toda ocorrência de conta fixa nasce com valor
- * chutado a partir do último pagamento
- * (`api/src/services/contas/sincronizar.ts`), e no formato do livro caixa não
- * existe coluna, crachá ou rodapé onde dizer "este número é palpite". Um
- * arrendamento estimado em R$ 380.000 sairia com a mesma cara de um boleto
- * conferido, dentro de um arquivo que o contador lança como fato.
+ * ESTIMADA. Decisão do Matheus em 01/09/2026, tomada com o custo na mesa: toda
+ * ocorrência de conta fixa nasce com valor chutado a partir do último
+ * pagamento (`api/src/services/contas/sincronizar.ts`), e no formato do livro
+ * caixa não existe coluna, crachá ou rodapé onde dizer "este número é
+ * palpite". Um arrendamento estimado em R$ 380.000 sairia com a mesma cara de
+ * um boleto conferido, dentro de um arquivo que o contador lança como fato.
  *
- * O PREÇO disso é que o arquivo passa a mentir por OMISSÃO — some conta do
- * relatório e a planilha não tem onde avisar. Por isso o aviso é obrigação da
- * TELA, ao lado do botão (`page.tsx`), onde ainda dá para dizer em português
- * quantas contas ficaram de fora. Mexer aqui sem mexer lá reabre o buraco.
+ * DISPENSADA. Achado 2 da revisão do Apolo (01/09/2026). Dispensada é a
+ * decisão de NÃO pagar — `POST /contas/:id/dispensar` grava só o status, e a
+ * conta nunca ganha `data_pagamento`. Sem esta linha, exportar a aba
+ * "Dispensadas" entregava ao contador um arquivo em que toda linha era
+ * "Custo", com valor negativo e "D" de débito: despesa que ele lançaria, de
+ * dinheiro que por definição nunca vai sair. Não é decisão de recorte, é dado
+ * errado — por isso sai daqui e não de um filtro de tela.
+ *
+ * O PREÇO das duas é que o arquivo passa a mentir por OMISSÃO — some conta do
+ * relatório e a planilha não tem onde avisar. Por isso os avisos são obrigação
+ * da TELA (`avisosDoArquivo` logo abaixo, renderizado em `page.tsx`), último
+ * ponto antes do arquivo virar anexo de e-mail.
  */
 export function contasExportaveis(contas: ContaAPI[]): ContaAPI[] {
-  return contas.filter(c => !c.valor_estimado)
+  return contas.filter(c => !c.valor_estimado && c.status !== 'dispensada')
 }
 
-/** Quantas contas o filtro atual encontrou mas o arquivo NÃO vai levar. */
-export function quantasEstimadas(contas: ContaAPI[]): number {
-  return contas.length - contasExportaveis(contas).length
+/**
+ * As frases que a tela precisa mostrar ao lado do botão.
+ *
+ * MORAM AQUI, e não soltas no JSX, porque são a ÚNICA defesa contra o arquivo
+ * omitir e distorcer em silêncio — e JSX não tem teste neste projeto (`web/`
+ * roda vitest em ambiente `node`, sem jsdom, por decisão registrada no
+ * `vitest.config.mts`). Solto no `page.tsx`, um refactor de layout apagaria o
+ * parágrafo e os 491 testes seguiriam verdes. Achado 6 do Apolo.
+ *
+ * Devolve lista vazia quando não há nada a avisar: um aviso permanente treina
+ * quem lê a ignorar o âmbar, e aí o dia em que ele importa passa batido.
+ */
+export function avisosDoArquivo(contas: ContaAPI[]): string[] {
+  const avisos: string[] = []
+
+  const estimadas = contas.filter(c => c.valor_estimado).length
+  if (estimadas > 0) {
+    avisos.push(
+      plural(
+        estimadas,
+        'conta deste recorte tem valor ESTIMADO e não entra no arquivo',
+        'contas deste recorte têm valor ESTIMADO e não entram no arquivo',
+      ) +
+      ' — o formato do livro caixa não tem onde marcar palpite. Registre o valor real' +
+      ' antes de exportar.',
+    )
+  }
+
+  const dispensadas = contas.filter(c => !c.valor_estimado && c.status === 'dispensada').length
+  if (dispensadas > 0) {
+    avisos.push(
+      `${plural(dispensadas, 'conta dispensada não entra', 'contas dispensadas não entram')} ` +
+      'no arquivo — dispensar é decidir NÃO pagar, e livro caixa registra dinheiro que saiu.',
+    )
+  }
+
+  // ESTE fica DENTRO do arquivo, ao contrário dos dois de cima — é aviso sobre
+  // o que o arquivo LEVA, não sobre o que ele omite. Achado 1 do Apolo: o
+  // formato perdeu a coluna de status, então nada distingue pago de a pagar. A
+  // linha sai com valor cheio, sinal negativo e "D" de débito, que num livro
+  // caixa é dinheiro que saiu. Só a data fica em branco, e data em branco não
+  // grita.
+  const semPagamento = contasExportaveis(contas).filter(c => !c.data_pagamento).length
+  if (semPagamento > 0) {
+    avisos.push(
+      `${plural(semPagamento, 'conta do arquivo ainda não foi paga', 'contas do arquivo ainda não foram pagas')}` +
+      ' — entram com valor e como débito (D), mas SEM data. Filtre por "Pagas" se o arquivo' +
+      ' for para a contabilidade.',
+    )
+  }
+
+  return avisos
+}
+
+function plural(n: number, um: string, varios: string): string {
+  return `${n} ${n === 1 ? um : varios}`
 }
 
 /**
@@ -116,20 +183,52 @@ export function rotuloTransacao(categoria: string | null): string | null {
 }
 
 /**
+ * Cronológica pela data do pagamento, sem data no fim.
+ *
+ * Compara as STRINGS 'AAAA-MM-DD', que ordenam igual à data por serem de
+ * tamanho fixo e zero à esquerda — sem `Date`, sem fuso, sem chance de
+ * escorregar. Empate mantém a ordem que chegou (`sort` do V8 é estável desde o
+ * Node 11), então duas contas do mesmo dia saem na ordem da tela.
+ */
+function ordenarPorData(contas: ContaAPI[]): ContaAPI[] {
+  return [...contas].sort((a, b) => {
+    const da = a.data_pagamento ?? ''
+    const db = b.data_pagamento ?? ''
+    if (da === db) return 0
+    if (da === '') return 1  // sem data vai pro fim
+    if (db === '') return -1
+    return da < db ? -1 : 1
+  })
+}
+
+/**
  * Uma conta a pagar vira uma linha do livro caixa.
  *
  * 7 das 18 colunas ficam vazias porque o sistema não tem esse dado: BANCO, AG,
  * CC (a conta bancária de onde o dinheiro saiu), DEPENDÊNCIA ORIGEM (a forma
  * de pagamento — Pix, cartão, TED), TERCEIRO, IMÓVEL e INSCRIÇÃO IMÓVEL. É
- * fiel ao modelo, que já traz as três últimas vazias, e o cabeçalho AMARELO
- * delas é justamente a marca de "preenche à mão". Omitidas por ausência de
- * fonte, não por esquecimento — quando o dado existir, é uma linha aqui.
+ * fiel ao modelo, que traz TERCEIRO, IMÓVEL e INSCRIÇÃO IMÓVEL vazias nas
+ * quatro linhas de exemplo. Omitidas por ausência de fonte, não por
+ * esquecimento — quando o dado existir, é uma linha aqui.
+ *
+ * ORDENADAS POR DATA, e não na ordem da tela. Livro caixa é documento
+ * cronológico, e a tela ordena por vencimento (ou pelo que o dono tiver
+ * clicado no cabeçalho da tabela — fornecedor, valor, categoria...). Duas
+ * contas que vencem 05/08 e 10/08 podem ter sido pagas 20/08 e 06/08: herdar a
+ * ordem da tela punha 20/08 antes de 06/08 no arquivo. E um clique em
+ * "Fornecedor", que parecia ser só sobre a tela, sairia como ordem alfabética
+ * no livro caixa. Achado 3 do Apolo. Sem data vai para o fim.
  */
 export function linhasLivroCaixa(contas: ContaAPI[], fazenda: string | null): LinhaLivroCaixa[] {
-  // Maiúsculo: `codigo` vem minúsculo do banco, e o modelo usa 'MG' / 'TJ'.
+  // Maiúsculo porque `codigo` vem minúsculo do banco. O modelo usa códigos de
+  // DUAS LETRAS ('MG', 'TJ') e os nossos hoje batem ('mg', 'sp', 'mt' — ver
+  // `001_multi_fazenda.sql`). Uma fazenda futura com código longo sairia
+  // 'TEJUCO' onde o contador filtra 'TJ': centro de custo novo criado em
+  // silêncio na planilha mestre. Se isso acontecer, o conserto é uma tabela de
+  // apelidos aqui, não um `slice(0,2)`.
   const centroCusto = fazenda ? fazenda.toUpperCase() : null
 
-  return contasExportaveis(contas).map(c => ({
+  return ordenarPorData(contasExportaveis(contas)).map(c => ({
     // DIA / MÊS / ANO saem da DATA DO PAGAMENTO — é livro CAIXA, registra
     // quando o dinheiro saiu, não quando venceria. Conta ainda não paga sai com
     // as três colunas em branco: consequência aceita da decisão de 01/09/2026.

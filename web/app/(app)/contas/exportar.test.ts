@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  contasExportaveis, quantasEstimadas, historicoDaConta, linhasLivroCaixa,
+  avisosDoArquivo, contasExportaveis, historicoDaConta, linhasLivroCaixa,
   nomeArquivoExport, pareceTruncado, type ContextoNome,
 } from './exportar'
 import type { ContaAPI } from './tipos'
@@ -56,23 +56,79 @@ describe('contasExportaveis', () => {
     expect(contasExportaveis(lista).map(c => c.id)).toEqual(['a', 'c'])
   })
 
-  it('conta quantas ficaram de fora — é o número que a tela avisa', () => {
-    const lista = [
-      conta({ valor_estimado: true }),
-      conta({ valor_estimado: true }),
-      conta({ valor_estimado: false }),
-    ]
-    expect(quantasEstimadas(lista)).toBe(2)
+  // Dispensar é decidir NÃO pagar, e a conta nunca ganha `data_pagamento`.
+  // Sem esta exclusão, exportar a aba "Dispensadas" entregava ao contador um
+  // arquivo em que toda linha era "Custo" com valor negativo e "D" de débito —
+  // despesa que ele lançaria, de dinheiro que nunca vai sair. Achado 2 do Apolo.
+  it('deixa a conta dispensada de fora', () => {
+    const lista = [conta({ id: 'a' }), conta({ id: 'b', status: 'dispensada' })]
+    expect(contasExportaveis(lista).map(c => c.id)).toEqual(['a'])
   })
 
-  // Se este teste quebrar, o aviso âmbar da tela vira ruído permanente.
-  it('não avisa nada quando nenhuma é estimada', () => {
-    expect(quantasEstimadas([conta(), conta()])).toBe(0)
-  })
-
-  it('o filtro vale também dentro de linhasLivroCaixa', () => {
-    const saida = linhasLivroCaixa([conta({ valor_estimado: true }), conta()], 'mg')
+  it('os dois filtros valem também dentro de linhasLivroCaixa', () => {
+    const saida = linhasLivroCaixa(
+      [conta({ valor_estimado: true }), conta({ status: 'dispensada' }), conta()],
+      'mg',
+    )
     expect(saida).toHaveLength(1)
+  })
+})
+
+// ─── Avisos da tela ───────────────────────────────────────────────────────────
+
+// São a ÚNICA defesa contra o arquivo omitir e distorcer em silêncio: o formato
+// do livro caixa não tem rodapé, coluna de status nem crachá. Moram em
+// `exportar.ts` justamente para terem teste — no JSX não teriam.
+describe('avisosDoArquivo', () => {
+  // Aviso permanente treina quem lê a ignorar o âmbar.
+  it('não avisa nada quando está tudo em ordem', () => {
+    expect(avisosDoArquivo([conta(), conta()])).toEqual([])
+  })
+
+  it('avisa quantas estimadas ficaram de fora', () => {
+    const avisos = avisosDoArquivo([conta({ valor_estimado: true }), conta()])
+    expect(avisos).toHaveLength(1)
+    expect(avisos[0]).toContain('1 conta deste recorte tem')
+    expect(avisos[0]).toContain('ESTIMADO')
+  })
+
+  // A frase INTEIRA concorda em número, não só o primeiro verbo. A 1ª versão
+  // dizia "2 contas deste recorte têm valor ESTIMADO e não ENTRA no arquivo" —
+  // visto na tela em 01/09/2026, porque o plural cobria só o começo.
+  it('concorda em número do começo ao fim da frase', () => {
+    expect(avisosDoArquivo([conta({ valor_estimado: true })])[0])
+      .toContain('1 conta deste recorte tem valor ESTIMADO e não entra no arquivo')
+    expect(avisosDoArquivo([conta({ valor_estimado: true }), conta({ valor_estimado: true })])[0])
+      .toContain('2 contas deste recorte têm valor ESTIMADO e não entram no arquivo')
+  })
+
+  it('avisa quantas dispensadas ficaram de fora', () => {
+    const avisos = avisosDoArquivo([conta({ status: 'dispensada' }), conta()])
+    expect(avisos.some(a => a.includes('1 conta dispensada não entra'))).toBe(true)
+  })
+
+  // Achado 1 do Apolo: o formato perdeu a coluna de status. A linha de uma conta
+  // aberta sai com valor cheio, sinal negativo e "D" de débito — num livro caixa
+  // isso é dinheiro que saiu. Só a data fica em branco, e data em branco não grita.
+  it('avisa sobre as contas que ENTRAM no arquivo sem ter sido pagas', () => {
+    const avisos = avisosDoArquivo([conta({ status: 'aberta', data_pagamento: null }), conta()])
+    expect(avisos.some(a => a.includes('1 conta do arquivo ainda não foi paga'))).toBe(true)
+  })
+
+  it('não conta como "não paga" quem já ficou de fora do arquivo', () => {
+    const avisos = avisosDoArquivo([conta({ valor_estimado: true, data_pagamento: null })])
+    expect(avisos).toHaveLength(1)
+    expect(avisos[0]).toContain('ESTIMADO')
+  })
+
+  it('os três avisos aparecem juntos quando os três casos existem', () => {
+    const avisos = avisosDoArquivo([
+      conta({ valor_estimado: true }),
+      conta({ status: 'dispensada' }),
+      conta({ status: 'aberta', data_pagamento: null }),
+      conta(),
+    ])
+    expect(avisos).toHaveLength(3)
   })
 })
 
@@ -233,12 +289,48 @@ describe('linhasLivroCaixa', () => {
     expect(l.inscricaoImovel).toBeUndefined()
   })
 
-  it('preserva a ordem da lista recebida', () => {
+  // Livro caixa é documento cronológico, e a tela ordena por VENCIMENTO (ou
+  // pelo que o dono tiver clicado no cabeçalho). Duas contas que vencem 05/08 e
+  // 10/08 podem ter sido pagas 20/08 e 06/08: herdar a ordem da tela punha
+  // 20/08 antes de 06/08 no arquivo. Achado 3 do Apolo.
+  it('ordena pela data do pagamento, não pela ordem da tela', () => {
+    const saida = linhasLivroCaixa([
+      conta({ fornecedor: 'A', vencimento: '2026-08-05', data_pagamento: '2026-08-20' }),
+      conta({ fornecedor: 'B', vencimento: '2026-08-10', data_pagamento: '2026-08-06' }),
+    ], 'mg')
+    expect(saida.map(l => l.historico?.[0])).toEqual(['B', 'A'])
+    expect(saida.map(l => l.data?.getDate())).toEqual([6, 20])
+  })
+
+  it('conta sem pagamento vai para o fim, não para o começo', () => {
+    const saida = linhasLivroCaixa([
+      conta({ fornecedor: 'A', status: 'aberta', data_pagamento: null }),
+      conta({ fornecedor: 'B', data_pagamento: '2026-08-06' }),
+      conta({ fornecedor: 'C', status: 'aberta', data_pagamento: null }),
+      conta({ fornecedor: 'D', data_pagamento: '2026-08-02' }),
+    ], 'mg')
+    expect(saida.map(l => l.historico?.[0])).toEqual(['D', 'B', 'A', 'C'])
+  })
+
+  // Estabilidade: mesmo dia mantém a ordem que chegou, então o sort da tela
+  // ainda desempata dentro do dia em vez de embaralhar.
+  it('empate de data preserva a ordem recebida', () => {
     const saida = linhasLivroCaixa(
       [conta({ fornecedor: 'A' }), conta({ fornecedor: 'B' }), conta({ fornecedor: 'C' })],
       'mg',
     )
     expect(saida.map(l => l.historico?.[0])).toEqual(['A', 'B', 'C'])
+  })
+
+  // Ordenar não pode mexer no array de quem chamou — `contasFiltradas` é estado
+  // do React, e ordenar no lugar re-renderizaria a tabela na ordem do arquivo.
+  it('não altera a lista recebida', () => {
+    const lista = [
+      conta({ fornecedor: 'A', data_pagamento: '2026-08-20' }),
+      conta({ fornecedor: 'B', data_pagamento: '2026-08-06' }),
+    ]
+    linhasLivroCaixa(lista, 'mg')
+    expect(lista.map(c => c.fornecedor)).toEqual(['A', 'B'])
   })
 
   it('lista vazia devolve lista vazia, sem estourar', () => {

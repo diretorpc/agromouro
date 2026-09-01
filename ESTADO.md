@@ -113,7 +113,51 @@ morreu. Onde ele está de verdade continua em aberto, e o palpite de 1.000 no
 
 ---
 
+## 🔨 Exportar Contas no formato do LIVRO CAIXA — 01/09/2026 — **na branch**
+
+> Ramo `feat/contas-livro-caixa`. Só `web/` — nenhuma migration, nenhuma ordem
+> de deploy. **SUBSTITUI a exportação do PR #76 descrita logo abaixo**, que
+> ficou obsoleta: aquele bloco descreve 13 colunas próprias e um rodapé de
+> TOTAL que este trabalho apagou. Leia os dois juntos, nesta ordem.
+
+O Matheus mandou um modelo de Excel ("extrato livro caixa", 18 colunas) e pediu
+**IDÊNTICO**. O modelo não é uma lista de contas — é um extrato bancário
+classificado, e o amarelo do cabeçalho marca as colunas que o contador preenche
+à mão. Desenho e decisões:
+`docs/superpowers/specs/2026-09-01-contas-livro-caixa-design.md`.
+O modelo está versionado ao lado do spec — os índices de estilo cravados no
+código só têm sentido contra ele, e um teste o abre do disco para comparar.
+
+**O que mudou de verdade, e vale conferir antes de mandar para a contabilidade:**
+
+- **VALOR sai NEGATIVO.** No modelo custo é negativo, e é o sinal que faz a
+  coluna C/D calcular "D" de débito. A exportação antiga mandava positivo.
+- **Sem cabeçalho congelado e sem autofiltro** — o modelo não tem nenhum dos
+  dois. É uma linha para devolver, se incomodar.
+- **DIA/MÊS/ANO saem da `data_pagamento`.** Conta não paga sai com as três em
+  branco. Linhas ordenadas por essa data, não pela ordem da tela.
+- **Some do arquivo:** conta de valor ESTIMADO e conta DISPENSADA.
+- **Sumiram** o rodapé de TOTAL CONFIRMADO/ESTIMADO, a frase que descrevia o
+  recorte dentro do arquivo e a coluna "Estimado". O modelo não tem onde pôr.
+  Os avisos mudaram de lugar, não sumiram: viraram tarjas âmbar na TELA, ao
+  lado do botão, com texto testado em `avisosDoArquivo` (`exportar.ts`).
+
+**Números:** medir, não copiar daqui —
+`cd web && npm test` · `cd web && npx tsc --noEmit` · `cd web && npm run build`
+
+**Ponto em aberto para o dono decidir:** hoje o arquivo leva conta ainda NÃO
+PAGA, com valor e "D" de débito, avisada só pela tarja âmbar. A alternativa é
+`contasExportaveis` exigir `status === 'paga'` — uma linha, e o livro caixa
+passa a ser só dinheiro que saiu de fato. Não foi feito por conta própria
+porque tira linha do arquivo sem ele ter pedido.
+
+---
+
 ## ✅ Exportar Excel na aba Contas a Pagar — 31/08/2026 — **NO AR** (PR #76)
+
+> ⚠️ **OBSOLETO desde 01/09/2026** — ver o bloco acima. Fica registrado pelo
+> histórico: as decisões de recorte, o teto do PostgREST e os achados do Apolo
+> continuam valendo; as 13 colunas e o rodapé de TOTAL, não.
 
 > Mergeado em 31/08/2026 (`666ef18`), 4 rodadas do Apolo. Só `web/` — nenhuma
 > migration, nenhuma ordem de deploy. Conferido por CONTEÚDO na `main`, não pelo

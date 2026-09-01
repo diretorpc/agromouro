@@ -33,7 +33,7 @@ import {
 } from './filtros'
 import { hojeISO, diasEntre, labelMes } from './datas'
 import {
-  contasExportaveis, linhasLivroCaixa, nomeArquivoExport, pareceTruncado, quantasEstimadas,
+  avisosDoArquivo, contasExportaveis, linhasLivroCaixa, nomeArquivoExport, pareceTruncado,
 } from './exportar'
 
 // ─── Cálculo dos três números (task-9-brief.md, verbatim — não alterar) ───────
@@ -285,16 +285,19 @@ export default function ContasPage() {
   // somando dados incompletos sem dizer nada.
   const listaTruncada = pareceTruncado(contas.length)
 
-  // O que o arquivo REALMENTE leva, e o que fica de fora.
+  // O que o arquivo REALMENTE leva, e o que ele deixa de fora ou distorce.
   //
-  // Conta de valor estimado não entra na exportação (decisão do Matheus,
-  // 01/09/2026 — ver `contasExportaveis`), e o formato do livro caixa não tem
-  // onde dizer isso: não sobrou rodapé, nem coluna, nem crachá. O aviso PRECISA
-  // morar aqui, na tela, ao lado do botão — é o último lugar antes do arquivo
-  // virar anexo de e-mail. Some daqui, e a exportação passa a esconder conta
-  // sem que ninguém perceba.
+  // O formato do livro caixa não tem rodapé, coluna de status nem crachá — não
+  // sobrou lugar DENTRO do arquivo para dizer que uma conta é palpite, que
+  // outra foi dispensada ou que uma terceira ainda não foi paga. Estes avisos
+  // são o último ponto antes do arquivo virar anexo de e-mail.
+  //
+  // O TEXTO deles mora em `exportar.ts`, com teste, e não solto aqui: `web/`
+  // não tem teste de render (vitest em ambiente `node`, sem jsdom), então um
+  // refactor de layout apagaria estes parágrafos com a suíte inteira verde.
+  // Achado 6 do Apolo.
   const contasNoArquivo = contasExportaveis(contasFiltradas)
-  const estimadasDeFora = quantasEstimadas(contasFiltradas)
+  const avisosExport = avisosDoArquivo(contasFiltradas)
 
   // ─── Exportar para Excel ─────────────────────────────────────────────────
 
@@ -547,8 +550,8 @@ export default function ContasPage() {
             disabled={exportando || contasNoArquivo.length === 0 || !fazendaAtiva}
             title={
               contasNoArquivo.length === 0
-                ? (estimadasDeFora > 0
-                    ? 'Todas as contas deste recorte têm valor estimado, e valor estimado não entra na exportação'
+                ? (contasFiltradas.length > 0
+                    ? 'Nenhuma conta deste recorte entra no arquivo — veja o aviso acima'
                     : 'Nada para exportar com os filtros atuais')
                 : `Baixar ${contasNoArquivo.length} contas em Excel (formato livro caixa)`
             }
@@ -575,21 +578,17 @@ export default function ContasPage() {
         </p>
       )}
 
-      {/* O único lugar onde ainda dá para dizer que o arquivo não leva tudo.
-          O formato do livro caixa não tem rodapé nem coluna de "estimado", e o
-          arquivo sai da máquina como anexo — quem recebe não tem nada para
-          conferir. Este parágrafo é a resposta ao achado 1 do Apolo (31/08)
-          depois que a coluna "Estimado" morreu na troca de formato. */}
-      {estimadasDeFora > 0 && (
-        <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-          <strong>{estimadasDeFora.toLocaleString('pt-BR')}</strong>{' '}
-          {estimadasDeFora === 1 ? 'conta deste recorte tem' : 'contas deste recorte têm'}{' '}
-          valor <strong>estimado</strong> e <strong>não</strong>{' '}
-          {estimadasDeFora === 1 ? 'entra' : 'entram'} no arquivo exportado — o formato do
-          livro caixa não tem onde marcar palpite. Registre o valor real antes de exportar
-          se {estimadasDeFora === 1 ? 'ela precisar' : 'elas precisarem'} aparecer.
+      {/* O único lugar onde ainda dá para dizer que o arquivo não leva tudo —
+          ou que leva coisa que ainda não virou dinheiro. As frases vêm de
+          `avisosDoArquivo`, que tem teste; aqui só a moldura. */}
+      {avisosExport.map(aviso => (
+        <p
+          key={aviso}
+          className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2"
+        >
+          {aviso}
         </p>
-      )}
+      ))}
 
       {erroExport && (
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">

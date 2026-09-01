@@ -89,9 +89,13 @@ const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cellStyles count="2"><cellStyle name="Currency" xfId="1" builtinId="4"/><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`
 
-/** Índice em `cellXfs` da célula de VALOR conforme o sinal. */
-const ESTILO_VALOR_POSITIVO = 9  // fonte azul  — no modelo, as duas linhas de Receita
-const ESTILO_VALOR_NEGATIVO = 10 // fonte vinho — as duas de Custo, e a linha de gabarito
+// Índice em `cellXfs` da célula de VALOR conforme o SINAL. É padrão observado
+// no modelo, não invenção: as duas linhas de Receita (positivas) usam `s=9`,
+// fonte 3, azul; as duas de Custo (negativas) usam fonte 4, vinho — `s=14` na
+// linha 4 e `s=10` na 5. Fica o `s=10`, que é também o da linha 6 (a regra
+// geral desta lista) e não arrasta o alinhamento próprio do `s=14`.
+const ESTILO_VALOR_POSITIVO = 9  // fonte 3, azul  — Receita
+const ESTILO_VALOR_NEGATIVO = 10 // fonte 4, vinho — Custo
 
 // ─── As 18 colunas ────────────────────────────────────────────────────────────
 
@@ -109,22 +113,27 @@ type ColunaLivroCaixa = {
   extrair: (l: LinhaLivroCaixa) => string | number | null
 }
 
-// Os índices `s=` abaixo saíram do modelo, coluna por coluna.
+// A REGRA: os índices abaixo são os da LINHA 6 do modelo — a única linha vazia
+// que ainda carrega formatação de verdade. Precisando de estilo para uma coluna
+// nova, é dela que se copia.
 //
-// O MODELO NÃO É CONSISTENTE CONSIGO MESMO — foi editado à mão, e a coluna DIA
+// NÃO é "o majoritário". Uma primeira versão deste comentário dizia isso, e a
+// revisão do Apolo (01/09/2026, achado 4) mediu e desmentiu: as linhas 7 a 230
+// são grade vazia uniforme, e o majoritário das 229 linhas é `s=7` em TODAS as
+// 18 colunas. Seguir "majoritário" levaria a próxima pessoa a `s=7` para tudo —
+// que não tem cor, nem formato contábil, nem alinhamento —, repintando a
+// planilha em silêncio.
+//
+// O modelo também não é consistente consigo mesmo nas 4 linhas de exemplo: DIA
 // aparece com `s=7` nas linhas 2, 3 e 5 e com `s=11` na 4; HISTÓRICO com `s=7`
-// em três linhas e `s=13` na outra. Onde diverge, aqui vale o MAJORITÁRIO
-// contando TAMBÉM as 225 linhas de gabarito vazias (é por elas que CC usa
-// `s=15` e não `s=6`, que aparece em 3 linhas de dado mas em nenhuma de
-// gabarito). Nenhum índice foi inventado — todos existem no modelo.
+// em três e `s=13` na outra. A linha 6 desempata. Nenhum índice foi inventado.
 //
-// UMA EXCEÇÃO DECLARADA: DIA/MÊS/ANO usam `s=11` nas três, embora o gabarito
-// use `s=7` em DIA. Motivo: as três são a MESMA data partida em três colunas, e
-// copiar a inconsistência do modelo faria uma delas alinhar diferente das
-// irmãs. `s=11` é o que MÊS e ANO já usam nas linhas de dado do modelo.
-// Visualmente as duas são equivalentes aqui — `numFmtId=1` e General exibem
-// 2026 igual, sem separador de milhar. A escolha é por uniformidade, não por
-// formatação.
+// UMA EXCEÇÃO DECLARADA: DIA/MÊS/ANO usam `s=11`, e não o `s=7` da linha 6. As
+// três são a MESMA data partida em três colunas, e copiar a inconsistência do
+// modelo faria uma delas alinhar diferente das irmãs. `s=11` é o que MÊS e ANO
+// já usam nas linhas de dado. Visualmente as duas são equivalentes aqui —
+// `numFmtId=1` e General exibem 2026 igual, sem separador de milhar. A escolha
+// é por uniformidade, não por formatação.
 const COLUNAS: ColunaLivroCaixa[] = [
   { header: 'BANCO ',             sHeader: 1, sDado: 5,  tipo: 'texto',     extrair: l => l.banco ?? null },
   { header: 'AG',                 sHeader: 1, sDado: 6,  tipo: 'texto',     extrair: l => l.agencia ?? null },
