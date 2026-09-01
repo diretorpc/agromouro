@@ -150,12 +150,17 @@ a cor de tema 1 (que É preto) para preto literal:
 - Não mexe na exportação de Cartões nem em `lib/xlsx.ts` além de exportar o `esc`.
 - Não traduz nossas categorias para o vocabulário do modelo (`Supermercado`,
   `diversos`). Sai `categoriaLabel` como está.
-- Não filtra para "só contas pagas". Exporta o que está na tela (menos estimadas e
-  dispensadas). **Ponto em aberto**, levantado pelo achado 1 do Apolo: uma conta
-  ainda não paga entra com valor cheio, sinal negativo e "D" de débito — num livro
-  caixa, dinheiro que saiu. Só a data fica em branco, e data em branco não grita.
-  Mitigado por tarja âmbar na tela; o conserto de verdade é `contasExportaveis`
-  exigir `status === 'paga'`, e isso é decisão do dono, não minha.
+- **DECISÃO REVISTA em 01/09/2026, mesma sessão:** o arquivo passou a levar **só
+  conta PAGA**. O achado 1 do Apolo estava certo e a medição na tela fechou o caso —
+  com o filtro padrão, as 7 linhas do arquivo eram todas de conta ainda não paga.
+  `contasExportaveis` agora exige `status === 'paga'`, o que sozinho já cobre
+  dispensada, aberta, aguardando e atrasada. O `!valor_estimado` fica como cinto de
+  segurança para linha antiga (pagar grava `valor_estimado: false`).
+- **Consequência que virou aviso:** a aba "Todas" esconde conta paga há mais de 30
+  dias (`contaBateFiltro`). Enquanto o arquivo levava conta em aberto isso era
+  detalhe; agora é pagamento de verdade que não aparece em lugar nenhum — nem na
+  tela, nem no arquivo, nem numa contagem. Para o mês fechado, exportar pela aba
+  "Pagas", que não tem limite de data. A tela diz isso quando o filtro é "Todas".
 
 ## Revisão do Apolo — 01/09/2026
 

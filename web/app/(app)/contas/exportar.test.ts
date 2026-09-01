@@ -44,32 +44,36 @@ const CTX: ContextoNome = {
 // ─── Quem entra no arquivo ────────────────────────────────────────────────────
 
 describe('contasExportaveis', () => {
-  // Toda ocorrência de conta fixa nasce com valor CHUTADO a partir do último
-  // pagamento, e o formato do livro caixa não tem coluna, crachá nem rodapé
-  // onde dizer isso. Decisão do Matheus em 01/09/2026: fica de fora.
-  it('deixa a conta de valor estimado de fora', () => {
+  // A regra virou UMA só em 01/09/2026 (2ª decisão do Matheus, depois da 1ª
+  // revisão do Apolo): livro caixa registra dinheiro que SAIU. O formato do
+  // modelo não tem coluna de status, então conta em aberto entrava com valor
+  // cheio e "D" de débito, indistinguível de pagamento feito.
+  it('só deixa passar conta paga', () => {
     const lista = [
-      conta({ id: 'a', valor_estimado: false }),
-      conta({ id: 'b', valor_estimado: true }),
-      conta({ id: 'c', valor_estimado: false }),
+      conta({ id: 'a', status: 'paga' }),
+      conta({ id: 'b', status: 'aberta' }),
+      conta({ id: 'c', status: 'aguardando' }),
+      conta({ id: 'd', status: 'dispensada' }),
     ]
-    expect(contasExportaveis(lista).map(c => c.id)).toEqual(['a', 'c'])
-  })
-
-  // Dispensar é decidir NÃO pagar, e a conta nunca ganha `data_pagamento`.
-  // Sem esta exclusão, exportar a aba "Dispensadas" entregava ao contador um
-  // arquivo em que toda linha era "Custo" com valor negativo e "D" de débito —
-  // despesa que ele lançaria, de dinheiro que nunca vai sair. Achado 2 do Apolo.
-  it('deixa a conta dispensada de fora', () => {
-    const lista = [conta({ id: 'a' }), conta({ id: 'b', status: 'dispensada' })]
     expect(contasExportaveis(lista).map(c => c.id)).toEqual(['a'])
   })
 
-  it('os dois filtros valem também dentro de linhasLivroCaixa', () => {
-    const saida = linhasLivroCaixa(
-      [conta({ valor_estimado: true }), conta({ status: 'dispensada' }), conta()],
-      'mg',
-    )
+  // Cinto de segurança para linha antiga: `POST /contas/:id/pagar` grava
+  // `valor_estimado: false` junto com o status, então conta paga E estimada só
+  // existe se foi gravada antes dessa regra. Sairia como número duro num
+  // arquivo que o contador lança como fato.
+  it('barra a conta paga que ficou com valor estimado', () => {
+    const lista = [conta({ id: 'a' }), conta({ id: 'b', status: 'paga', valor_estimado: true })]
+    expect(contasExportaveis(lista).map(c => c.id)).toEqual(['a'])
+  })
+
+  it('a regra vale também dentro de linhasLivroCaixa', () => {
+    const saida = linhasLivroCaixa([
+      conta({ status: 'aberta' }),
+      conta({ status: 'dispensada' }),
+      conta({ status: 'paga', valor_estimado: true }),
+      conta(),
+    ], 'mg')
     expect(saida).toHaveLength(1)
   })
 })
@@ -80,40 +84,102 @@ describe('contasExportaveis', () => {
 // do livro caixa não tem rodapé, coluna de status nem crachá. Moram em
 // `exportar.ts` justamente para terem teste — no JSX não teriam.
 describe('avisosDoArquivo', () => {
+  // O filtro entra porque um dos avisos NÃO tem número: ele é sobre o que a
+  // aba escondeu antes de a lista chegar aqui.
+  const TODAS = 'todas' as const
+  const PAGAS = 'paga' as const
+
   // Aviso permanente treina quem lê a ignorar o âmbar.
-  it('não avisa nada quando está tudo em ordem', () => {
-    expect(avisosDoArquivo([conta(), conta()])).toEqual([])
+  it('não avisa nada quando todas do recorte foram pagas', () => {
+    expect(avisosDoArquivo([conta(), conta()], PAGAS)).toEqual([])
   })
 
-  it('avisa quantas estimadas ficaram de fora', () => {
-    const avisos = avisosDoArquivo([conta({ valor_estimado: true }), conta()])
-    expect(avisos).toHaveLength(1)
-    expect(avisos[0]).toContain('1 conta deste recorte tem')
-    expect(avisos[0]).toContain('ESTIMADO')
+  // O mais traiçoeiro, e o único sem número. Enquanto o arquivo levava conta em
+  // aberto isto era detalhe; agora que ele é SÓ pagamento, o que a aba "Todas"
+  // esconde é dinheiro que saiu e não aparece em lugar nenhum — nem na tela,
+  // nem no arquivo, nem numa contagem.
+  it('avisa que a aba "Todas" esconde pagamento com mais de 30 dias', () => {
+    const avisos = avisosDoArquivo([conta()], TODAS)
+    expect(avisos.some(a => a.includes('mais de 30 dias'))).toBe(true)
+  })
+
+  it('e não avisa isso na aba "Pagas", que não tem limite de data', () => {
+    expect(avisosDoArquivo([conta()], PAGAS).some(a => a.includes('30 dias'))).toBe(false)
+  })
+
+  it('avisa quantas não entram por não terem sido pagas', () => {
+    const avisos = avisosDoArquivo([conta({ status: 'aberta' }), conta()], PAGAS)
+    expect(avisos.some(a => a.includes('1 conta deste recorte não entra no arquivo porque ainda não foi paga'))).toBe(true)
+  })
+
+  // Motivo diferente, frase diferente: dispensar é a decisão de não pagar, não
+  // uma pendência. Achado 3 da 2ª rodada do Apolo.
+  it('separa dispensada de simplesmente não paga', () => {
+    const avisos = avisosDoArquivo(
+      [conta({ status: 'aberta' }), conta({ status: 'dispensada' }), conta()], PAGAS,
+    )
+    expect(avisos.some(a => a.includes('1 conta deste recorte não entra'))).toBe(true)
+    expect(avisos.some(a => a.includes('1 conta dispensada não entra'))).toBe(true)
+  })
+
+  // Quase inalcançável — pagar grava `valor_estimado: false` junto com o
+  // status. É por ser rara que precisa de aviso: a conta some do arquivo e
+  // nada mais no sistema comenta.
+  it('avisa a conta paga que ficou com valor estimado (linha antiga)', () => {
+    const avisos = avisosDoArquivo([conta({ status: 'paga', valor_estimado: true })], PAGAS)
+    expect(avisos.some(a => a.includes('1 conta paga tem valor ESTIMADO'))).toBe(true)
+  })
+
+  it('avisa a conta paga sem data — ela ENTRA, com DIA/MÊS/ANO em branco', () => {
+    const avisos = avisosDoArquivo([conta({ status: 'paga', data_pagamento: null })], PAGAS)
+    expect(avisos.some(a => a.includes('sai com DIA, MÊS e ANO em branco'))).toBe(true)
+  })
+
+  // As três contagens de exclusão são disjuntas: toda conta é dispensada, ou
+  // não-paga-nem-dispensada, ou paga. Somadas dão o que o filtro achou menos o
+  // que o arquivo leva. Sem este teste, um mutante que remova um guard faz a
+  // mesma conta aparecer em dois avisos. Achado 5 da 2ª rodada.
+  it('as contagens de exclusão somam exatamente o que ficou de fora', () => {
+    const lista = [
+      conta({ id: 'a', status: 'aberta' }),
+      conta({ id: 'b', status: 'aguardando' }),
+      conta({ id: 'c', status: 'dispensada', valor_estimado: true }),
+      conta({ id: 'd', status: 'paga', valor_estimado: true }),
+      conta({ id: 'e' }),
+    ]
+    const avisos = avisosDoArquivo(lista, PAGAS)
+    const numeros = avisos.flatMap(a => (a.match(/^(\d+) /) ?? []).slice(1)).map(Number)
+    expect(numeros.reduce((s, n) => s + n, 0))
+      .toBe(lista.length - contasExportaveis(lista).length)
   })
 
   // A frase INTEIRA concorda em número, não só o primeiro verbo. A 1ª versão
-  // dizia "2 contas deste recorte têm valor ESTIMADO e não ENTRA no arquivo".
-  // Consertei num aviso e deixei o mesmo erro nos outros dois — por isso este
-  // teste cobre os TRÊS (achado 2 da 2ª rodada do Apolo). Um assert que para
-  // antes do verbo final passa por acaso; estes vão até o fim da oração.
+  // dizia "2 contas ... e não ENTRA no arquivo". Consertei num aviso e deixei o
+  // mesmo erro nos outros — por isso a tabela cobre TODOS (achado 2 da 2ª
+  // rodada). Assert que para antes do verbo final passa por acaso; estes vão
+  // até o fim da oração.
   const NUM_E_VERBO = [
-    { nome: 'estimadas', muda: { valor_estimado: true },
-      um:     '1 conta deste recorte tem valor ESTIMADO e não entra no arquivo',
-      varios: '2 contas deste recorte têm valor ESTIMADO e não entram no arquivo' },
+    { nome: 'nao pagas', muda: { status: 'aberta' as const },
+      um:     '1 conta deste recorte não entra no arquivo porque ainda não foi paga',
+      varios: '2 contas deste recorte não entram no arquivo porque ainda não foram pagas' },
     { nome: 'dispensadas', muda: { status: 'dispensada' as const },
       um:     '1 conta dispensada não entra no arquivo',
       varios: '2 contas dispensadas não entram no arquivo' },
-    { nome: 'nao pagas', muda: { status: 'aberta' as const, data_pagamento: null },
-      um:     '1 conta do arquivo ainda não foi paga: entra com valor e como débito (D), mas SEM data',
-      varios: '2 contas do arquivo ainda não foram pagas: entram com valor e como débito (D), mas SEM data' },
+    { nome: 'pagas estimadas', muda: { status: 'paga' as const, valor_estimado: true },
+      um:     '1 conta paga tem valor ESTIMADO e não entra no arquivo',
+      varios: '2 contas pagas têm valor ESTIMADO e não entram no arquivo' },
+    { nome: 'pagas sem data', muda: { status: 'paga' as const, data_pagamento: null },
+      um:     '1 conta do arquivo está paga mas sem data de pagamento: sai com DIA, MÊS e ANO em branco',
+      varios: '2 contas do arquivo estão pagas mas sem data de pagamento: saem com DIA, MÊS e ANO em branco' },
   ]
 
   for (const caso of NUM_E_VERBO) {
     it(`concorda em número do começo ao fim da frase — ${caso.nome}`, () => {
-      const um = avisosDoArquivo([conta(caso.muda)])
+      const um = avisosDoArquivo([conta(caso.muda)], PAGAS)
       expect(um.some(a => a.includes(caso.um)), `singular saiu: ${um.join(' | ')}`).toBe(true)
-      const dois = avisosDoArquivo([conta({ id: 'a', ...caso.muda }), conta({ id: 'b', ...caso.muda })])
+      const dois = avisosDoArquivo(
+        [conta({ id: 'a', ...caso.muda }), conta({ id: 'b', ...caso.muda })], PAGAS,
+      )
       expect(dois.some(a => a.includes(caso.varios)), `plural saiu: ${dois.join(' | ')}`).toBe(true)
     })
   }
@@ -121,64 +187,8 @@ describe('avisosDoArquivo', () => {
   // Alcançável: `pareceTruncado` desconfia justamente de 1.000 linhas
   // carregadas, e "1000 contas" numa tela que escreve "R$ 1.099,22" é descuido.
   it('separa o milhar no número', () => {
-    const muitas = Array.from({ length: 1000 }, (_, i) => conta({ id: `c${i}`, valor_estimado: true }))
-    expect(avisosDoArquivo(muitas)[0]).toContain('1.000 contas')
-  })
-
-  // Conta fixa nasce estimada e `dispensar` grava SÓ o status: "dispensada E
-  // estimada" é o caso NORMAL, não exótico. Contando pelo estimado primeiro, a
-  // aba "Dispensadas" mandava "registre o valor real antes de exportar" — o
-  // dono ia lá, registrava, e NADA mudava, porque a exclusão que vale é a de
-  // dispensada. Conselho que não funciona é pior que aviso nenhum. Achado 3 da
-  // 2ª rodada do Apolo.
-  it('conta dispensada E estimada aparece só como dispensada', () => {
-    const avisos = avisosDoArquivo([conta({ valor_estimado: true, status: 'dispensada' })])
-    expect(avisos).toHaveLength(1)
-    expect(avisos[0]).toContain('1 conta dispensada')
-    expect(avisos[0]).not.toContain('ESTIMADO')
-  })
-
-  // Sem este caso o guard que separa as duas contagens não tem teste, e um
-  // mutante que o remova sobrevive: a mesma conta apareceria nos DOIS avisos e
-  // o dono leria "2 contas a menos" onde falta 1. Achado 5 da 2ª rodada.
-  it('não conta a mesma conta em dois avisos', () => {
-    const avisos = avisosDoArquivo([
-      conta({ id: 'a', valor_estimado: true, status: 'dispensada' }),
-      conta({ id: 'b', valor_estimado: true }),
-      conta({ id: 'c' }),
-    ])
-    expect(avisos).toHaveLength(2)
-    expect(avisos.some(a => a.includes('1 conta dispensada'))).toBe(true)
-    expect(avisos.some(a => a.includes('1 conta deste recorte tem'))).toBe(true)
-  })
-
-  it('avisa quantas dispensadas ficaram de fora', () => {
-    const avisos = avisosDoArquivo([conta({ status: 'dispensada' }), conta()])
-    expect(avisos.some(a => a.includes('1 conta dispensada não entra'))).toBe(true)
-  })
-
-  // Achado 1 do Apolo: o formato perdeu a coluna de status. A linha de uma conta
-  // aberta sai com valor cheio, sinal negativo e "D" de débito — num livro caixa
-  // isso é dinheiro que saiu. Só a data fica em branco, e data em branco não grita.
-  it('avisa sobre as contas que ENTRAM no arquivo sem ter sido pagas', () => {
-    const avisos = avisosDoArquivo([conta({ status: 'aberta', data_pagamento: null }), conta()])
-    expect(avisos.some(a => a.includes('1 conta do arquivo ainda não foi paga'))).toBe(true)
-  })
-
-  it('não conta como "não paga" quem já ficou de fora do arquivo', () => {
-    const avisos = avisosDoArquivo([conta({ valor_estimado: true, data_pagamento: null })])
-    expect(avisos).toHaveLength(1)
-    expect(avisos[0]).toContain('ESTIMADO')
-  })
-
-  it('os três avisos aparecem juntos quando os três casos existem', () => {
-    const avisos = avisosDoArquivo([
-      conta({ valor_estimado: true }),
-      conta({ status: 'dispensada' }),
-      conta({ status: 'aberta', data_pagamento: null }),
-      conta(),
-    ])
-    expect(avisos).toHaveLength(3)
+    const muitas = Array.from({ length: 1000 }, (_, i) => conta({ id: `c${i}`, status: 'aberta' }))
+    expect(avisosDoArquivo(muitas, PAGAS).some(a => a.includes('1.000 contas'))).toBe(true)
   })
 })
 
@@ -280,10 +290,19 @@ describe('linhasLivroCaixa', () => {
     expect(l.data?.getFullYear()).toBe(2026)
   })
 
-  // Consequência aceita da decisão de 01/09/2026: conta não paga sai com
-  // DIA/MÊS/ANO em branco.
-  it('conta sem pagamento sai sem data', () => {
-    expect(linha(conta({ status: 'aberta', data_pagamento: null })).data).toBeNull()
+  // Conta não paga NÃO entra mais no arquivo (regra de 01/09/2026, 2ª decisão
+  // do Matheus). Antes ela entrava com valor e "D" de débito, e só a data ficava
+  // em branco — o que num livro caixa é dinheiro que saiu.
+  it('conta não paga não entra no arquivo', () => {
+    expect(linhasLivroCaixa([conta({ status: 'aberta', data_pagamento: null })], 'mg'))
+      .toEqual([])
+  })
+
+  // A que ENTRA sem data é a linha antiga: 'paga' mas sem `data_pagamento`. A
+  // rota de pagar sempre grava a data, então isto é cinto de segurança — e a
+  // tela avisa quando acontece.
+  it('conta paga sem data sai com as três colunas de data vazias', () => {
+    expect(linha(conta({ status: 'paga', data_pagamento: null })).data).toBeNull()
   })
 
   // `new Date('2026-08-01')` é meia-noite UTC = 31/07 21h no Brasil. O dia 1º
@@ -374,11 +393,13 @@ describe('linhasLivroCaixa', () => {
     expect(saida.map(l => l.data?.getDate())).toEqual([6, 20])
   })
 
-  it('conta sem pagamento vai para o fim, não para o começo', () => {
+  // Só a linha antiga ('paga' sem data) chega ao arquivo sem data — e vai pro
+  // fim, para não abrir um buraco no meio de um livro cronológico.
+  it('conta paga sem data vai para o fim, não para o começo', () => {
     const saida = linhasLivroCaixa([
-      conta({ fornecedor: 'A', status: 'aberta', data_pagamento: null }),
+      conta({ fornecedor: 'A', data_pagamento: null }),
       conta({ fornecedor: 'B', data_pagamento: '2026-08-06' }),
-      conta({ fornecedor: 'C', status: 'aberta', data_pagamento: null }),
+      conta({ fornecedor: 'C', data_pagamento: null }),
       conta({ fornecedor: 'D', data_pagamento: '2026-08-02' }),
     ], 'mg')
     expect(saida.map(l => l.historico?.[0])).toEqual(['D', 'B', 'A', 'C'])

@@ -297,7 +297,7 @@ export default function ContasPage() {
   // refactor de layout apagaria estes parágrafos com a suíte inteira verde.
   // Achado 6 do Apolo.
   const contasNoArquivo = contasExportaveis(contasFiltradas)
-  const avisosExport = avisosDoArquivo(contasFiltradas)
+  const avisosExport = avisosDoArquivo(contasFiltradas, filtro)
 
   // ─── Exportar para Excel ─────────────────────────────────────────────────
 
@@ -551,9 +551,9 @@ export default function ContasPage() {
             title={
               contasNoArquivo.length === 0
                 ? (contasFiltradas.length > 0
-                    ? 'Nenhuma conta deste recorte entra no arquivo — veja o aviso acima'
+                    ? 'Nenhuma conta deste recorte foi paga — o livro caixa só leva pagamento'
                     : 'Nada para exportar com os filtros atuais')
-                : `Baixar ${contasNoArquivo.length} contas em Excel (formato livro caixa)`
+                : `Baixar ${contasNoArquivo.length} pagamentos em Excel (formato livro caixa)`
             }
           >
             <Download className="h-4 w-4 mr-1.5" aria-hidden="true" />

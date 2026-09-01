@@ -43,30 +43,34 @@ function dataDoBanco(iso: string | null | undefined): Date | null {
 }
 
 /**
- * Quais contas entram no arquivo. Duas ficam de fora, por motivos diferentes.
+ * Quais contas entram no arquivo: **só as PAGAS**.
  *
- * ESTIMADA. Decisão do Matheus em 01/09/2026, tomada com o custo na mesa: toda
- * ocorrência de conta fixa nasce com valor chutado a partir do último
- * pagamento (`api/src/services/contas/sincronizar.ts`), e no formato do livro
- * caixa não existe coluna, crachá ou rodapé onde dizer "este número é
- * palpite". Um arrendamento estimado em R$ 380.000 sairia com a mesma cara de
- * um boleto conferido, dentro de um arquivo que o contador lança como fato.
+ * Decisão do Matheus em 01/09/2026, depois da 1ª revisão do Apolo. Livro caixa
+ * registra dinheiro que SAIU — e o formato do modelo não tem coluna de status,
+ * então uma conta em aberto entrava com valor cheio, sinal negativo e "D" de
+ * débito, indistinguível de um pagamento feito. Só a data ficava em branco, e
+ * data em branco não grita. Medido na tela em 01/09/2026: com o filtro padrão,
+ * as 7 linhas do arquivo eram TODAS de conta ainda não paga.
  *
- * DISPENSADA. Achado 2 da revisão do Apolo (01/09/2026). Dispensada é a
- * decisão de NÃO pagar — `POST /contas/:id/dispensar` grava só o status, e a
- * conta nunca ganha `data_pagamento`. Sem esta linha, exportar a aba
- * "Dispensadas" entregava ao contador um arquivo em que toda linha era
- * "Custo", com valor negativo e "D" de débito: despesa que ele lançaria, de
- * dinheiro que por definição nunca vai sair. Não é decisão de recorte, é dado
- * errado — por isso sai daqui e não de um filtro de tela.
+ * `status === 'paga'` sozinho já resolve três coisas que antes eram regra
+ * separada:
+ *   · conta DISPENSADA (decisão de não pagar) nunca é 'paga';
+ *   · conta em aberto, aguardando ou atrasada também não;
+ *   · `POST /contas/:id/pagar` grava `valor_estimado: false` junto com o
+ *     status (`api/src/routes/contas.ts`), então conta paga não é estimada.
  *
- * O PREÇO das duas é que o arquivo passa a mentir por OMISSÃO — some conta do
- * relatório e a planilha não tem onde avisar. Por isso os avisos são obrigação
- * da TELA (`avisosDoArquivo` logo abaixo, renderizado em `page.tsx`), último
- * ponto antes do arquivo virar anexo de e-mail.
+ * O `!valor_estimado` fica como CINTO DE SEGURANÇA para linha antiga, gravada
+ * antes daquela regra existir: uma conta 'paga' com estimativa sairia como
+ * número duro num arquivo que o contador lança como fato. Se ela aparecer, o
+ * aviso da tela conta — não some calada.
+ *
+ * O PREÇO é que o arquivo passa a mentir por OMISSÃO: some conta do relatório
+ * e a planilha não tem onde avisar. Por isso os avisos são obrigação da TELA
+ * (`avisosDoArquivo` logo abaixo, renderizado em `page.tsx`), último ponto
+ * antes do arquivo virar anexo de e-mail.
  */
 export function contasExportaveis(contas: ContaAPI[]): ContaAPI[] {
-  return contas.filter(c => !c.valor_estimado && c.status !== 'dispensada')
+  return contas.filter(c => c.status === 'paga' && !c.valor_estimado)
 }
 
 /**
@@ -81,16 +85,41 @@ export function contasExportaveis(contas: ContaAPI[]): ContaAPI[] {
  * Devolve lista vazia quando não há nada a avisar: um aviso permanente treina
  * quem lê a ignorar o âmbar, e aí o dia em que ele importa passa batido.
  */
-export function avisosDoArquivo(contas: ContaAPI[]): string[] {
+export function avisosDoArquivo(contas: ContaAPI[], filtroStatus: FiltroStatus): string[] {
   const avisos: string[] = []
 
-  // DISPENSADA VEM PRIMEIRO, e não leva guard nenhum. Conta fixa nasce
-  // estimada (`sincronizar.ts`) e `POST /contas/:id/dispensar` grava SÓ o
-  // status — então "dispensada E estimada" é o caso normal, não exótico.
-  // Contando pelo estimado primeiro, a aba "Dispensadas" avisava "registre o
-  // valor real antes de exportar": o dono ia lá, registrava os três, e NADA
-  // mudava, porque a exclusão que vale é a de dispensada. Conselho que não
-  // funciona é pior que aviso nenhum. Achado 3 da 2ª rodada do Apolo.
+  // O MAIS TRAIÇOEIRO VEM PRIMEIRO, e é o único que não tem número: a aba
+  // "Todas" esconde conta paga há mais de 30 dias (`contaBateFiltro` em
+  // `filtros.ts`). Isso era detalhe enquanto o arquivo levava conta em aberto;
+  // agora que ele é SÓ pagamento, é dinheiro que saiu de verdade e não aparece
+  // em lugar nenhum — nem na tela, nem no arquivo, nem numa contagem. Exportar
+  // o mês fechado pela aba errada devolve um livro caixa furado.
+  if (filtroStatus === 'todas') {
+    avisos.push(
+      'A aba "Todas" esconde pagamento com mais de 30 dias, e o que ela esconde também' +
+      ' fica de fora do arquivo. Para o mês fechado, exporte pela aba "Pagas" — essa não' +
+      ' tem limite de data.',
+    )
+  }
+
+  // As três contagens abaixo são DISJUNTAS por construção e, somadas, dão
+  // exatamente o que o filtro achou menos o que o arquivo leva. Toda conta é
+  // dispensada, ou não-paga-nem-dispensada, ou paga.
+  const naoPagas = contas.filter(c => c.status !== 'paga' && c.status !== 'dispensada').length
+  if (naoPagas > 0) {
+    avisos.push(
+      plural(
+        naoPagas,
+        'conta deste recorte não entra no arquivo porque ainda não foi paga',
+        'contas deste recorte não entram no arquivo porque ainda não foram pagas',
+      ) +
+      ' — livro caixa registra dinheiro que saiu, e o formato não tem coluna de status' +
+      ' onde marcar "a pagar".',
+    )
+  }
+
+  // Separada da anterior porque o motivo é OUTRO e o dono lê diferente:
+  // dispensar é a decisão de não pagar, não uma pendência.
   const dispensadas = contas.filter(c => c.status === 'dispensada').length
   if (dispensadas > 0) {
     avisos.push(
@@ -99,38 +128,36 @@ export function avisosDoArquivo(contas: ContaAPI[]): string[] {
         'conta dispensada não entra no arquivo',
         'contas dispensadas não entram no arquivo',
       ) +
-      ' — dispensar é decidir NÃO pagar, e livro caixa registra dinheiro que saiu.',
+      ' — dispensar é decidir NÃO pagar.',
     )
   }
 
-  const estimadas = contas.filter(c => c.valor_estimado && c.status !== 'dispensada').length
-  if (estimadas > 0) {
+  // Quase inalcançável: pagar grava `valor_estimado: false` junto com o status.
+  // Só linha antiga cai aqui — e é justamente por ser rara que precisa de
+  // aviso: uma conta some do arquivo e nada mais no sistema comenta.
+  const pagasEstimadas = contas.filter(c => c.status === 'paga' && c.valor_estimado).length
+  if (pagasEstimadas > 0) {
     avisos.push(
       plural(
-        estimadas,
-        'conta deste recorte tem valor ESTIMADO e não entra no arquivo',
-        'contas deste recorte têm valor ESTIMADO e não entram no arquivo',
+        pagasEstimadas,
+        'conta paga tem valor ESTIMADO e não entra no arquivo',
+        'contas pagas têm valor ESTIMADO e não entram no arquivo',
       ) +
-      ' — o formato do livro caixa não tem onde marcar palpite. Registre o valor real' +
-      ' antes de exportar.',
+      ' — o formato não tem onde marcar palpite. Registre o valor real.',
     )
   }
 
-  // ESTE fica DENTRO do arquivo, ao contrário dos dois de cima — é aviso sobre
-  // o que o arquivo LEVA, não sobre o que ele omite. Achado 1 da 1ª rodada do
-  // Apolo: o formato perdeu a coluna de status, então nada distingue pago de a
-  // pagar. A linha sai com valor cheio, sinal negativo e "D" de débito, que num
-  // livro caixa é dinheiro que saiu. Só a data fica em branco, e data em branco
-  // não grita.
-  const semPagamento = contasExportaveis(contas).filter(c => !c.data_pagamento).length
-  if (semPagamento > 0) {
+  // ESTE é sobre o que o arquivo LEVA, não sobre o que ele omite. Também quase
+  // inalcançável (a rota de pagar sempre grava a data), mas se acontecer a
+  // linha sai com DIA, MÊS e ANO em branco no meio de um livro cronológico.
+  const semData = contasExportaveis(contas).filter(c => !c.data_pagamento).length
+  if (semData > 0) {
     avisos.push(
       plural(
-        semPagamento,
-        'conta do arquivo ainda não foi paga: entra com valor e como débito (D), mas SEM data',
-        'contas do arquivo ainda não foram pagas: entram com valor e como débito (D), mas SEM data',
-      ) +
-      '. Filtre por "Pagas" se o arquivo for para a contabilidade.',
+        semData,
+        'conta do arquivo está paga mas sem data de pagamento: sai com DIA, MÊS e ANO em branco',
+        'contas do arquivo estão pagas mas sem data de pagamento: saem com DIA, MÊS e ANO em branco',
+      ) + '.',
     )
   }
 

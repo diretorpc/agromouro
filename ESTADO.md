@@ -139,7 +139,13 @@ código só têm sentido contra ele, e um teste o abre do disco para comparar.
   dois. É uma linha para devolver, se incomodar.
 - **DIA/MÊS/ANO saem da `data_pagamento`.** Conta não paga sai com as três em
   branco. Linhas ordenadas por essa data, não pela ordem da tela.
-- **Some do arquivo:** conta de valor ESTIMADO e conta DISPENSADA.
+- **O arquivo leva SÓ CONTA PAGA.** Livro caixa registra dinheiro que saiu, e o
+  formato do modelo não tem coluna de status onde marcar "a pagar". Some do
+  arquivo: aberta, aguardando, atrasada, dispensada e (linha antiga) paga com
+  valor estimado. A tela conta quantas ficaram de fora, e por qual motivo.
+- **Para o mês fechado, exporte pela aba "Pagas", não pela "Todas".** A "Todas"
+  esconde pagamento com mais de 30 dias — e o que ela esconde não entra no
+  arquivo. A tela avisa isso quando o filtro é "Todas".
 - **Sumiram** o rodapé de TOTAL CONFIRMADO/ESTIMADO, a frase que descrevia o
   recorte dentro do arquivo e a coluna "Estimado". O modelo não tem onde pôr.
   Os avisos mudaram de lugar, não sumiram: viraram tarjas âmbar na TELA, ao
@@ -148,11 +154,9 @@ código só têm sentido contra ele, e um teste o abre do disco para comparar.
 **Números:** medir, não copiar daqui —
 `cd web && npm test` · `cd web && npx tsc --noEmit` · `cd web && npm run build`
 
-**Ponto em aberto para o dono decidir:** hoje o arquivo leva conta ainda NÃO
-PAGA, com valor e "D" de débito, avisada só pela tarja âmbar. A alternativa é
-`contasExportaveis` exigir `status === 'paga'` — uma linha, e o livro caixa
-passa a ser só dinheiro que saiu de fato. Não foi feito por conta própria
-porque tira linha do arquivo sem ele ter pedido.
+**Ponto encerrado:** o filtro de só-pagas foi pedido pelo Matheus e está no ar
+nesta branch. Todos os consertos que mudam comportamento foram conferidos por
+mutação — código revertido, suíte reprovando.
 
 ---
 
