@@ -16,7 +16,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Combobox } from '@/components/ui/combobox'
 import { api } from '@/lib/api'
 import { useFazenda } from '@/context/fazenda-context'
-import { gerarXlsx, baixarBlob } from '@/lib/xlsx'
+import { baixarBlob } from '@/lib/xlsx'
+import { gerarLivroCaixa } from '@/lib/xlsx-livro-caixa'
 import { CATEGORIAS_CONTAS_A_PAGAR } from '@/lib/centro-custo'
 import type { ResultadoGravarDocumento } from '@/lib/types'
 import { DialogoImportar } from '../controle/components/dialogo-importar'
@@ -31,7 +32,9 @@ import {
   type FiltroStatus, type FiltroTipo,
 } from './filtros'
 import { hojeISO, diasEntre, labelMes } from './datas'
-import { colunasExport, montarRodape, nomeArquivoExport, pareceTruncado } from './exportar'
+import {
+  contasExportaveis, linhasLivroCaixa, nomeArquivoExport, pareceTruncado, quantasEstimadas,
+} from './exportar'
 
 // ─── Cálculo dos três números (task-9-brief.md, verbatim — não alterar) ───────
 // Erra calada se mexido: um total que soma confirmado + estimado vira um
@@ -282,6 +285,17 @@ export default function ContasPage() {
   // somando dados incompletos sem dizer nada.
   const listaTruncada = pareceTruncado(contas.length)
 
+  // O que o arquivo REALMENTE leva, e o que fica de fora.
+  //
+  // Conta de valor estimado não entra na exportação (decisão do Matheus,
+  // 01/09/2026 — ver `contasExportaveis`), e o formato do livro caixa não tem
+  // onde dizer isso: não sobrou rodapé, nem coluna, nem crachá. O aviso PRECISA
+  // morar aqui, na tela, ao lado do botão — é o último lugar antes do arquivo
+  // virar anexo de e-mail. Some daqui, e a exportação passa a esconder conta
+  // sem que ninguém perceba.
+  const contasNoArquivo = contasExportaveis(contasFiltradas)
+  const estimadasDeFora = quantasEstimadas(contasFiltradas)
+
   // ─── Exportar para Excel ─────────────────────────────────────────────────
 
   // Exporta o que está NA TELA — os mesmos filtros de status, tipo e mês. Duas
@@ -292,31 +306,21 @@ export default function ContasPage() {
   // arquivo com as 50 primeiras de 180 contas seria um relatório errado sem
   // avisar que é.
   async function handleExportar() {
-    if (contasFiltradas.length === 0) return
+    // `contasNoArquivo`, não `contasFiltradas`: com todas as contas do recorte
+    // estimadas, o filtro acha coisa e o arquivo sairia vazio.
+    if (contasNoArquivo.length === 0) return
     setExportando(true)
     setErroExport(null)
     try {
-      // Um contexto só para o rodapé e para o nome: se os dois lessem filtros
-      // diferentes, o arquivo poderia se chamar "pagas" e trazer a descrição de
-      // outro recorte dentro.
-      const ctx = {
+      const fazenda = fazendaAtiva?.codigo ?? null
+      const blob = await gerarLivroCaixa(linhasLivroCaixa(contasFiltradas, fazenda))
+      baixarBlob(blob, nomeArquivoExport({
         filtroStatus: filtro,
         filtroTipo,
         filtroMes,
-        fazenda: fazendaAtiva?.codigo ?? null,
-        geradoEm: hoje,
+        fazenda,
         parcial: listaTruncada,
-      }
-      // Uma lista de colunas só, usada pelas duas chamadas: o rodapé precisa
-      // pôr o total embaixo da coluna que o arquivo REALMENTE tem.
-      const colunas = colunasExport()
-      const blob = await gerarXlsx(
-        colunas,
-        contasFiltradas,
-        'Contas a Pagar',
-        montarRodape(contasFiltradas, ctx, colunas),
-      )
-      baixarBlob(blob, nomeArquivoExport(ctx))
+      }))
     } catch (err) {
       // Sem este log, a falha mais provável em campo — o pedaço do jszip não
       // baixar numa conexão ruim — vira "Tente novamente" para sempre, e
@@ -326,7 +330,8 @@ export default function ContasPage() {
       // "Tente novamente" é resposta certa pro jszip não baixar numa conexão
       // ruim, e resposta ERRADA pro defeito de configuração da planilha: esse
       // vai falhar igual na segunda, na terceira e na centésima tentativa.
-      const defeitoDeCodigo = err instanceof Error && err.message.includes('exportar.ts')
+      const defeitoDeCodigo = err instanceof Error
+        && (err.message.includes('exportar.ts') || err.message.includes('xlsx-livro-caixa.ts'))
       setErroExport(defeitoDeCodigo
         ? 'A planilha está mal configurada e não pode ser gerada. Avise o suporte — tentar de novo não resolve.'
         : 'Erro ao gerar a planilha. Tente novamente.')
@@ -539,11 +544,13 @@ export default function ContasPage() {
             // Espera a fazenda carregar: exportar antes disso geraria um
             // arquivo SEM o código da fazenda no nome, indistinguível do de
             // outra propriedade na pasta de Downloads.
-            disabled={exportando || contasFiltradas.length === 0 || !fazendaAtiva}
+            disabled={exportando || contasNoArquivo.length === 0 || !fazendaAtiva}
             title={
-              contasFiltradas.length === 0
-                ? 'Nada para exportar com os filtros atuais'
-                : `Baixar ${contasFiltradas.length} contas em Excel`
+              contasNoArquivo.length === 0
+                ? (estimadasDeFora > 0
+                    ? 'Todas as contas deste recorte têm valor estimado, e valor estimado não entra na exportação'
+                    : 'Nada para exportar com os filtros atuais')
+                : `Baixar ${contasNoArquivo.length} contas em Excel (formato livro caixa)`
             }
           >
             <Download className="h-4 w-4 mr-1.5" aria-hidden="true" />
@@ -565,6 +572,22 @@ export default function ContasPage() {
           A lista carregou <strong>{contas.length.toLocaleString('pt-BR')}</strong> contas — um número
           redondo, que costuma significar consulta cortada no limite.{' '}
           <strong>Pode haver contas de fora</strong> dos totais acima e do arquivo exportado.
+        </p>
+      )}
+
+      {/* O único lugar onde ainda dá para dizer que o arquivo não leva tudo.
+          O formato do livro caixa não tem rodapé nem coluna de "estimado", e o
+          arquivo sai da máquina como anexo — quem recebe não tem nada para
+          conferir. Este parágrafo é a resposta ao achado 1 do Apolo (31/08)
+          depois que a coluna "Estimado" morreu na troca de formato. */}
+      {estimadasDeFora > 0 && (
+        <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+          <strong>{estimadasDeFora.toLocaleString('pt-BR')}</strong>{' '}
+          {estimadasDeFora === 1 ? 'conta deste recorte tem' : 'contas deste recorte têm'}{' '}
+          valor <strong>estimado</strong> e <strong>não</strong>{' '}
+          {estimadasDeFora === 1 ? 'entra' : 'entram'} no arquivo exportado — o formato do
+          livro caixa não tem onde marcar palpite. Registre o valor real antes de exportar
+          se {estimadasDeFora === 1 ? 'ela precisar' : 'elas precisarem'} aparecer.
         </p>
       )}
 

@@ -1,11 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
-  colunasExport, linhasDeTotal, montarRodape, descricaoDoFiltro,
-  indiceDaColunaValor, nomeArquivoExport, pareceTruncado, HEADER_VALOR,
-  type ContextoNome,
+  contasExportaveis, quantasEstimadas, historicoDaConta, linhasLivroCaixa,
+  nomeArquivoExport, pareceTruncado, type ContextoNome,
 } from './exportar'
 import type { ContaAPI } from './tipos'
-import type { ColunaXlsx } from '@/lib/xlsx'
 
 function conta(over: Partial<ContaAPI> = {}): ContaAPI {
   return {
@@ -31,326 +29,227 @@ function conta(over: Partial<ContaAPI> = {}): ContaAPI {
   }
 }
 
-function celulas(c: ContaAPI) {
-  return colunasExport().map(col => col.valor(c))
+/** A linha do livro caixa de UMA conta. Falha se a conta não entrar no arquivo. */
+function linha(c: ContaAPI, fazenda: string | null = 'mg') {
+  const saida = linhasLivroCaixa([c], fazenda)
+  expect(saida).toHaveLength(1)
+  return saida[0]
 }
-
-function celula(c: ContaAPI, header: string) {
-  const colunas = colunasExport()
-  const i = colunas.findIndex(col => col.header === header)
-  expect(i).toBeGreaterThanOrEqual(0)
-  return colunas[i].valor(c)
-}
-
-const IDX_VALOR = indiceDaColunaValor(colunasExport())
 
 const CTX: ContextoNome = {
   filtroStatus: 'todas', filtroTipo: 'todos', filtroMes: '2026-08',
-  fazenda: 'MG', geradoEm: '2026-08-31', parcial: false,
+  fazenda: 'MG', parcial: false,
 }
 
-describe('colunasExport', () => {
-  it('leva as colunas da tela mais os dados de pagamento', () => {
-    expect(colunasExport().map(c => c.header)).toEqual([
-      'Vencimento', 'Fornecedor', 'Descrição', 'Categoria', 'Status',
-      'Valor (R$)', 'Estimado', 'Data do pagamento', 'Nº da nota', 'Tipo',
-      'Parcela', 'Observação',
-    ])
+// ─── Quem entra no arquivo ────────────────────────────────────────────────────
+
+describe('contasExportaveis', () => {
+  // Toda ocorrência de conta fixa nasce com valor CHUTADO a partir do último
+  // pagamento, e o formato do livro caixa não tem coluna, crachá nem rodapé
+  // onde dizer isso. Decisão do Matheus em 01/09/2026: fica de fora.
+  it('deixa a conta de valor estimado de fora', () => {
+    const lista = [
+      conta({ id: 'a', valor_estimado: false }),
+      conta({ id: 'b', valor_estimado: true }),
+      conta({ id: 'c', valor_estimado: false }),
+    ]
+    expect(contasExportaveis(lista).map(c => c.id)).toEqual(['a', 'c'])
   })
 
-  // Com R$ dentro da célula o Excel trata como TEXTO e não soma a coluna —
-  // que é justamente o que quem recebe o relatório vai querer fazer.
-  it('manda valor como número, não como texto com R$', () => {
-    const v = celula(conta(), HEADER_VALOR)
-    expect(typeof v).toBe('number')
-    expect(v).toBe(1234.56)
+  it('conta quantas ficaram de fora — é o número que a tela avisa', () => {
+    const lista = [
+      conta({ valor_estimado: true }),
+      conta({ valor_estimado: true }),
+      conta({ valor_estimado: false }),
+    ]
+    expect(quantasEstimadas(lista)).toBe(2)
   })
 
-  // 'YYYY-MM-DD' virando Date à meia-noite UTC jogaria o dia 1º pro último dia
-  // do mês anterior no Brasil (UTC-3) — bug de fuso que este projeto já teve.
-  it('manda data como Date no dia certo, sem escorregar de fuso', () => {
-    const d = celula(conta({ vencimento: '2026-08-01' }), 'Vencimento') as Date
-    expect(d).toBeInstanceOf(Date)
-    expect(d.getDate()).toBe(1)
-    expect(d.getMonth()).toBe(7)
-    expect(d.getFullYear()).toBe(2026)
+  // Se este teste quebrar, o aviso âmbar da tela vira ruído permanente.
+  it('não avisa nada quando nenhuma é estimada', () => {
+    expect(quantasEstimadas([conta(), conta()])).toBe(0)
   })
 
-  it('deixa a célula VAZIA quando não há vencimento nem pagamento', () => {
-    const c = conta({ vencimento: null, data_pagamento: null, valor: null })
-    expect(celula(c, 'Vencimento')).toBeNull()
-    expect(celula(c, 'Data do pagamento')).toBeNull()
-    expect(celula(c, HEADER_VALOR)).toBeNull()
-  })
-
-  // Achado 1 do Apolo: sem esta coluna, uma conta fixa de R$ 380.000 chutada
-  // a partir do último pagamento sai no arquivo tão dura quanto um boleto.
-  it('marca a conta estimada e deixa a confirmada em branco', () => {
-    expect(celula(conta({ valor_estimado: true }), 'Estimado')).toBe('SIM')
-    expect(celula(conta({ valor_estimado: false }), 'Estimado')).toBeNull()
-  })
-
-  it('traduz a categoria igual à tela', () => {
-    expect(celula(conta({ categoria: 'combustivel' }), 'Categoria')).toBe('Combustível')
-  })
-
-  it('mostra a categoria digitada à mão como veio', () => {
-    expect(celula(conta({ categoria: 'Aluguel do galpão' }), 'Categoria')).toBe('Aluguel do galpão')
-  })
-
-  it('deixa vazio quando não há categoria', () => {
-    expect(celula(conta({ categoria: null }), 'Categoria')).toBeNull()
-  })
-
-  it('escreve o status por extenso', () => {
-    expect(celula(conta({ status: 'paga' }), 'Status')).toBe('Paga')
-    expect(celula(conta({ status: 'aguardando' }), 'Status')).toBe('Aguardando')
-  })
-
-  // A tela chama de "Contas fixas" tudo que não veio de nota — mas conta
-  // avulsa também cai aí e não é fixa. No relatório os três aparecem separados.
-  it('separa boleto de nota, conta fixa e avulsa', () => {
-    const deNota = conta({ nota_fiscal_id: 'nf1', notas_fiscais: { numero: '12345' }, contas_recorrentes: null })
-    expect(celula(deNota, 'Tipo')).toBe('Boleto de nota')
-    expect(celula(deNota, 'Nº da nota')).toBe('12345')
-
-    expect(celula(conta(), 'Tipo')).toBe('Conta fixa')
-    expect(celula(conta(), 'Nº da nota')).toBeNull()
-
-    const avulsa = conta({ contas_recorrentes: null, nota_fiscal_id: null })
-    expect(celula(avulsa, 'Tipo')).toBe('Avulsa')
-  })
-
-  it('mostra a parcela como 2/5 e vazio quando não é parcelada', () => {
-    expect(celula(conta({ numero_parcela: 2, total_parcelas: 5 }), 'Parcela')).toBe('2/5')
-    expect(celula(conta(), 'Parcela')).toBeNull()
-  })
-
-  it('leva a observação', () => {
-    expect(celula(conta({ observacao: 'Pago em dinheiro' }), 'Observação')).toBe('Pago em dinheiro')
-  })
-
-  it('toda coluna tem largura definida — sem isso o Excel abre tudo estreito', () => {
-    expect(colunasExport().every(c => typeof c.largura === 'number' && c.largura! > 0)).toBe(true)
-  })
-
-  it('não devolve undefined em nenhuma célula de uma conta cheia de nulos', () => {
-    const vazia = conta({
-      fornecedor: null, categoria: null, vencimento: null, valor: null,
-      data_pagamento: null, observacao: null, contas_recorrentes: null, notas_fiscais: null,
-    })
-    expect(celulas(vazia).every(v => v !== undefined)).toBe(true)
+  it('o filtro vale também dentro de linhasLivroCaixa', () => {
+    const saida = linhasLivroCaixa([conta({ valor_estimado: true }), conta()], 'mg')
+    expect(saida).toHaveLength(1)
   })
 })
 
-// Achado 5 do Apolo: com `findIndex` devolvendo -1, `linha[-1] = total` grava
-// uma propriedade que o gerador nunca percorre — a planilha sairia com a
-// palavra TOTAL e nenhum número ao lado, sem erro em lugar nenhum.
-describe('indiceDaColunaValor', () => {
-  it('acha a coluna de valor na lista de verdade', () => {
-    expect(colunasExport()[IDX_VALOR].header).toBe(HEADER_VALOR)
+// ─── HISTÓRICO ────────────────────────────────────────────────────────────────
+
+describe('historicoDaConta', () => {
+  it('junta fornecedor e descrição', () => {
+    expect(historicoDaConta(conta())).toBe('CEMIG - Energia elétrica — sede')
   })
 
-  it('ESTOURA quando o cabeçalho da coluna de valor foi renomeado', () => {
-    const renomeadas = colunasExport().map(c =>
-      c.header === HEADER_VALOR ? { ...c, header: 'Valor' } : c,
-    ) as ColunaXlsx<ContaAPI>[]
-    expect(() => indiceDaColunaValor(renomeadas)).toThrow(/não existe mais/)
+  it('usa só o que existe quando falta fornecedor', () => {
+    expect(historicoDaConta(conta({ fornecedor: null }))).toBe('Energia elétrica — sede')
+  })
+
+  it('ignora fornecedor que é só espaço', () => {
+    expect(historicoDaConta(conta({ fornecedor: '   ' }))).toBe('Energia elétrica — sede')
+  })
+
+  it('devolve null quando não sobra nada', () => {
+    expect(historicoDaConta(conta({ fornecedor: null, descricao: '' }))).toBeNull()
+  })
+
+  // Sem a parcela, duas parcelas do mesmo contrato — mesmo fornecedor, mesmo
+  // valor, mesma descrição — viram duas linhas IDÊNTICAS, e quem confere não
+  // sabe se é parcela 2 ou lançamento em duplicidade.
+  it('acrescenta a parcela no fim', () => {
+    const c = conta({ numero_parcela: 2, total_parcelas: 3 })
+    expect(historicoDaConta(c)).toBe('CEMIG - Energia elétrica — sede (2/3)')
+  })
+
+  it('parcela sozinha vira o histórico inteiro quando não há texto', () => {
+    const c = conta({ fornecedor: null, descricao: '', numero_parcela: 2, total_parcelas: 3 })
+    expect(historicoDaConta(c)).toBe('Parcela 2/3')
+  })
+
+  it('não inventa parcela quando só um dos dois campos veio', () => {
+    expect(historicoDaConta(conta({ numero_parcela: 2, total_parcelas: null })))
+      .toBe('CEMIG - Energia elétrica — sede')
+  })
+
+  // Visto em produção em 01/09/2026 (conta da HIGA): boleto de nota comum nasce
+  // 1/1, e "(1/1)" em toda linha é ruído que ensina a ignorar o "(2/3)".
+  it('não escreve (1/1) em cobrança de parcela única', () => {
+    expect(historicoDaConta(conta({ numero_parcela: 1, total_parcelas: 1 })))
+      .toBe('CEMIG - Energia elétrica — sede')
+  })
+
+  it('mas escreve (1/3) na primeira de três', () => {
+    expect(historicoDaConta(conta({ numero_parcela: 1, total_parcelas: 3 })))
+      .toBe('CEMIG - Energia elétrica — sede (1/3)')
   })
 })
 
-describe('linhasDeTotal', () => {
-  it('soma os valores e conta as linhas', () => {
-    const [linha] = linhasDeTotal([conta({ valor: 100 }), conta({ valor: 250.5 })], IDX_VALOR)
-    expect(linha[0]).toBe('TOTAL CONFIRMADO · 2 contas')
-    expect(linha[IDX_VALOR]).toBe(350.5)
+// ─── A linha do livro caixa ───────────────────────────────────────────────────
+
+describe('linhasLivroCaixa', () => {
+  // No modelo, custo é NEGATIVO — e é o sinal que faz a coluna C/D calcular
+  // "D" de débito. No banco o valor é sempre positivo.
+  it('inverte o sinal do valor', () => {
+    expect(linha(conta({ valor: 1234.56 })).valor).toBe(-1234.56)
   })
 
-  it('fala no singular quando é uma conta só', () => {
-    expect(linhasDeTotal([conta()], IDX_VALOR)[0][0]).toBe('TOTAL CONFIRMADO · 1 conta')
+  it('valor já negativo continua negativo, não vira positivo', () => {
+    expect(linha(conta({ valor: -500 })).valor).toBe(-500)
   })
 
-  // ACHADO 1 [alto]: `calcularTotais` já proíbe isso na tela — "um número que
-  // mistura chute com fato mente sem avisar". A primeira versão do rodapé
-  // fazia exatamente isso, e num filtro de contas fixas o total era 100% chute.
-  it('NUNCA soma estimativa junto com valor confirmado', () => {
-    const linhas = linhasDeTotal([
-      conta({ valor: 1000, valor_estimado: false }),
-      conta({ valor: 4200, valor_estimado: true }),
-      conta({ valor: 380000, valor_estimado: true }),
-    ], IDX_VALOR)
-
-    expect(linhas).toHaveLength(2)
-    expect(linhas[0][0]).toBe('TOTAL CONFIRMADO · 1 conta')
-    expect(linhas[0][IDX_VALOR]).toBe(1000)
-    expect(linhas[1][0]).toBe('TOTAL ESTIMADO · 2 contas')
-    expect(linhas[1][IDX_VALOR]).toBe(384200)
-    // O número que a versão anterior mostrava em negrito, e que não pode
-    // aparecer em célula nenhuma.
-    expect(linhas.some(l => l.includes(385200))).toBe(false)
+  // Célula vazia e zero são coisas diferentes na planilha do contador.
+  it('valor nulo continua nulo — não vira zero', () => {
+    expect(linha(conta({ valor: null })).valor).toBeNull()
   })
 
-  it('não gasta uma linha com "TOTAL ESTIMADO · 0 contas"', () => {
-    expect(linhasDeTotal([conta({ valor_estimado: false })], IDX_VALOR)).toHaveLength(1)
+  // É livro CAIXA: registra quando o dinheiro saiu, não quando venceria.
+  it('a data é a DO PAGAMENTO, não a do vencimento', () => {
+    const l = linha(conta({ vencimento: '2026-08-10', data_pagamento: '2026-08-08' }))
+    expect(l.data?.getDate()).toBe(8)
+    expect(l.data?.getMonth()).toBe(7) // agosto, base 0 no Date
+    expect(l.data?.getFullYear()).toBe(2026)
   })
 
-  it('conta só estimadas quando não há nenhuma confirmada', () => {
-    const linhas = linhasDeTotal([conta({ valor: 50, valor_estimado: true })], IDX_VALOR)
-    expect(linhas[0][0]).toBe('TOTAL CONFIRMADO · 0 contas')
-    expect(linhas[0][IDX_VALOR]).toBe(0)
-    expect(linhas[1][0]).toBe('TOTAL ESTIMADO · 1 conta')
+  // Consequência aceita da decisão de 01/09/2026: conta não paga sai com
+  // DIA/MÊS/ANO em branco.
+  it('conta sem pagamento sai sem data', () => {
+    expect(linha(conta({ status: 'aberta', data_pagamento: null })).data).toBeNull()
   })
 
-  // Somar centavos em ponto flutuante devolve 0.30000000000000004. O Excel
-  // mostraria 0,30 por causa do formato, mas o número gravado estaria errado.
-  it('arredonda o total em centavos', () => {
-    const [linha] = linhasDeTotal([conta({ valor: 0.1 }), conta({ valor: 0.2 })], IDX_VALOR)
-    expect(linha[IDX_VALOR]).toBe(0.3)
+  // `new Date('2026-08-01')` é meia-noite UTC = 31/07 21h no Brasil. O dia 1º
+  // sairia como último dia do mês anterior. Mesmo bug que já mordeu o
+  // Financeiro em junho/2026.
+  it('o dia 1º não escorrega para o mês anterior por causa de fuso', () => {
+    const l = linha(conta({ data_pagamento: '2026-08-01' }))
+    expect(l.data?.getDate()).toBe(1)
+    expect(l.data?.getMonth()).toBe(7)
   })
 
-  // ACHADO 6: "3 contas" com uma célula em branco no meio deixa quem confere
-  // sem saber se é dado faltando ou zero.
-  it('avisa quando alguma conta entrou sem valor informado', () => {
-    const [linha] = linhasDeTotal(
-      [conta({ valor: null }), conta({ valor: 100 }), conta({ valor: 50 })],
-      IDX_VALOR,
+  it('data inválida vira null em vez de Invalid Date', () => {
+    expect(linha(conta({ data_pagamento: 'nao-e-data' })).data).toBeNull()
+  })
+
+  it('é sempre Custo — esta tela não tem receita', () => {
+    expect(linha(conta()).custoOuReceita).toBe('Custo')
+  })
+
+  it('a transação é o rótulo da categoria, não o código do banco', () => {
+    expect(linha(conta({ categoria: 'combustivel' })).transacao).toBe('Combustível')
+  })
+
+  it('sem categoria, a transação fica vazia', () => {
+    expect(linha(conta({ categoria: null })).transacao).toBeNull()
+  })
+
+  // O caso MAIS COMUM do sistema: toda conta nascida de boleto de NF-e grava
+  // `categoria: 'insumos'`, e 'insumos' não está em CATEGORIAS_FINANCEIRAS.
+  // Sem tratamento, a planilha do contador leva "insumos" em minúscula no meio
+  // de "Combustível" e "Manutenção".
+  it('categoria fora da lista sai capitalizada, não crua', () => {
+    expect(linha(conta({ categoria: 'insumos' })).transacao).toBe('Insumos')
+  })
+
+  it('categoria fora da lista com underscore vira texto legível', () => {
+    expect(linha(conta({ categoria: 'tejuco_gado' })).transacao).toBe('Tejuco gado')
+  })
+
+  it('rótulo conhecido não é mexido', () => {
+    expect(linha(conta({ categoria: 'rh' })).transacao).toBe('Mão de Obra (RH)')
+  })
+
+  // O modelo usa 'MG' / 'TJ'; o banco guarda minúsculo.
+  it('o centro de custo é o código da fazenda em maiúscula', () => {
+    expect(linha(conta(), 'tejuco').centroCusto).toBe('TEJUCO')
+  })
+
+  it('sem fazenda, o centro de custo fica vazio', () => {
+    expect(linha(conta(), null).centroCusto).toBeNull()
+  })
+
+  it('o nº do documento é o número da nota, quando existe', () => {
+    expect(linha(conta({ notas_fiscais: { numero: '004521' } })).numeroDocumento).toBe('004521')
+  })
+
+  it('conta fixa ou avulsa sai sem nº de documento', () => {
+    expect(linha(conta()).numeroDocumento).toBeNull()
+  })
+
+  it('leva a observação como está', () => {
+    expect(linha(conta({ observacao: 'Casa Alexandre' })).observacao).toBe('Casa Alexandre')
+  })
+
+  // Não são esquecimento: o sistema não tem esses dados. O cabeçalho AMARELO
+  // delas no modelo é justamente a marca de "preenche à mão".
+  it('as 7 colunas sem fonte de dado ficam vazias', () => {
+    const l = linha(conta())
+    expect(l.banco).toBeUndefined()
+    expect(l.agencia).toBeUndefined()
+    expect(l.contaCorrente).toBeUndefined()
+    expect(l.dependenciaOrigem).toBeUndefined()
+    expect(l.terceiro).toBeUndefined()
+    expect(l.imovel).toBeUndefined()
+    expect(l.inscricaoImovel).toBeUndefined()
+  })
+
+  it('preserva a ordem da lista recebida', () => {
+    const saida = linhasLivroCaixa(
+      [conta({ fornecedor: 'A' }), conta({ fornecedor: 'B' }), conta({ fornecedor: 'C' })],
+      'mg',
     )
-    expect(linha[0]).toBe('TOTAL CONFIRMADO · 3 contas · 1 sem valor informado')
-    expect(linha[IDX_VALOR]).toBe(150)
+    expect(saida.map(l => l.historico?.[0])).toEqual(['A', 'B', 'C'])
   })
 
-  it('põe o número embaixo da coluna Valor, não em outra qualquer', () => {
-    const [linha] = linhasDeTotal([conta({ valor: 7 })], IDX_VALOR)
-    expect(linha).toHaveLength(IDX_VALOR + 1)
-    expect(linha[IDX_VALOR]).toBe(7)
-    expect(linha.slice(1, IDX_VALOR).every(v => v === null)).toBe(true)
+  it('lista vazia devolve lista vazia, sem estourar', () => {
+    expect(linhasLivroCaixa([], 'mg')).toEqual([])
   })
 })
 
-// ACHADO 2 [alto]: o nome do arquivo promete um mês e um "todas" que a tela
-// não cumpre — de propósito e por bom motivo. Na tela os chips explicam; no
-// anexo de e-mail, nada explica.
-describe('descricaoDoFiltro', () => {
-  it('diz o que "todas" esconde', () => {
-    expect(descricaoDoFiltro(CTX)).toContain('exceto dispensadas e pagas há mais de 30 dias')
-  })
+// ─── Truncamento ──────────────────────────────────────────────────────────────
 
-  it('avisa que o mês filtrado traz caronas de outros meses', () => {
-    const d = descricaoDoFiltro(CTX)
-    expect(d).toContain('vencimento em agosto de 2026')
-    expect(d).toContain('inclui contas sem vencimento informado')
-    expect(d).toContain('inclui contas atrasadas de meses anteriores')
-  })
-
-  // Conta paga nunca é "atrasada" (ENCERRADAS sai do cálculo em contaBateMes),
-  // então prometer a carona seria mentira na outra direção.
-  it('NÃO promete atrasadas quando o filtro só devolve conta encerrada', () => {
-    const d = descricaoDoFiltro({ ...CTX, filtroStatus: 'paga' })
-    expect(d).toContain('somente contas pagas')
-    expect(d).toContain('inclui contas sem vencimento, pelo mês do pagamento')
-    expect(d).not.toContain('atrasadas de meses anteriores')
-  })
-
-  it('não fala em mês nenhum quando o filtro é "todos"', () => {
-    const d = descricaoDoFiltro({ ...CTX, filtroMes: 'todos' })
-    expect(d).toContain('todos os meses')
-    expect(d).not.toContain('vencimento em')
-    expect(d).not.toContain('atrasadas de meses anteriores')
-  })
-
-  it('carrega o filtro de tipo, a fazenda e a data de geração', () => {
-    const d = descricaoDoFiltro({ ...CTX, filtroTipo: 'nota' })
-    expect(d).toContain('somente boletos de nota fiscal')
-    expect(d).toContain('fazenda MG')
-    // `codigo` chega minúsculo do banco: 'fazenda mg' num anexo de e-mail
-    // parece descuido (visto no arquivo real de 31/08/2026).
-    expect(descricaoDoFiltro({ ...CTX, fazenda: 'mg' })).toContain('fazenda MG')
-    expect(d).toContain('gerado em 31/08/2026')
-  })
-
-  // ACHADO 2 da rodada 2: `contaBateFiltro` exige `!!c.vencimento` em
-  // "atrasada" — conta sem data NUNCA entra, e a frase prometia que sim. Pior:
-  // o filtro de mês é inerte nesse recorte (`contaBateMes` devolve true para
-  // toda atrasada), então "vencimento em agosto de 2026" também era falso.
-  it('não promete conta sem vencimento no filtro "atrasada"', () => {
-    const d = descricaoDoFiltro({ ...CTX, filtroStatus: 'atrasada' })
-    expect(d).toContain('somente contas atrasadas')
-    expect(d).not.toContain('inclui contas sem vencimento informado')
-    expect(d).not.toContain('vencimento em agosto de 2026')
-    expect(d).toContain('não altera este recorte')
-  })
-
-  // "somente contas sem vencimento informado · vencimento em agosto de 2026"
-  // era a frase antiga: ela se contradizia na mesma linha.
-  it('não fala em vencimento de mês no filtro "sem-vencimento"', () => {
-    const d = descricaoDoFiltro({ ...CTX, filtroStatus: 'sem-vencimento' })
-    expect(d).toContain('somente contas sem vencimento informado')
-    expect(d).not.toContain('vencimento em agosto de 2026')
-    expect(d).not.toContain('atrasadas de meses anteriores')
-    expect(d).toContain('não altera este recorte')
-  })
-
-  // Depois do conserto do `contaBateMes`, conta sem vencimento num recorte de
-  // encerradas entra pelo mês do PAGAMENTO — não "sempre". A frase antiga era
-  // sub-descrita (achado 7 da rodada 3).
-  it('diz por QUE data a conta sem vencimento entrou no recorte de pagas', () => {
-    expect(descricaoDoFiltro({ ...CTX, filtroStatus: 'paga' }))
-      .toContain('inclui contas sem vencimento, pelo mês do pagamento')
-  })
-
-  // "Dispensar" grava só o status — conta dispensada NUNCA tem data de
-  // pagamento, então ela entra em qualquer mês. A 1a tentativa de conserto
-  // agrupou dispensada com paga e passou a mentir aqui (achado 2, rodada 4).
-  it('NÃO promete mês de pagamento no filtro "dispensada"', () => {
-    const d = descricaoDoFiltro({ ...CTX, filtroStatus: 'dispensada' })
-    expect(d).toContain('inclui contas sem vencimento informado')
-    expect(d).not.toContain('pelo mês do pagamento')
-  })
-
-  // Em "Todas" (o padrão da tela) os dois casos convivem: conta em aberto sem
-  // vencimento entra sempre, conta paga sem vencimento entra pelo pagamento.
-  // A frase única prometia inclusão que não acontecia (achado 5, rodada 4).
-  it('separa os dois casos no filtro "todas"', () => {
-    expect(descricaoDoFiltro(CTX))
-      .toContain('inclui contas sem vencimento informado — as já pagas, pelo mês do pagamento')
-  })
-
-  it('grita quando a lista pode estar incompleta', () => {
-    expect(descricaoDoFiltro({ ...CTX, parcial: true })).toContain('pode estar incompleta')
-    expect(descricaoDoFiltro(CTX)).not.toContain('pode estar incompleta')
-  })
-})
-
-describe('montarRodape', () => {
-  it('separa dados, descrição e totais com linhas em branco', () => {
-    const r = montarRodape([conta({ valor: 10 })], CTX, colunasExport())
-    expect(r[0]).toEqual([])
-    expect(String(r[1][0])).toContain('Filtro:')
-    expect(r[2]).toEqual([])
-    expect(String(r[3][0])).toContain('TOTAL CONFIRMADO')
-  })
-
-  it('não devolve rodapé nenhum quando não há contas', () => {
-    expect(montarRodape([], CTX, colunasExport())).toEqual([])
-  })
-
-  // Sem este teste o 3º parâmetro é decorativo: trocar o corpo por uma segunda
-  // chamada a `colunasExport()` passava nos 74 testes, e o total cairia embaixo
-  // de outra coluna no dia em que alguém exportasse uma lista diferente.
-  it('põe o total embaixo da coluna Valor DA LISTA RECEBIDA', () => {
-    const enxutas = colunasExport().filter(c => ['Descrição', HEADER_VALOR].includes(c.header))
-    const r = montarRodape([conta({ valor: 10 })], CTX, enxutas)
-    expect(r[3]).toHaveLength(2)
-    expect(r[3][1]).toBe(10)
-  })
-})
-
-// ACHADO 3: a peça cujo trabalho é impedir perda silenciosa de dinheiro era
-// justamente a única sem teste. Continua sendo um PALPITE — o teto real do
-// PostgREST deste projeto nunca foi medido — e o teste trava o contrato para
-// que quem mudar o palpite veja o que está mudando.
 describe('pareceTruncado', () => {
-  it('desconfia dos números redondos que o PostgREST costuma usar de teto', () => {
+  it('desconfia dos tetos redondos conhecidos', () => {
     expect(pareceTruncado(1000)).toBe(true)
     expect(pareceTruncado(10000)).toBe(true)
   })
@@ -359,49 +258,53 @@ describe('pareceTruncado', () => {
     expect(pareceTruncado(0)).toBe(false)
     expect(pareceTruncado(999)).toBe(false)
     expect(pareceTruncado(1001)).toBe(false)
-  })
-
-  // Documenta o limite conhecido: se o teto real for 500 ou 2000, isto devolve
-  // false e o arquivo se apresenta como completo. Conserto de verdade =
-  // `count: 'exact'` na rota GET /contas.
-  it('NÃO pega teto fora da lista — limite conhecido e aceito', () => {
-    expect(pareceTruncado(500)).toBe(false)
-    expect(pareceTruncado(2000)).toBe(false)
+    // Medido em 31/08/2026: 594 de 594 linhas voltaram numa consulta real.
+    expect(pareceTruncado(594)).toBe(false)
   })
 })
 
+// ─── Nome do arquivo ──────────────────────────────────────────────────────────
+
 describe('nomeArquivoExport', () => {
-  it('carrega fazenda, filtro e mês', () => {
-    expect(nomeArquivoExport({ ...CTX, filtroStatus: 'paga' })).toBe('contas-mg-pagas-2026-08.xlsx')
+  // Formato novo desde 01/09/2026. Sem o prefixo, os arquivos novos se
+  // confundem com os antigos já salvos na pasta de Downloads.
+  it('começa com livro-caixa', () => {
+    expect(nomeArquivoExport(CTX)).toBe('livro-caixa-mg-todas-2026-08.xlsx')
   })
 
-  // Sem a fazenda no nome, exportar na MG e depois na Tejuco daria dois
-  // arquivos de nome idêntico e conteúdo completamente diferente.
-  it('separa as fazendas', () => {
-    expect(nomeArquivoExport({ ...CTX, fazenda: 'TEJUCO' })).toBe('contas-tejuco-todas-2026-08.xlsx')
+  it('a fazenda entra logo depois — dois recortes iguais em fazendas diferentes não colidem', () => {
+    const mg = nomeArquivoExport({ ...CTX, fazenda: 'MG' })
+    const tj = nomeArquivoExport({ ...CTX, fazenda: 'Tejuco' })
+    expect(mg).not.toBe(tj)
+    expect(tj).toBe('livro-caixa-tejuco-todas-2026-08.xlsx')
+  })
+
+  it('sem fazenda, omite o pedaço em vez de escrever null', () => {
+    expect(nomeArquivoExport({ ...CTX, fazenda: null })).toBe('livro-caixa-todas-2026-08.xlsx')
+  })
+
+  it('marca parcial quando a lista pode estar cortada', () => {
+    expect(nomeArquivoExport({ ...CTX, parcial: true }))
+      .toBe('livro-caixa-mg-parcial-todas-2026-08.xlsx')
+  })
+
+  it('pluraliza o status — o arquivo tem várias contas', () => {
+    expect(nomeArquivoExport({ ...CTX, filtroStatus: 'paga' }))
+      .toBe('livro-caixa-mg-pagas-2026-08.xlsx')
+  })
+
+  it('acrescenta o tipo quando não é "todos"', () => {
+    expect(nomeArquivoExport({ ...CTX, filtroTipo: 'nota' }))
+      .toBe('livro-caixa-mg-todas-boletos-2026-08.xlsx')
+  })
+
+  it('mês "todos" vira "tudo"', () => {
+    expect(nomeArquivoExport({ ...CTX, filtroMes: 'todos' }))
+      .toBe('livro-caixa-mg-todas-tudo.xlsx')
   })
 
   it('tira acento e espaço do código da fazenda', () => {
-    expect(nomeArquivoExport({ ...CTX, fazenda: 'Fazenda São João' }))
-      .toBe('contas-fazenda-sao-joao-todas-2026-08.xlsx')
-  })
-
-  it('omite a fazenda quando ela não veio', () => {
-    expect(nomeArquivoExport({ ...CTX, fazenda: null })).toBe('contas-todas-2026-08.xlsx')
-  })
-
-  it('diz "tudo" quando não há filtro de mês', () => {
-    expect(nomeArquivoExport({ ...CTX, filtroMes: 'todos' })).toBe('contas-mg-todas-tudo.xlsx')
-  })
-
-  it('inclui o filtro de tipo só quando ele está ligado', () => {
-    expect(nomeArquivoExport({ ...CTX, filtroTipo: 'nota' })).toBe('contas-mg-todas-boletos-2026-08.xlsx')
-    expect(nomeArquivoExport({ ...CTX, filtroTipo: 'fixas' })).toBe('contas-mg-todas-fixas-2026-08.xlsx')
-  })
-
-  // Um arquivo chamado "tudo" que não é tudo é pior que arquivo nenhum,
-  // porque ninguém desconfia dele.
-  it('avisa no nome quando o arquivo é um pedaço só', () => {
-    expect(nomeArquivoExport({ ...CTX, parcial: true })).toBe('contas-mg-parcial-todas-2026-08.xlsx')
+    expect(nomeArquivoExport({ ...CTX, fazenda: 'São João' }))
+      .toBe('livro-caixa-sao-joao-todas-2026-08.xlsx')
   })
 })

@@ -1,29 +1,29 @@
 // Regras da exportação da tabela de Contas a Pagar para Excel.
 //
 // Mora FORA do `page.tsx` pelo mesmo motivo de `cartoes/exportar.ts`: aqui é
-// lógica pura (que coluna sai, com que rótulo, com que nome de arquivo) e dá
-// pra testar sem montar componente nenhum. O `page.tsx` só chama.
+// lógica pura (o que vira linha, com que conteúdo, com que nome de arquivo) e
+// dá pra testar sem montar componente nenhum. O `page.tsx` só chama.
 //
-// PARA QUE SERVE: o relatório mensal que o Matheus manda de "contas que
-// paguei" (pedido de 31/08/2026). Por isso este arquivo leva DATA DO PAGAMENTO
-// e um TOTAL no rodapé — a tela não mostra nenhum dos dois, e sem eles o
-// arquivo não prova nada pra quem recebe.
+// FORMATO: LIVRO CAIXA. Desde 01/09/2026 este arquivo NÃO desenha mais colunas
+// próprias — ele preenche as 18 colunas do modelo de extrato que o Matheus
+// mandou, para o arquivo colar direto na planilha do contador. O desenho das
+// colunas, os estilos e o XML moram em `lib/xlsx-livro-caixa.ts`; o spec e o
+// modelo original em `docs/superpowers/specs/2026-09-01-contas-livro-caixa-*`.
 //
-// O ARQUIVO SAI DA MÁQUINA. É a diferença entre este módulo e a tela: na tela
-// o Matheus vê os chips de filtro e o crachá âmbar de "estimado" ao lado de
-// cada linha, e lê o número com esse contexto na frente. No anexo de e-mail
-// não há chip nem crachá — só um TOTAL em negrito. Tudo que a tela diz POR
-// FORA da tabela precisa estar DENTRO do arquivo, ou o arquivo mente.
-// (Achados 1 e 2 da revisão do Apolo, 31/08/2026.)
+// O QUE SE PERDEU NA TROCA, e por decisão explícita do dono:
+//   · o rodapé de TOTAL CONFIRMADO / TOTAL ESTIMADO;
+//   · a frase que descrevia o recorte dos filtros dentro do arquivo;
+//   · a coluna "Estimado" (o crachá âmbar da tela).
+// O modelo não tem rodapé nem coluna para nada disso, e qualquer um dos três
+// quebraria a colagem numa planilha mestre. Os achados 1, 2 e 5 do Apolo
+// (31/08/2026) que criaram essas três coisas continuam válidos — a resposta a
+// eles mudou de lugar, não sumiu: ver `contasExportaveis` logo abaixo e o
+// aviso na tela, em `page.tsx`.
 
-import type { CelulaXlsx, ColunaXlsx } from '@/lib/xlsx'
 import { categoriaLabel } from '@/lib/centro-custo'
-import { labelMes } from './datas'
-import {
-  comoEntraContaSemVencimento, filtroDeMesSeAplica, podeTerAtrasadaDeOutroMes,
-  type FiltroStatus, type FiltroTipo,
-} from './filtros'
-import { STATUS_LABEL, type ContaAPI } from './tipos'
+import type { LinhaLivroCaixa } from '@/lib/xlsx-livro-caixa'
+import type { FiltroStatus, FiltroTipo } from './filtros'
+import type { ContaAPI } from './tipos'
 
 // A data no banco é 'AAAA-MM-DD' (só o dia, sem hora). Virar Date às 12h
 // LOCAIS de propósito: `new Date('2026-08-01')` é meia-noite UTC, que no
@@ -35,246 +35,120 @@ function dataDoBanco(iso: string | null | undefined): Date | null {
   return Number.isNaN(d.getTime()) ? null : d
 }
 
-// A tela tem só DOIS filtros de tipo ("Contas fixas" = tudo que não veio de
-// nota, e "Boletos de nota"), e por isso chama de fixa uma conta avulsa que
-// nunca foi fixa. No relatório os três aparecem separados: quem recebe o
-// arquivo não tem o filtro da tela na frente pra saber o que "fixa" quis dizer.
-function tipoDaConta(c: ContaAPI): string {
-  if (c.nota_fiscal_id) return 'Boleto de nota'
-  return c.contas_recorrentes ? 'Conta fixa' : 'Avulsa'
+/**
+ * Quais contas entram no arquivo.
+ *
+ * ESTIMADA FICA DE FORA. Decisão do Matheus em 01/09/2026, tomada com o custo
+ * na mesa. O motivo dela: toda ocorrência de conta fixa nasce com valor
+ * chutado a partir do último pagamento
+ * (`api/src/services/contas/sincronizar.ts`), e no formato do livro caixa não
+ * existe coluna, crachá ou rodapé onde dizer "este número é palpite". Um
+ * arrendamento estimado em R$ 380.000 sairia com a mesma cara de um boleto
+ * conferido, dentro de um arquivo que o contador lança como fato.
+ *
+ * O PREÇO disso é que o arquivo passa a mentir por OMISSÃO — some conta do
+ * relatório e a planilha não tem onde avisar. Por isso o aviso é obrigação da
+ * TELA, ao lado do botão (`page.tsx`), onde ainda dá para dizer em português
+ * quantas contas ficaram de fora. Mexer aqui sem mexer lá reabre o buraco.
+ */
+export function contasExportaveis(contas: ContaAPI[]): ContaAPI[] {
+  return contas.filter(c => !c.valor_estimado)
 }
 
-/** Cabeçalho da coluna que o rodapé soma. Um lugar só — ver `indiceDaColunaValor`. */
-export const HEADER_VALOR = 'Valor (R$)'
-
-/**
- * As colunas exportadas espelham a tabela da tela, na mesma ordem, e depois
- * acrescentam o que a tela não mostra mas o relatório precisa.
- *
- * NÃO existe coluna "Valor pago": ao marcar uma conta como paga a API
- * sobrescreve `valor` com `valor_pago` (ver POST /contas/:id/pagar em
- * api/src/routes/contas.ts) — numa conta paga os dois campos são o MESMO
- * número, e duas colunas idênticas só atrapalham quem lê.
- *
- * EXISTE coluna "Estimado", que na tela é o crachá âmbar. Sem ela, uma conta
- * fixa de R$ 380.000 chutada a partir do último pagamento vira, no arquivo,
- * um número tão duro quanto um boleto conferido.
- */
-export function colunasExport(): ColunaXlsx<ContaAPI>[] {
-  return [
-    { header: 'Vencimento',        largura: 12, valor: c => dataDoBanco(c.vencimento) },
-    { header: 'Fornecedor',        largura: 28, valor: c => c.fornecedor },
-    { header: 'Descrição',         largura: 44, valor: c => c.descricao },
-    { header: 'Categoria',         largura: 20, valor: c => (c.categoria ? categoriaLabel(c.categoria) : null) },
-    { header: 'Status',            largura: 14, valor: c => STATUS_LABEL[c.status] },
-    // Valor vai como NÚMERO puro — o "R$" fica só no cabeçalho. Com o símbolo
-    // dentro da célula viraria texto e o Excel não somaria a coluna.
-    { header: HEADER_VALOR,        largura: 14, valor: c => c.valor },
-    // Vazio em vez de "Não": a coluna precisa saltar aos olhos quando tem
-    // conteúdo, e uma coluna cheia de "Não" some da vista igual a uma vazia.
-    { header: 'Estimado',          largura: 10, valor: c => (c.valor_estimado ? 'SIM' : null) },
-    { header: 'Data do pagamento', largura: 17, valor: c => dataDoBanco(c.data_pagamento) },
-    { header: 'Nº da nota',        largura: 14, valor: c => c.notas_fiscais?.numero ?? null },
-    { header: 'Tipo',              largura: 16, valor: tipoDaConta },
-    { header: 'Parcela',           largura: 10, valor: c => (c.numero_parcela && c.total_parcelas ? `${c.numero_parcela}/${c.total_parcelas}` : null) },
-    { header: 'Observação',        largura: 40, valor: c => c.observacao },
-  ]
+/** Quantas contas o filtro atual encontrou mas o arquivo NÃO vai levar. */
+export function quantasEstimadas(contas: ContaAPI[]): number {
+  return contas.length - contasExportaveis(contas).length
 }
 
 /**
- * Onde o total do rodapé cai. Calculado a partir da lista de colunas, e não
- * cravado como número: mexer na ordem das colunas sem mexer aqui jogaria a
- * soma embaixo de outra coluna sem nenhum teste reclamar.
+ * A coluna HISTÓRICO do modelo é a linha do extrato — no banco viria
+ * "TED Transf.Eletr.Disponiv - 237 3857 ... MARCIA DIB MOURO". O mais próximo
+ * que temos é fornecedor + descrição.
  *
- * ESTOURA quando não acha, em vez de devolver -1. Com -1, `linha[-1] = total`
- * grava uma propriedade que o gerador nunca percorre: a planilha sairia com a
- * palavra TOTAL e NENHUM número ao lado, sem erro em lugar nenhum (achado 5
- * do Apolo). Renomear um cabeçalho é a edição mais provável neste arquivo.
+ * A PARCELA entra aqui, no fim, entre parênteses. Ela tinha coluna própria na
+ * exportação antiga e o modelo não tem onde pôr — mas sem ela duas parcelas do
+ * mesmo contrato, mesmo fornecedor e mesmo valor viram duas linhas idênticas, e
+ * quem confere não sabe se é parcela 2 ou lançamento em duplicidade. Número de
+ * parcela é parte da descrição da transação, não anotação — por isso vai no
+ * HISTÓRICO e não em OBS.
  *
- * Recebe as colunas por PARÂMETRO, e não lê a lista sozinha, por dois motivos:
- * o caso de erro ganha teste, e o estouro acontece DENTRO da chamada do botão
- * — onde o try/catch vira mensagem vermelha —, nunca no carregamento do
- * módulo, onde derrubaria a tela de Contas inteira em branco. Essa é a lição
- * do lookbehind já registrada em `lib/xlsx.ts`.
+ * SÓ a partir de duas parcelas. Boleto de nota comum nasce com
+ * `numero_parcela = 1, total_parcelas = 1` (visto em produção em 01/09/2026,
+ * na conta da HIGA), e "(1/1)" no fim de toda linha é ruído — e ruído treina
+ * quem lê a ignorar o parêntese que IMPORTA, o "(2/3)".
  */
-export function indiceDaColunaValor(colunas: ColunaXlsx<ContaAPI>[]): number {
-  const i = colunas.findIndex(c => c.header === HEADER_VALOR)
-  if (i < 0) {
-    throw new Error(
-      `exportar.ts: coluna "${HEADER_VALOR}" não existe mais — o rodapé de total sairia sem número.`,
-    )
+export function historicoDaConta(c: ContaAPI): string | null {
+  const partes = [c.fornecedor, c.descricao]
+    .map(t => (typeof t === 'string' ? t.trim() : ''))
+    .filter(t => t !== '')
+  let texto = partes.join(' - ')
+  if (c.numero_parcela && c.total_parcelas && c.total_parcelas > 1) {
+    texto = texto === ''
+      ? `Parcela ${c.numero_parcela}/${c.total_parcelas}`
+      : `${texto} (${c.numero_parcela}/${c.total_parcelas})`
   }
-  return i
-}
-
-/** Centavos, sem a sujeira do ponto flutuante (0.1 + 0.2 = 0.30000000000000004). */
-function emCentavos(n: number): number {
-  return Math.round(n * 100) / 100
-}
-
-function plural(n: number, um: string, varios: string): string {
-  return `${n} ${n === 1 ? um : varios}`
+  return texto === '' ? null : texto
 }
 
 /**
- * Linhas de total, uma por natureza do número.
+ * O rótulo da coluna TRANSAÇÃO.
  *
- * NUNCA soma estimativa com valor confirmado num número só — regra escrita à
- * mão em `calcularTotais` (page.tsx), que até agora valia só para a tela: a
- * primeira versão deste rodapé somava os dois e apresentava o resultado em
- * negrito. Numa exportação filtrada por "Contas fixas" esse total seria 100%
- * palpite, porque toda ocorrência recorrente nasce estimada
- * (api/src/services/contas/sincronizar.ts).
+ * `categoriaLabel` devolve o valor CRU quando não conhece a categoria — e o
+ * caso mais comum do sistema cai exatamente aí: **toda** conta nascida de
+ * boleto de NF-e grava `categoria: 'insumos'`
+ * (`api/src/services/contas/gravarDeNota.ts`), e `'insumos'` não está em
+ * `CATEGORIAS_FINANCEIRAS`. Sem esta função, a coluna sai "insumos" em
+ * minúscula no meio de "Combustível" e "Manutenção" — num arquivo que vai
+ * para o contador.
  *
- * A linha de estimado só aparece quando existe estimativa: um
- * "TOTAL ESTIMADO · 0 contas" em todo relatório de contas pagas seria ruído,
- * e ruído treina o leitor a ignorar o rodapé inteiro.
+ * O conserto mora AQUI e não no `categoriaLabel`, que é compartilhado com a
+ * tela do Financeiro: consertar lá mudaria gráfico e crachá de outra tela sem
+ * ninguém ter pedido. A dívida de verdade (três listas de categoria que não se
+ * conhecem) está registrada no cabeçalho de `lib/centro-custo.ts`.
  */
-export function linhasDeTotal(contas: ContaAPI[], indiceValor: number): CelulaXlsx[][] {
-  const confirmadas = contas.filter(c => !c.valor_estimado)
-  const estimadas   = contas.filter(c => c.valor_estimado)
-
-  const linha = (rotulo: string, valor: number): CelulaXlsx[] => {
-    const celulas: CelulaXlsx[] = new Array(indiceValor + 1).fill(null)
-    celulas[0] = rotulo
-    celulas[indiceValor] = valor
-    return celulas
-  }
-
-  const soma = (lista: ContaAPI[]) => emCentavos(lista.reduce((s, c) => s + (c.valor ?? 0), 0))
-
-  // "3 contas" com uma célula de valor em branco no meio deixa quem confere
-  // sem saber se é dado faltando ou zero (achado 6 do Apolo). Boleto de nota
-  // sem valor existe em produção.
-  const semValor = (lista: ContaAPI[]) => {
-    const n = lista.filter(c => c.valor === null).length
-    return n === 0 ? '' : ` · ${n} sem valor informado`
-  }
-
-  const saida = [
-    linha(
-      `TOTAL CONFIRMADO · ${plural(confirmadas.length, 'conta', 'contas')}${semValor(confirmadas)}`,
-      soma(confirmadas),
-    ),
-  ]
-  if (estimadas.length > 0) {
-    saida.push(
-      linha(
-        `TOTAL ESTIMADO · ${plural(estimadas.length, 'conta', 'contas')}${semValor(estimadas)}`,
-        soma(estimadas),
-      ),
-    )
-  }
-  return saida
-}
-
-// ─── Descrição do recorte ─────────────────────────────────────────────────────
-
-const TEXTO_STATUS: Record<string, string> = {
-  todas:            'todas as contas, exceto dispensadas e pagas há mais de 30 dias',
-  'sem-vencimento': 'somente contas sem vencimento informado',
-  aguardando:       'somente contas aguardando',
-  aberta:           'somente contas abertas',
-  atrasada:         'somente contas atrasadas',
-  paga:             'somente contas pagas',
-  dispensada:       'somente contas dispensadas',
-}
-
-const TEXTO_TIPO: Record<string, string> = {
-  fixas: 'somente contas que não vieram de nota fiscal',
-  nota:  'somente boletos de nota fiscal',
-}
-
-/** '2026-08-31' → '31/08/2026'. Sem `Date`, pra não escorregar de fuso. */
-function dataBR(iso: string): string {
-  const [y, m, d] = iso.slice(0, 10).split('-')
-  return d && m && y ? `${d}/${m}/${y}` : iso
+export function rotuloTransacao(categoria: string | null): string | null {
+  if (!categoria) return null
+  const label = categoriaLabel(categoria)
+  // Rótulo conhecido já vem bonito ('Combustível'). Só o cru precisa de banho.
+  if (label !== categoria) return label
+  const legivel = categoria.replace(/_/g, ' ')
+  return legivel.charAt(0).toUpperCase() + legivel.slice(1)
 }
 
 /**
- * Uma frase dizendo QUE RECORTE este arquivo é.
+ * Uma conta a pagar vira uma linha do livro caixa.
  *
- * Existe porque o nome do arquivo mente por omissão (achado 2 do Apolo).
- * `contas-mg-todas-2026-08.xlsx` promete "todas de agosto", mas a tela — de
- * propósito, e por bom motivo — também mostra atrasadas de meses anteriores e
- * contas sem vencimento, e esconde dispensadas e pagas antigas. Quem recebe o
- * anexo não tem como saber disso. Uma linha de texto resolve; um nome de
- * arquivo mais comprido, não.
+ * 7 das 18 colunas ficam vazias porque o sistema não tem esse dado: BANCO, AG,
+ * CC (a conta bancária de onde o dinheiro saiu), DEPENDÊNCIA ORIGEM (a forma
+ * de pagamento — Pix, cartão, TED), TERCEIRO, IMÓVEL e INSCRIÇÃO IMÓVEL. É
+ * fiel ao modelo, que já traz as três últimas vazias, e o cabeçalho AMARELO
+ * delas é justamente a marca de "preenche à mão". Omitidas por ausência de
+ * fonte, não por esquecimento — quando o dado existir, é uma linha aqui.
  */
-export function descricaoDoFiltro(ctx: ContextoNome): string {
-  const partes: string[] = []
-  partes.push(TEXTO_STATUS[ctx.filtroStatus] ?? `filtro "${ctx.filtroStatus}"`)
+export function linhasLivroCaixa(contas: ContaAPI[], fazenda: string | null): LinhaLivroCaixa[] {
+  // Maiúsculo: `codigo` vem minúsculo do banco, e o modelo usa 'MG' / 'TJ'.
+  const centroCusto = fazenda ? fazenda.toUpperCase() : null
 
-  const tipo = TEXTO_TIPO[ctx.filtroTipo]
-  if (tipo) partes.push(tipo)
-
-  if (ctx.filtroMes === 'todos') {
-    partes.push('todos os meses')
-  } else if (!filtroDeMesSeAplica(ctx.filtroStatus)) {
-    // "Atrasadas" e "Falta vencimento" passam por `contaBateMes` sempre —
-    // escolher um mês não muda nada. Dizer "vencimento em agosto de 2026" num
-    // arquivo que traz atrasada de qualquer época seria falso, e o nome do
-    // arquivo já carrega o mês escolhido.
-    partes.push(`de qualquer mês — o filtro de ${labelMes(ctx.filtroMes)} não altera este recorte`)
-  } else {
-    partes.push(`vencimento em ${labelMes(ctx.filtroMes)}`)
-    // Conta sem vencimento entra de três jeitos diferentes, e o leitor do
-    // arquivo não tem como adivinhar qual. Uma frase por jeito.
-    const semVenc = comoEntraContaSemVencimento(ctx.filtroStatus)
-    if (semVenc === 'sempre') {
-      partes.push('inclui contas sem vencimento informado')
-    } else if (semVenc === 'pelo-pagamento') {
-      partes.push('inclui contas sem vencimento, pelo mês do pagamento')
-    } else if (semVenc === 'ambos') {
-      partes.push('inclui contas sem vencimento informado — as já pagas, pelo mês do pagamento')
-    }
-    if (podeTerAtrasadaDeOutroMes(ctx.filtroStatus)) {
-      partes.push('inclui contas atrasadas de meses anteriores')
-    }
-  }
-
-  // Maiúsculo: `codigo` vem minúsculo do banco, e "fazenda mg" num relatório
-  // que vai por e-mail parece descuido. É código de propriedade, não nome.
-  if (ctx.fazenda) partes.push(`fazenda ${ctx.fazenda.toUpperCase()}`)
-  partes.push(`gerado em ${dataBR(ctx.geradoEm)}`)
-
-  const frase = `Filtro: ${partes.join(' · ')}`
-  // O aviso de lista incompleta vem GRUDADO na descrição, e não numa linha
-  // separada, porque linha separada é a primeira coisa que some quando alguém
-  // copia só o intervalo dos dados pra outra planilha.
-  // Sem "confira antes de enviar": DENTRO do arquivo quem lê é o destinatário,
-  // que não tem o que conferir — e o teto real da consulta nunca foi medido,
-  // então nem o remetente tem. O aviso sozinho já diz tudo que é verdade.
-  return ctx.parcial
-    ? `${frase} · ATENÇÃO: a lista pode estar incompleta`
-    : frase
-}
-
-/**
- * O rodapé inteiro: linha em branco, a descrição do recorte, outra em branco e
- * os totais. Fica FORA do autoFilter (ver `rodape` em lib/xlsx.ts) — dentro
- * dele, ordenar a planilha jogaria o total pro meio dos lançamentos.
- */
-export function montarRodape(
-  contas: ContaAPI[],
-  ctx: ContextoNome,
-  /**
-   * As MESMAS colunas passadas ao `gerarXlsx`. Recebidas em vez de recalculadas
-   * porque o total precisa cair embaixo da coluna que o arquivo realmente tem:
-   * se um dia alguém exportar uma lista enxuta ou reordenada, uma segunda
-   * chamada a `colunasExport()` aqui dentro poria a soma embaixo de outra
-   * coluna, em silêncio. É o achado 5 reaparecendo na costura seguinte.
-   */
-  colunas: ColunaXlsx<ContaAPI>[],
-): CelulaXlsx[][] {
-  if (contas.length === 0) return []
-  const indiceValor = indiceDaColunaValor(colunas)
-  return [
-    [],
-    [descricaoDoFiltro(ctx)],
-    [],
-    ...linhasDeTotal(contas, indiceValor),
-  ]
+  return contasExportaveis(contas).map(c => ({
+    // DIA / MÊS / ANO saem da DATA DO PAGAMENTO — é livro CAIXA, registra
+    // quando o dinheiro saiu, não quando venceria. Conta ainda não paga sai com
+    // as três colunas em branco: consequência aceita da decisão de 01/09/2026.
+    data: dataDoBanco(c.data_pagamento),
+    historico: historicoDaConta(c),
+    // Literal: isto é Contas a PAGAR. Não existe receita nesta tela, e é este
+    // texto que o contador usa para separar as duas metades do livro.
+    custoOuReceita: 'Custo',
+    transacao: rotuloTransacao(c.categoria),
+    // Texto, e não número: nota fiscal com zero à esquerda perderia o zero.
+    numeroDocumento: c.notas_fiscais?.numero ?? null,
+    // NEGATIVO. No modelo, custo é negativo (-720,15) e é o SINAL que faz a
+    // coluna C/D calcular "D" de débito. `Math.abs` antes do menos porque a
+    // origem sempre grava positivo — se um dia gravar negativo, o resultado
+    // aqui não muda.
+    valor: c.valor === null ? null : -Math.abs(c.valor),
+    centroCusto,
+    observacao: c.observacao,
+  }))
 }
 
 // ─── Truncamento ──────────────────────────────────────────────────────────────
@@ -291,12 +165,12 @@ export function montarRodape(
 // resposta, e 1.000 segue sendo palpite.
 //
 // Para medir você mesmo, sem depender desta linha:
-//   curl -sI -H "Range: 0-" "$SUPABASE_URL/rest/v1/<tabela>?select=id" //     -H "apikey: $SUPABASE_SERVICE_KEY" | grep -i content-range
+//   curl -sI -H "Range: 0-" "$SUPABASE_URL/rest/v1/<tabela>?select=id" \
+//     -H "apikey: $SUPABASE_SERVICE_KEY" | grep -i content-range
 //
 // O conserto de verdade é a rota devolver `count: 'exact'`, como a tela de
 // Cartões já faz consultando o Supabase direto (cartoes/page.tsx). Até lá, o
-// mínimo honesto é: marcar o nome do arquivo, avisar na tela, e dizer
-// "pode estar" em vez de "está".
+// mínimo honesto é: marcar o nome do arquivo e avisar na tela.
 const TETOS_SUSPEITOS = new Set([1000, 10000])
 
 export function pareceTruncado(total: number): boolean {
@@ -343,8 +217,6 @@ export type ContextoNome = {
   filtroMes: string
   /** Código da fazenda ativa. Dimensão que mais muda os números. */
   fazenda: string | null
-  /** Dia da geração, 'AAAA-MM-DD'. Entra por parâmetro para o teste ser fixo. */
-  geradoEm: string
   /** `true` quando a lista carregada PODE ser só um pedaço — ver `pareceTruncado`. */
   parcial: boolean
 }
@@ -354,18 +226,21 @@ export type ContextoNome = {
  * senão três exports seguidos viram `contas.xlsx`, `contas (1).xlsx`,
  * `contas (2).xlsx` na pasta de Downloads e ninguém sabe qual é qual depois.
  *
- * A fazenda entra PRIMEIRO: em multi-fazenda, exportar sem filtro na MG e
- * depois na Tejuco daria dois arquivos de nome idêntico e conteúdo
- * completamente diferente. Ela é omitida quando `fazenda` vem nulo — quem
- * chama é responsável por só exportar com a fazenda já carregada, e a tela
- * faz isso mantendo o botão desabilitado até lá.
+ * Começa com `livro-caixa` desde 01/09/2026: o conteúdo mudou de formato, e um
+ * arquivo novo com nome velho se confunde com os antigos já salvos na pasta.
  *
- * O nome NÃO conta o recorte inteiro, e nunca vai contar: ele cabe em poucas
- * palavras e some quando o cliente de e-mail renomeia o anexo. Quem conta a
- * história toda é `descricaoDoFiltro`, DENTRO da planilha.
+ * A fazenda entra logo em seguida: em multi-fazenda, exportar sem filtro na MG
+ * e depois na Tejuco daria dois arquivos de nome idêntico e conteúdo
+ * completamente diferente. Ela é omitida quando `fazenda` vem nulo — quem
+ * chama é responsável por só exportar com a fazenda já carregada, e a tela faz
+ * isso mantendo o botão desabilitado até lá.
+ *
+ * O nome NÃO conta o recorte inteiro, e agora não conta MESMO: a frase que
+ * descrevia os filtros DENTRO do arquivo morreu junto com o rodapé. Quem
+ * precisar saber o recorte exato tem que perguntar a quem exportou.
  */
 export function nomeArquivoExport(ctx: ContextoNome): string {
-  const partes = ['contas']
+  const partes = ['livro-caixa']
   const fazenda = ctx.fazenda ? semAcento(ctx.fazenda) : ''
   if (fazenda) partes.push(fazenda)
   if (ctx.parcial) partes.push('parcial')

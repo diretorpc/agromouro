@@ -59,7 +59,14 @@ function limpar(trecho: string): string {
   return trecho.length === 2 ? trecho : ''
 }
 
-function esc(texto: string): string {
+/**
+ * Escape de XML, compartilhado com `xlsx-livro-caixa.ts`.
+ *
+ * EXPORTADO de propósito, e não copiado para lá: a limpeza de caractere de
+ * controle acima é conhecimento caro (surrogate solto, CESU-8, lookbehind que
+ * derruba Safari velho) e duas cópias divergiriam na primeira correção.
+ */
+export function esc(texto: string): string {
   return texto
     .replace(CONTROLE, limpar)
     .replace(/&/g, '&amp;')
