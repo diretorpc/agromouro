@@ -113,27 +113,31 @@ type ColunaLivroCaixa = {
   extrair: (l: LinhaLivroCaixa) => string | number | null
 }
 
-// A REGRA: os índices abaixo são os da LINHA 6 do modelo — a única linha vazia
-// que ainda carrega formatação de verdade. Precisando de estilo para uma coluna
-// nova, é dela que se copia.
+// A REGRA: os índices abaixo são os das LINHAS VAZIAS FORMATADAS do modelo —
+// as linhas 6 a 9, que compartilham o mesmo padrão. Precisando de estilo para
+// uma coluna nova, é delas que se copia.
 //
 // NÃO é "o majoritário". Uma primeira versão deste comentário dizia isso, e a
-// revisão do Apolo (01/09/2026, achado 4) mediu e desmentiu: as linhas 7 a 230
-// são grade vazia uniforme, e o majoritário das 229 linhas é `s=7` em TODAS as
-// 18 colunas. Seguir "majoritário" levaria a próxima pessoa a `s=7` para tudo —
-// que não tem cor, nem formato contábil, nem alinhamento —, repintando a
-// planilha em silêncio.
+// revisão do Apolo (01/09/2026, achado 4) mediu e desmentiu. Contagem real das
+// 229 linhas, refeita aqui:
+//     221 linhas (10 a 230) → `s=7` nas 18 colunas: grade vazia, sem formatação
+//       4 linhas (6 a 9)    → o padrão que este arquivo copia
+//       4 linhas (2 a 5)    → os exemplos preenchidos, e nem eles concordam
+// Seguir "majoritário" levaria a próxima pessoa a `s=7` para tudo — que não tem
+// cor, nem formato contábil, nem alinhamento —, repintando a planilha em
+// silêncio.
 //
-// O modelo também não é consistente consigo mesmo nas 4 linhas de exemplo: DIA
-// aparece com `s=7` nas linhas 2, 3 e 5 e com `s=11` na 4; HISTÓRICO com `s=7`
-// em três e `s=13` na outra. A linha 6 desempata. Nenhum índice foi inventado.
+// As 4 linhas de exemplo também não concordam entre si: DIA aparece com `s=7`
+// nas linhas 2, 3 e 5 e com `s=11` na 4; HISTÓRICO com `s=7` em três e `s=13`
+// na outra. As linhas 6-9 desempatam. Nenhum índice foi inventado.
 //
-// UMA EXCEÇÃO DECLARADA: DIA/MÊS/ANO usam `s=11`, e não o `s=7` da linha 6. As
-// três são a MESMA data partida em três colunas, e copiar a inconsistência do
-// modelo faria uma delas alinhar diferente das irmãs. `s=11` é o que MÊS e ANO
-// já usam nas linhas de dado. Visualmente as duas são equivalentes aqui —
-// `numFmtId=1` e General exibem 2026 igual, sem separador de milhar. A escolha
-// é por uniformidade, não por formatação.
+// UMA EXCEÇÃO DECLARADA: DIA/MÊS/ANO usam `s=11`, e não o `s=7` das linhas 6-9.
+// As três são a MESMA data partida em três colunas, e copiar a inconsistência
+// do modelo faria uma delas alinhar diferente das irmãs. `s=11` é o que MÊS e
+// ANO usam nas linhas 2 e 3 (na 5, MÊS volta a `s=7` — o modelo é assim mesmo).
+// Visualmente as duas são equivalentes aqui: `numFmtId=1` e General exibem 2026
+// igual, sem separador de milhar. A escolha é por uniformidade, não por
+// formatação.
 const COLUNAS: ColunaLivroCaixa[] = [
   { header: 'BANCO ',             sHeader: 1, sDado: 5,  tipo: 'texto',     extrair: l => l.banco ?? null },
   { header: 'AG',                 sHeader: 1, sDado: 6,  tipo: 'texto',     extrair: l => l.agencia ?? null },

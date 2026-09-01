@@ -169,10 +169,30 @@ a cor de tema 1 (que É preto) para preto literal:
 | 4 | A regra escrita de "majoritário" era falsa — o majoritário é `s=7` em tudo | Regra corrigida para "copie a **linha 6** do modelo" |
 | 5 | Estilos do corpo eram os únicos não conferidos contra o modelo | Teste passou a ler a linha 6 do modelo do disco |
 | 6 | O aviso âmbar era só JSX, sem teste | Texto extraído para `avisosDoArquivo`, com teste |
-| 7 | Teste de caractere de controle passava sem os caracteres | Escapes por código + caso misturado (`AB` → `AB`) |
+| 7 | Teste de caractere de controle passava sem os caracteres | Escapes por codigo + caso misturado: a string `A\u0001B` deve sair como `AB` |
 | 8 | Comentário de `ESTILO_VALOR_NEGATIVO` contradizia o modelo | Corrigido |
 | 9 | "Cabeçalho amarelo = preenche à mão" não bate com o modelo | Justificativa reescrita |
 | 10 | `CC` pode virar 'TEJUCO' onde o contador filtra 'TJ' | Documentado como risco latente, com o conserto indicado |
+
+### 2a rodada — 01/09/2026
+
+O Apolo revisou os proprios consertos e achou 9 problemas novos, incluindo um erro
+da 1a rodada dele. Todos corrigidos:
+
+| # | Achado | O que foi feito |
+|---|---|---|
+| 1 | **HISTORICO saia com a parcela DUPLICADA** — `deNotaFiscal.ts` ja grava `(1/3)` dentro de `descricao` E preenche `numero_parcela`. Toda conta de NF-e parcelada saia "... (1/3) (1/3)", a cara exata de lancamento duplicado que o codigo existia para evitar | Guarda `endsWith(sufixo)`, com teste usando a descricao REAL do banco |
+| 2 | Concordancia quebrada no 3o aviso ("1 conta ... **entram**") — regressao introduzida pela extracao do achado 6, e o teste parava uma palavra antes do erro | A oracao inteira passa pelo `plural()` nos tres; teste virou tabela cobrindo os 3 |
+| 3 | Na aba "Dispensadas" o aviso culpava o motivo errado: conta fixa nasce estimada e `dispensar` grava so o status, entao o dono registrava o valor real e nada mudava | Dispensada virou o motivo de maior precedencia |
+| 4 | O teste "nao altera a lista recebida" passava por acaso (o `.filter()` ja copiava) | `ordenarPorData` exportada e testada direto, com o array cru |
+| 5 | O guard que impede contar a mesma conta em dois avisos nao tinha teste | Caso `{ valor_estimado: true, status: 'dispensada' }` |
+| 6 | Regressao de formatacao: "1000 contas" em vez de "1.000" | `toLocaleString('pt-BR')` dentro do `plural()` |
+| 7 | Meu relato dizia que `historicoDaConta` mudou no 2o commit; ela e byte-identica (o conserto do "(1/1)" foi no 1o) | Erro de relato, nao de codigo — registrado aqui |
+| 8 | Dois erros de fato no comentario novo do `COLUNAS` | Contagem refeita: 221 linhas `s=7`, 4 linhas no padrao 6-9, 4 exemplos |
+| 9 | O spec perdeu o `\u0001` justo na linha que documenta "nunca escrever controle literal" | Reescrito |
+
+Os seis consertos que mudam comportamento foram conferidos por **mutacao**: cada um
+teve o codigo revertido e a suite reprovou. Nenhum passa por acaso.
 
 **Não corrigido, de propósito:** achado 11 — `PREFIXO_CONFERIR` ("Conferir antes de
 pagar:") vai inteiro para a coluna OBS. É recado interno vazando para o contador,

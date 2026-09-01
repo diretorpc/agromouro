@@ -84,7 +84,26 @@ export function contasExportaveis(contas: ContaAPI[]): ContaAPI[] {
 export function avisosDoArquivo(contas: ContaAPI[]): string[] {
   const avisos: string[] = []
 
-  const estimadas = contas.filter(c => c.valor_estimado).length
+  // DISPENSADA VEM PRIMEIRO, e não leva guard nenhum. Conta fixa nasce
+  // estimada (`sincronizar.ts`) e `POST /contas/:id/dispensar` grava SÓ o
+  // status — então "dispensada E estimada" é o caso normal, não exótico.
+  // Contando pelo estimado primeiro, a aba "Dispensadas" avisava "registre o
+  // valor real antes de exportar": o dono ia lá, registrava os três, e NADA
+  // mudava, porque a exclusão que vale é a de dispensada. Conselho que não
+  // funciona é pior que aviso nenhum. Achado 3 da 2ª rodada do Apolo.
+  const dispensadas = contas.filter(c => c.status === 'dispensada').length
+  if (dispensadas > 0) {
+    avisos.push(
+      plural(
+        dispensadas,
+        'conta dispensada não entra no arquivo',
+        'contas dispensadas não entram no arquivo',
+      ) +
+      ' — dispensar é decidir NÃO pagar, e livro caixa registra dinheiro que saiu.',
+    )
+  }
+
+  const estimadas = contas.filter(c => c.valor_estimado && c.status !== 'dispensada').length
   if (estimadas > 0) {
     avisos.push(
       plural(
@@ -97,34 +116,42 @@ export function avisosDoArquivo(contas: ContaAPI[]): string[] {
     )
   }
 
-  const dispensadas = contas.filter(c => !c.valor_estimado && c.status === 'dispensada').length
-  if (dispensadas > 0) {
-    avisos.push(
-      `${plural(dispensadas, 'conta dispensada não entra', 'contas dispensadas não entram')} ` +
-      'no arquivo — dispensar é decidir NÃO pagar, e livro caixa registra dinheiro que saiu.',
-    )
-  }
-
   // ESTE fica DENTRO do arquivo, ao contrário dos dois de cima — é aviso sobre
-  // o que o arquivo LEVA, não sobre o que ele omite. Achado 1 do Apolo: o
-  // formato perdeu a coluna de status, então nada distingue pago de a pagar. A
-  // linha sai com valor cheio, sinal negativo e "D" de débito, que num livro
-  // caixa é dinheiro que saiu. Só a data fica em branco, e data em branco não
-  // grita.
+  // o que o arquivo LEVA, não sobre o que ele omite. Achado 1 da 1ª rodada do
+  // Apolo: o formato perdeu a coluna de status, então nada distingue pago de a
+  // pagar. A linha sai com valor cheio, sinal negativo e "D" de débito, que num
+  // livro caixa é dinheiro que saiu. Só a data fica em branco, e data em branco
+  // não grita.
   const semPagamento = contasExportaveis(contas).filter(c => !c.data_pagamento).length
   if (semPagamento > 0) {
     avisos.push(
-      `${plural(semPagamento, 'conta do arquivo ainda não foi paga', 'contas do arquivo ainda não foram pagas')}` +
-      ' — entram com valor e como débito (D), mas SEM data. Filtre por "Pagas" se o arquivo' +
-      ' for para a contabilidade.',
+      plural(
+        semPagamento,
+        'conta do arquivo ainda não foi paga: entra com valor e como débito (D), mas SEM data',
+        'contas do arquivo ainda não foram pagas: entram com valor e como débito (D), mas SEM data',
+      ) +
+      '. Filtre por "Pagas" se o arquivo for para a contabilidade.',
     )
   }
 
   return avisos
 }
 
+/**
+ * A FRASE INTEIRA concorda em número, não só o primeiro verbo.
+ *
+ * Foi assim que o defeito nasceu: a 1ª versão passava só "N conta(s)" por aqui
+ * e grudava um sufixo fixo, produzindo "2 contas ... e não ENTRA no arquivo".
+ * Consertei num aviso e deixei o mesmo erro nos outros dois — achado 2 da 2ª
+ * rodada. Por isso `um` e `varios` recebem a oração toda; o que sobra do lado
+ * de fora não pode ter verbo nem substantivo que concorde.
+ *
+ * `toLocaleString` porque o número chega a quatro dígitos: `pareceTruncado`
+ * desconfia justamente de 1.000 linhas carregadas, e "1000 contas" no meio de
+ * uma tela que escreve "R$ 1.099,22" é descuido visível.
+ */
 function plural(n: number, um: string, varios: string): string {
-  return `${n} ${n === 1 ? um : varios}`
+  return `${n.toLocaleString('pt-BR')} ${n === 1 ? um : varios}`
 }
 
 /**
@@ -143,6 +170,14 @@ function plural(n: number, um: string, varios: string): string {
  * `numero_parcela = 1, total_parcelas = 1` (visto em produção em 01/09/2026,
  * na conta da HIGA), e "(1/1)" no fim de toda linha é ruído — e ruído treina
  * quem lê a ignorar o parêntese que IMPORTA, o "(2/3)".
+ *
+ * E SÓ SE A DESCRIÇÃO AINDA NÃO TIVER. Os dois lugares que criam parcela já
+ * gravam o sufixo dentro da própria `descricao`:
+ * `deNotaFiscal.ts` (`total > 1 ? \`${base} (${i + 1}/${total})\` : base`) e
+ * `parcelamento.ts`. Sem esta guarda, toda conta de NF-e parcelada — o caso
+ * mais comum do sistema — saía no arquivo do contador como
+ * "MIKAMI - DIESEL S10 (1/3) (1/3)", que é exatamente a cara de lançamento
+ * duplicado que este código existe para evitar. Achado 1 da 2ª rodada do Apolo.
  */
 export function historicoDaConta(c: ContaAPI): string | null {
   const partes = [c.fornecedor, c.descricao]
@@ -150,9 +185,12 @@ export function historicoDaConta(c: ContaAPI): string | null {
     .filter(t => t !== '')
   let texto = partes.join(' - ')
   if (c.numero_parcela && c.total_parcelas && c.total_parcelas > 1) {
-    texto = texto === ''
-      ? `Parcela ${c.numero_parcela}/${c.total_parcelas}`
-      : `${texto} (${c.numero_parcela}/${c.total_parcelas})`
+    const sufixo = `(${c.numero_parcela}/${c.total_parcelas})`
+    if (texto === '') {
+      texto = `Parcela ${c.numero_parcela}/${c.total_parcelas}`
+    } else if (!texto.endsWith(sufixo)) {
+      texto = `${texto} ${sufixo}`
+    }
   }
   return texto === '' ? null : texto
 }
@@ -189,8 +227,18 @@ export function rotuloTransacao(categoria: string | null): string | null {
  * tamanho fixo e zero à esquerda — sem `Date`, sem fuso, sem chance de
  * escorregar. Empate mantém a ordem que chegou (`sort` do V8 é estável desde o
  * Node 11), então duas contas do mesmo dia saem na ordem da tela.
+ *
+ * COPIA antes de ordenar: `sort` mexe no array original, e quem chama passa
+ * `contasFiltradas`, que é estado do React — ordenar no lugar re-renderizaria a
+ * tabela na ordem do ARQUIVO no meio de um clique de exportar.
+ *
+ * EXPORTADA só para o teste alcançá-la com o array cru. Chamada por
+ * `linhasLivroCaixa` sempre depois do `.filter()` de `contasExportaveis`, que
+ * já devolve array novo — então hoje a cópia é cinto de segurança, e um teste
+ * feito através de `linhasLivroCaixa` passaria mesmo sem ela (achado 4 da 2ª
+ * rodada do Apolo: mutante sobrevivente). Testada direto, a cópia tem guarda.
  */
-function ordenarPorData(contas: ContaAPI[]): ContaAPI[] {
+export function ordenarPorData(contas: ContaAPI[]): ContaAPI[] {
   return [...contas].sort((a, b) => {
     const da = a.data_pagamento ?? ''
     const db = b.data_pagamento ?? ''

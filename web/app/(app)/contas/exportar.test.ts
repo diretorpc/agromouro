@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   avisosDoArquivo, contasExportaveis, historicoDaConta, linhasLivroCaixa,
-  nomeArquivoExport, pareceTruncado, type ContextoNome,
+  nomeArquivoExport, ordenarPorData, pareceTruncado, type ContextoNome,
 } from './exportar'
 import type { ContaAPI } from './tipos'
 
@@ -93,13 +93,63 @@ describe('avisosDoArquivo', () => {
   })
 
   // A frase INTEIRA concorda em número, não só o primeiro verbo. A 1ª versão
-  // dizia "2 contas deste recorte têm valor ESTIMADO e não ENTRA no arquivo" —
-  // visto na tela em 01/09/2026, porque o plural cobria só o começo.
-  it('concorda em número do começo ao fim da frase', () => {
-    expect(avisosDoArquivo([conta({ valor_estimado: true })])[0])
-      .toContain('1 conta deste recorte tem valor ESTIMADO e não entra no arquivo')
-    expect(avisosDoArquivo([conta({ valor_estimado: true }), conta({ valor_estimado: true })])[0])
-      .toContain('2 contas deste recorte têm valor ESTIMADO e não entram no arquivo')
+  // dizia "2 contas deste recorte têm valor ESTIMADO e não ENTRA no arquivo".
+  // Consertei num aviso e deixei o mesmo erro nos outros dois — por isso este
+  // teste cobre os TRÊS (achado 2 da 2ª rodada do Apolo). Um assert que para
+  // antes do verbo final passa por acaso; estes vão até o fim da oração.
+  const NUM_E_VERBO = [
+    { nome: 'estimadas', muda: { valor_estimado: true },
+      um:     '1 conta deste recorte tem valor ESTIMADO e não entra no arquivo',
+      varios: '2 contas deste recorte têm valor ESTIMADO e não entram no arquivo' },
+    { nome: 'dispensadas', muda: { status: 'dispensada' as const },
+      um:     '1 conta dispensada não entra no arquivo',
+      varios: '2 contas dispensadas não entram no arquivo' },
+    { nome: 'nao pagas', muda: { status: 'aberta' as const, data_pagamento: null },
+      um:     '1 conta do arquivo ainda não foi paga: entra com valor e como débito (D), mas SEM data',
+      varios: '2 contas do arquivo ainda não foram pagas: entram com valor e como débito (D), mas SEM data' },
+  ]
+
+  for (const caso of NUM_E_VERBO) {
+    it(`concorda em número do começo ao fim da frase — ${caso.nome}`, () => {
+      const um = avisosDoArquivo([conta(caso.muda)])
+      expect(um.some(a => a.includes(caso.um)), `singular saiu: ${um.join(' | ')}`).toBe(true)
+      const dois = avisosDoArquivo([conta({ id: 'a', ...caso.muda }), conta({ id: 'b', ...caso.muda })])
+      expect(dois.some(a => a.includes(caso.varios)), `plural saiu: ${dois.join(' | ')}`).toBe(true)
+    })
+  }
+
+  // Alcançável: `pareceTruncado` desconfia justamente de 1.000 linhas
+  // carregadas, e "1000 contas" numa tela que escreve "R$ 1.099,22" é descuido.
+  it('separa o milhar no número', () => {
+    const muitas = Array.from({ length: 1000 }, (_, i) => conta({ id: `c${i}`, valor_estimado: true }))
+    expect(avisosDoArquivo(muitas)[0]).toContain('1.000 contas')
+  })
+
+  // Conta fixa nasce estimada e `dispensar` grava SÓ o status: "dispensada E
+  // estimada" é o caso NORMAL, não exótico. Contando pelo estimado primeiro, a
+  // aba "Dispensadas" mandava "registre o valor real antes de exportar" — o
+  // dono ia lá, registrava, e NADA mudava, porque a exclusão que vale é a de
+  // dispensada. Conselho que não funciona é pior que aviso nenhum. Achado 3 da
+  // 2ª rodada do Apolo.
+  it('conta dispensada E estimada aparece só como dispensada', () => {
+    const avisos = avisosDoArquivo([conta({ valor_estimado: true, status: 'dispensada' })])
+    expect(avisos).toHaveLength(1)
+    expect(avisos[0]).toContain('1 conta dispensada')
+    expect(avisos[0]).not.toContain('ESTIMADO')
+  })
+
+  // Sem este caso o guard que separa as duas contagens não tem teste, e um
+  // mutante que o remova sobrevive: a mesma conta apareceria nos DOIS avisos e
+  // o dono leria "2 contas a menos" onde falta 1. Achado 5 da 2ª rodada.
+  it('não conta a mesma conta em dois avisos', () => {
+    const avisos = avisosDoArquivo([
+      conta({ id: 'a', valor_estimado: true, status: 'dispensada' }),
+      conta({ id: 'b', valor_estimado: true }),
+      conta({ id: 'c' }),
+    ])
+    expect(avisos).toHaveLength(2)
+    expect(avisos.some(a => a.includes('1 conta dispensada'))).toBe(true)
+    expect(avisos.some(a => a.includes('1 conta deste recorte tem'))).toBe(true)
   })
 
   it('avisa quantas dispensadas ficaram de fora', () => {
@@ -179,6 +229,28 @@ describe('historicoDaConta', () => {
   it('mas escreve (1/3) na primeira de três', () => {
     expect(historicoDaConta(conta({ numero_parcela: 1, total_parcelas: 3 })))
       .toBe('CEMIG - Energia elétrica — sede (1/3)')
+  })
+
+  // O CASO REAL, que o fixture acima nunca exercitava: `deNotaFiscal.ts` grava
+  // `descricao: 'DIESEL S10 (1/3)'` E preenche numero_parcela/total_parcelas.
+  // Sem a guarda, toda conta de NF-e parcelada — o caso mais comum do sistema —
+  // saía no arquivo do contador como "... (1/3) (1/3)", que é exatamente a cara
+  // de lançamento duplicado que este código existe para evitar. Achado 1 da 2ª
+  // rodada do Apolo.
+  it('não duplica a parcela que a descrição do banco já traz', () => {
+    const c = conta({
+      fornecedor: 'MIKAMI COM DE PROD AGROP',
+      descricao: 'DIESEL S10 (1/3)',
+      numero_parcela: 1,
+      total_parcelas: 3,
+    })
+    expect(historicoDaConta(c)).toBe('MIKAMI COM DE PROD AGROP - DIESEL S10 (1/3)')
+  })
+
+  // A guarda compara o sufixo EXATO: (1/3) no fim não pode calar (2/3).
+  it('acrescenta quando a descrição traz OUTRA parcela no fim', () => {
+    const c = conta({ descricao: 'DIESEL S10 (1/3)', numero_parcela: 2, total_parcelas: 3 })
+    expect(historicoDaConta(c)).toBe('CEMIG - DIESEL S10 (1/3) (2/3)')
   })
 })
 
@@ -322,17 +394,6 @@ describe('linhasLivroCaixa', () => {
     expect(saida.map(l => l.historico?.[0])).toEqual(['A', 'B', 'C'])
   })
 
-  // Ordenar não pode mexer no array de quem chamou — `contasFiltradas` é estado
-  // do React, e ordenar no lugar re-renderizaria a tabela na ordem do arquivo.
-  it('não altera a lista recebida', () => {
-    const lista = [
-      conta({ fornecedor: 'A', data_pagamento: '2026-08-20' }),
-      conta({ fornecedor: 'B', data_pagamento: '2026-08-06' }),
-    ]
-    linhasLivroCaixa(lista, 'mg')
-    expect(lista.map(c => c.fornecedor)).toEqual(['A', 'B'])
-  })
-
   it('lista vazia devolve lista vazia, sem estourar', () => {
     expect(linhasLivroCaixa([], 'mg')).toEqual([])
   })
@@ -398,5 +459,42 @@ describe('nomeArquivoExport', () => {
   it('tira acento e espaço do código da fazenda', () => {
     expect(nomeArquivoExport({ ...CTX, fazenda: 'São João' }))
       .toBe('livro-caixa-sao-joao-todas-2026-08.xlsx')
+  })
+})
+
+// ─── Ordenação ────────────────────────────────────────────────────────────────
+
+// Testada DIRETO, e não através de `linhasLivroCaixa`: por lá, o `.filter()` de
+// `contasExportaveis` já entrega um array novo, então um teste de "não mutou"
+// feito de fora passa mesmo se a cópia sumir. O Apolo provou com mutante
+// sobrevivente (achado 4 da 2ª rodada) — o assert de baixo é o que tem guarda.
+describe('ordenarPorData', () => {
+  it('não altera o array recebido', () => {
+    const lista = [
+      conta({ fornecedor: 'A', data_pagamento: '2026-08-20' }),
+      conta({ fornecedor: 'B', data_pagamento: '2026-08-06' }),
+    ]
+    const saida = ordenarPorData(lista)
+    expect(lista.map(c => c.fornecedor)).toEqual(['A', 'B'])
+    expect(saida.map(c => c.fornecedor)).toEqual(['B', 'A'])
+    expect(saida).not.toBe(lista)
+  })
+
+  it('põe as sem data no fim, na ordem em que chegaram', () => {
+    const saida = ordenarPorData([
+      conta({ fornecedor: 'A', data_pagamento: null }),
+      conta({ fornecedor: 'B', data_pagamento: '2026-08-06' }),
+      conta({ fornecedor: 'C', data_pagamento: null }),
+    ])
+    expect(saida.map(c => c.fornecedor)).toEqual(['B', 'A', 'C'])
+  })
+
+  it('ordena virada de mês e de ano pela string, sem Date', () => {
+    const saida = ordenarPorData([
+      conta({ fornecedor: 'A', data_pagamento: '2026-01-02' }),
+      conta({ fornecedor: 'B', data_pagamento: '2025-12-31' }),
+      conta({ fornecedor: 'C', data_pagamento: '2026-01-10' }),
+    ])
+    expect(saida.map(c => c.fornecedor)).toEqual(['B', 'A', 'C'])
   })
 })
