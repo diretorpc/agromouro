@@ -113,17 +113,28 @@ morreu. Onde ele está de verdade continua em aberto, e o palpite de 1.000 no
 
 ---
 
-## 🔨 Exportar Contas no formato do LIVRO CAIXA — 01/09/2026 — **na branch**
+## ✅ Exportar Contas no formato do LIVRO CAIXA — 01/09/2026 — **NO AR** (PR #80)
 
-> Ramo `feat/contas-livro-caixa`. Só `web/` — nenhuma migration, nenhuma ordem
-> de deploy. **Quatro rodadas do Apolo**, 34 achados no total. As piores:
+> Mergeado em 01/09/2026 (`0b663ad`), squash. Só `web/` — nenhuma migration,
+> nenhuma ordem de deploy. Conferido por CONTEÚDO na `main`, não pelo
+> identificador do commit: o squash troca o SHA e já enganou este projeto antes
+> (ver a memória `branch-parece-nao-mergeada`).
+>
+> **O que NÃO foi verificado, e continua não sendo:** abrir o arquivo gerado no
+> Excel de verdade. Não há `pywin32` na máquina e nenhum pacote foi instalado
+> para isso. A validação é de outro leitor de planilha (`openpyxl`) mais a
+> estrutura do OOXML. O Matheus mandou mergear sabendo disso. Se o Excel um dia
+> pedir "reparo" ao abrir o arquivo, é aqui que a investigação começa — e uma
+> amostra se gera em segundos com `gerarLivroCaixa(linhasLivroCaixa(...))`.
+>
+> **Quatro rodadas do Apolo**, 34 achados no total. As piores:
 > a 2ª pegou a parcela DUPLICADA no histórico de toda conta de NF-e parcelada
 > (e um erro da 1ª rodada dele mesmo); a 3ª pegou um conselho meu que produzia
 > exatamente o livro caixa furado que ele dizia evitar; a 4ª pegou a tarja âmbar
 > permanente renascendo na linha de baixo daquela que acabara de ser consertada.
 > Os consertos que mudam comportamento foram conferidos por mutação — código
 > revertido, suíte reprovando. Um único mutante sobrevive de propósito, e o
-> motivo está escrito no código. **SUBSTITUI a exportação do PR #76 descrita logo abaixo**, que
+> motivo está escrito no código. **SUBSTITUIU a exportação do PR #76 descrita logo abaixo**, que
 > ficou obsoleta: aquele bloco descreve 13 colunas próprias e um rodapé de
 > TOTAL que este trabalho apagou. Leia os dois juntos, nesta ordem.
 
