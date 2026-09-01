@@ -22,7 +22,8 @@
 
 import { categoriaLabel } from '@/lib/centro-custo'
 import type { LinhaLivroCaixa } from '@/lib/xlsx-livro-caixa'
-import type { FiltroStatus, FiltroTipo } from './filtros'
+import { contaBateFiltro, type FiltroStatus, type FiltroTipo } from './filtros'
+import { labelMes } from './datas'
 import type { ContaAPI } from './tipos'
 
 // A data no banco é 'AAAA-MM-DD' (só o dia, sem hora) — `data_pagamento` é
@@ -85,27 +86,83 @@ export function contasExportaveis(contas: ContaAPI[]): ContaAPI[] {
  * Devolve lista vazia quando não há nada a avisar: um aviso permanente treina
  * quem lê a ignorar o âmbar, e aí o dia em que ele importa passa batido.
  */
-export function avisosDoArquivo(contas: ContaAPI[], filtroStatus: FiltroStatus): string[] {
+/**
+ * O que `avisosDoArquivo` precisa saber. Objeto, e não cinco parâmetros soltos:
+ * `contasFiltradas` e `contasCarregadas` são os dois do MESMO tipo, e trocá-los
+ * de posição numa chamada não daria erro de compilação — só um número errado na
+ * tela, sobre dinheiro.
+ */
+export type AvisosContexto = {
+  /** O que o recorte da tela achou. Base de tudo que tem contagem. */
+  contasFiltradas: ContaAPI[]
+  /** TUDO que a tela carregou, antes dos filtros — é aqui que mora o que a aba escondeu. */
+  contasCarregadas: ContaAPI[]
+  filtroStatus: FiltroStatus
+  filtroMes: string
+  /** 'AAAA-MM-DD'. Entra por parâmetro para o teste ser fixo. */
+  hoje: string
+}
+
+export function avisosDoArquivo(ctx: AvisosContexto): string[] {
+  const { contasFiltradas, contasCarregadas, filtroStatus, filtroMes, hoje } = ctx
   const avisos: string[] = []
 
-  // O MAIS TRAIÇOEIRO VEM PRIMEIRO, e é o único que não tem número: a aba
-  // "Todas" esconde conta paga há mais de 30 dias (`contaBateFiltro` em
-  // `filtros.ts`). Isso era detalhe enquanto o arquivo levava conta em aberto;
-  // agora que ele é SÓ pagamento, é dinheiro que saiu de verdade e não aparece
-  // em lugar nenhum — nem na tela, nem no arquivo, nem numa contagem. Exportar
-  // o mês fechado pela aba errada devolve um livro caixa furado.
+  // ─── O que a TELA escondeu antes de a lista chegar aqui ───────────────────
+  //
+  // Os dois avisos deste bloco não são sobre o recorte que o dono escolheu: são
+  // sobre pagamento que ele NÃO tem como ver, e que por isso não entra no
+  // arquivo nem aparece em contagem nenhuma. Enquanto o livro caixa levava
+  // conta em aberto isso era detalhe; agora que ele é só pagamento, é dinheiro
+  // que saiu e sumiu.
+
+  // 1. A aba "Todas" esconde conta paga há mais de 30 dias (`contaBateFiltro`).
+  //    COM NÚMERO, e só quando existe: a tarja nasceria em toda abertura da
+  //    tela (o filtro começa em 'todas'), e aviso permanente treina quem lê a
+  //    ignorar o âmbar — regra escrita no cabeçalho desta função e violada na
+  //    1ª versão. Achado 5 da 3ª rodada do Apolo.
   if (filtroStatus === 'todas') {
+    const escondidas = contasCarregadas
+      .filter(c => c.status === 'paga' && !contaBateFiltro(c, 'todas', hoje)).length
+    if (escondidas > 0) {
+      avisos.push(
+        plural(
+          escondidas,
+          'pagamento com mais de 30 dias está escondido pela aba "Todas" e não entra no arquivo',
+          'pagamentos com mais de 30 dias estão escondidos pela aba "Todas" e não entram no arquivo',
+        ) +
+        '. Use a aba "Pagas".',
+      )
+    }
+  }
+
+  // 2. O FILTRO DE MÊS RECORTA PELO VENCIMENTO, não pela data do pagamento
+  //    (`mesDaConta` em `filtros.ts`: devolve `data_pagamento` só quando não há
+  //    vencimento). Uma conta que venceu 28/07 e foi paga 05/08 NÃO entra no
+  //    recorte de agosto; uma que venceu 25/08 e foi paga 03/09 entra, com data
+  //    de setembro. Num livro caixa isso é o mês fechado saindo furado e com
+  //    linha de outro mês dentro.
+  //
+  //    A 1ª versão deste aviso mandava "exporte pela aba Pagas para o mês
+  //    fechado" — conselho que produzia exatamente esse arquivo. Achado 1 da 3ª
+  //    rodada do Apolo, e o filtro de mês nasce no mês corrente, então o
+  //    caminho errado era o caminho padrão.
+  if (filtroMes !== 'todos') {
     avisos.push(
-      'A aba "Todas" esconde pagamento com mais de 30 dias, e o que ela esconde também' +
-      ' fica de fora do arquivo. Para o mês fechado, exporte pela aba "Pagas" — essa não' +
-      ' tem limite de data.',
+      'O filtro de mês recorta pelo VENCIMENTO, não pela data do pagamento: uma conta paga' +
+      ` em ${labelMes(filtroMes)} mas vencida em outro mês fica de fora, e o contrário` +
+      ' também acontece. Para o livro caixa fechar, use "Todos os meses" e recorte a data' +
+      ' na planilha.',
     )
   }
 
-  // As três contagens abaixo são DISJUNTAS por construção e, somadas, dão
-  // exatamente o que o filtro achou menos o que o arquivo leva. Toda conta é
-  // dispensada, ou não-paga-nem-dispensada, ou paga.
-  const naoPagas = contas.filter(c => c.status !== 'paga' && c.status !== 'dispensada').length
+  // ─── O que o recorte tem e o arquivo não leva ─────────────────────────────
+  //
+  // As três contagens abaixo são DISJUNTAS e EXAUSTIVAS: toda conta é
+  // dispensada, ou não-paga-nem-dispensada, ou paga (e destas, só a estimada
+  // fica de fora). Somadas dão exatamente o que o filtro achou menos o que o
+  // arquivo leva — e um teste garante a soma.
+  const naoPagas = contasFiltradas
+    .filter(c => c.status !== 'paga' && c.status !== 'dispensada').length
   if (naoPagas > 0) {
     avisos.push(
       plural(
@@ -120,7 +177,7 @@ export function avisosDoArquivo(contas: ContaAPI[], filtroStatus: FiltroStatus):
 
   // Separada da anterior porque o motivo é OUTRO e o dono lê diferente:
   // dispensar é a decisão de não pagar, não uma pendência.
-  const dispensadas = contas.filter(c => c.status === 'dispensada').length
+  const dispensadas = contasFiltradas.filter(c => c.status === 'dispensada').length
   if (dispensadas > 0) {
     avisos.push(
       plural(
@@ -133,24 +190,33 @@ export function avisosDoArquivo(contas: ContaAPI[], filtroStatus: FiltroStatus):
   }
 
   // Quase inalcançável: pagar grava `valor_estimado: false` junto com o status.
-  // Só linha antiga cai aqui — e é justamente por ser rara que precisa de
-  // aviso: uma conta some do arquivo e nada mais no sistema comenta.
-  const pagasEstimadas = contas.filter(c => c.status === 'paga' && c.valor_estimado).length
+  // Só linha antiga cai aqui — e é por ser rara que precisa de aviso: a conta
+  // some do arquivo e nada mais no sistema comenta.
+  //
+  // O CONSELHO É "desfaça e refaça", e não "edite o valor": `PATCH /contas/:id`
+  // só limpa `valor_estimado` quando o status NÃO é paga/dispensada
+  // (`ENCERRADOS_PARA_EDICAO` em `api/src/routes/contas.ts`). Mandar editar era
+  // conselho morto — o dono registraria o valor real e nada mudaria. É o achado
+  // 3 da 2ª rodada renascendo em outro aviso; pego pelo Apolo na 3ª.
+  const pagasEstimadas = contasFiltradas
+    .filter(c => c.status === 'paga' && c.valor_estimado).length
   if (pagasEstimadas > 0) {
     avisos.push(
       plural(
         pagasEstimadas,
-        'conta paga tem valor ESTIMADO e não entra no arquivo',
-        'contas pagas têm valor ESTIMADO e não entram no arquivo',
-      ) +
-      ' — o formato não tem onde marcar palpite. Registre o valor real.',
+        'conta paga ficou com valor ESTIMADO e não entra no arquivo: desfaça o pagamento e' +
+          ' registre-o de novo com o valor real',
+        'contas pagas ficaram com valor ESTIMADO e não entram no arquivo: desfaça os pagamentos' +
+          ' e registre-os de novo com o valor real',
+      ) + '.',
     )
   }
 
-  // ESTE é sobre o que o arquivo LEVA, não sobre o que ele omite. Também quase
-  // inalcançável (a rota de pagar sempre grava a data), mas se acontecer a
-  // linha sai com DIA, MÊS e ANO em branco no meio de um livro cronológico.
-  const semData = contasExportaveis(contas).filter(c => !c.data_pagamento).length
+  // ESTE é sobre o que o arquivo LEVA, não sobre o que ele omite — por isso lê
+  // `contasExportaveis` e não a lista inteira. Sem esse filtro, toda conta em
+  // aberto (que também não tem `data_pagamento`) seria contada aqui, e o número
+  // mentiria sobre um arquivo que vai para o contador.
+  const semData = contasExportaveis(contasFiltradas).filter(c => !c.data_pagamento).length
   if (semData > 0) {
     avisos.push(
       plural(

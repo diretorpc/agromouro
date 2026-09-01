@@ -156,11 +156,20 @@ a cor de tema 1 (que É preto) para preto literal:
   `contasExportaveis` agora exige `status === 'paga'`, o que sozinho já cobre
   dispensada, aberta, aguardando e atrasada. O `!valor_estimado` fica como cinto de
   segurança para linha antiga (pagar grava `valor_estimado: false`).
-- **Consequência que virou aviso:** a aba "Todas" esconde conta paga há mais de 30
-  dias (`contaBateFiltro`). Enquanto o arquivo levava conta em aberto isso era
-  detalhe; agora é pagamento de verdade que não aparece em lugar nenhum — nem na
-  tela, nem no arquivo, nem numa contagem. Para o mês fechado, exportar pela aba
-  "Pagas", que não tem limite de data. A tela diz isso quando o filtro é "Todas".
+- **Duas consequências que viraram aviso**, porque o arquivo deixou de ser "o que
+  está na tela" e passou a ser "dinheiro que saiu":
+  1. a aba "Todas" esconde conta paga há mais de 30 dias (`contaBateFiltro`) — e o
+     que ela esconde não aparece em lugar nenhum: nem na tela, nem no arquivo, nem
+     numa contagem. Avisado **com número**, e só quando existe;
+  2. **o filtro de mês recorta pelo VENCIMENTO, não pela data do pagamento**
+     (`mesDaConta`: só cai em `data_pagamento` quando não há vencimento). A 1ª
+     versão deste aviso mandava "exporte pela aba Pagas para o mês fechado" —
+     conselho que produzia exatamente o livro caixa furado que ele dizia evitar,
+     e o filtro de mês nasce no mês corrente, então o caminho errado era o
+     padrão. Achado 1 da 3ª rodada do Apolo.
+- **Fora de escopo, registrado:** `contaBateMes` usar `data_pagamento` para conta
+  encerrada consertaria a raiz — mas mexe no card "Total de contas pagas" e no
+  seletor de meses junto. Decisão do dono.
 
 ## Revisão do Apolo — 01/09/2026
 
@@ -178,6 +187,24 @@ a cor de tema 1 (que É preto) para preto literal:
 | 8 | Comentário de `ESTILO_VALOR_NEGATIVO` contradizia o modelo | Corrigido |
 | 9 | "Cabeçalho amarelo = preenche à mão" não bate com o modelo | Justificativa reescrita |
 | 10 | `CC` pode virar 'TEJUCO' onde o contador filtra 'TJ' | Documentado como risco latente, com o conserto indicado |
+
+### 3a rodada — 01/09/2026
+
+Sete achados no commit do filtro de so-pagas. Todos corrigidos antes do PR:
+
+| # | Achado | O que foi feito |
+|---|---|---|
+| 1 | **O conselho novo produzia o livro caixa furado que ele dizia evitar** — "exporte pela aba Pagas para o mes fechado", sendo que o filtro de mes recorta pelo VENCIMENTO | Aviso reescrito e corrigido nos tres lugares (codigo, ESTADO.md, spec) |
+| 2 | "Registre o valor real" era conselho MORTO: `PATCH /contas/:id` nao limpa `valor_estimado` em conta paga | Virou "desfaca o pagamento e registre-o de novo" — caminho que existe na tela |
+| 3 | O teste da soma incluia o aviso de "paga sem data", que conta o que ENTRA — passava por escolha de fixture | Soma so os avisos de exclusao; fixture ganhou a conta que o derrubava |
+| 4 | Mutante vivo: tirar `contasExportaveis` da contagem de "sem data" nao reprovava | `it` novo: conta em aberto nao e contada como "do arquivo sem data" |
+| 5 | A tarja dos 30 dias era permanente na aba padrao, inclusive com lista vazia | Passou a ter numero e so aparece quando existe |
+| 6 | Tooltip dizia "nenhuma foi paga" quando todas foram (e eram estimadas) | Texto neutro |
+| 7 | "Registre o valor real" ficava fora do `plural()` | Some junto com o achado 2 |
+
+Nove mutantes mortos, incluindo quatro de regressao das rodadas anteriores
+(filtro de paga, guarda da parcela duplicada, copia do `ordenarPorData`, sinal
+negativo do valor).
 
 ### 2a rodada — 01/09/2026
 

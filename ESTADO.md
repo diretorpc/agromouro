@@ -143,9 +143,18 @@ código só têm sentido contra ele, e um teste o abre do disco para comparar.
   formato do modelo não tem coluna de status onde marcar "a pagar". Some do
   arquivo: aberta, aguardando, atrasada, dispensada e (linha antiga) paga com
   valor estimado. A tela conta quantas ficaram de fora, e por qual motivo.
-- **Para o mês fechado, exporte pela aba "Pagas", não pela "Todas".** A "Todas"
-  esconde pagamento com mais de 30 dias — e o que ela esconde não entra no
-  arquivo. A tela avisa isso quando o filtro é "Todas".
+- **Para o livro caixa fechar: aba "Pagas" + "Todos os meses".** Duas armadilhas,
+  as duas avisadas na tela:
+  1. a aba "Todas" esconde pagamento com mais de 30 dias, e o que ela esconde não
+     entra no arquivo;
+  2. **o filtro de mês recorta pelo VENCIMENTO, não pela data do pagamento**
+     (`mesDaConta` em `filtros.ts`). Conta que venceu 28/07 e foi paga 05/08 NÃO
+     entra no recorte de agosto; a que venceu 25/08 e foi paga 03/09 entra, com
+     data de setembro. Exportar "Pagas + agosto" devolve um mês furado e com
+     linha de outro mês dentro. Recorte a data na planilha.
+  O conserto de verdade seria `contaBateMes` usar `data_pagamento` para conta
+  encerrada — mas isso mexe também no card "Total de contas pagas" e no seletor
+  de meses. **Decisão do dono, não deste PR.**
 - **Sumiram** o rodapé de TOTAL CONFIRMADO/ESTIMADO, a frase que descrevia o
   recorte dentro do arquivo e a coluna "Estimado". O modelo não tem onde pôr.
   Os avisos mudaram de lugar, não sumiram: viraram tarjas âmbar na TELA, ao
