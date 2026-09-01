@@ -22,9 +22,14 @@
 
 ---
 
-## 🚧 Importar SÓ o boleto de uma nota que já está no sistema — 31/08/2026 — **NA BRANCH**
+## ✅ Importar SÓ o boleto de uma nota que já está no sistema — 01/09/2026 — **NO AR** (PR #78)
 
-Ramo `feat/contas-importar-boleto`. Pedido do Matheus: a nota 4507 da MIKAMI
+> Mergeado em 01/09/2026 (`8a9ef94`), 2 rodadas do Apolo. Mexe em `api/` E em
+> `web/` — o Railway precisa subir a API antes de a tela funcionar, senão o
+> botão devolve 404. Conferido por CONTEÚDO na `main`, não pelo identificador
+> do commit: o squash troca o SHA e já enganou este projeto antes.
+
+Pedido do Matheus: a nota 4507 da MIKAMI
 entrou em julho, quando o sistema ainda não puxava boleto, e a conta a pagar
 nunca nasceu — o vencimento de 03/11 (R$ 37.644,00) ia passar em silêncio.
 Reimportar a nota duplicaria os itens.
@@ -77,6 +82,12 @@ devolveu valor, vencimento e documento certos; o casamento achou a NF 4507 pelos
 três sinais; a conta foi criada pela TELA com `nota_fiscal_id` preenchido e
 `lancamento_id` nulo, e os lançamentos "MIKAMI" continuaram sendo 1. Reimportar
 o mesmo boleto agora devolve `parcela-repetida` apontando a conta que existe.
+
+### Resultado concreto
+
+A conta a pagar da MIKAMI existe: `f4e062da`, R$ 37.644,00, vencendo 03/11/2026,
+amarrada na nota 4507, `lancamento_id` nulo. O boleto que ia passar em silêncio
+está na tela.
 
 ### O que ficou aberto
 
