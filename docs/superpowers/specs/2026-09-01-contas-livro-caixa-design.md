@@ -188,6 +188,32 @@ a cor de tema 1 (que É preto) para preto literal:
 | 9 | "Cabeçalho amarelo = preenche à mão" não bate com o modelo | Justificativa reescrita |
 | 10 | `CC` pode virar 'TEJUCO' onde o contador filtra 'TJ' | Documentado como risco latente, com o conserto indicado |
 
+### 4a rodada — 01/09/2026
+
+Sete achados nos consertos da 3a rodada. O primeiro e o mesmo defeito que a
+rodada 3 tinha acabado de matar no aviso vizinho:
+
+| # | Achado | O que foi feito |
+|---|---|---|
+| 1 | **A tarja voltou a ser PERMANENTE**, so que na linha de baixo: o aviso do mes disparava com `filtroMes !== 'todos'`, e `filtroMes` nasce no mes corrente — toda abertura da tela mostrava ambar, mesmo sem conta nenhuma | Ganhou contagem de "pagamentos desalinhados": o mes em que a conta ENTRA no recorte discorda do mes em que ela foi PAGA. Zero desalinhados, nenhum aviso |
+| 2 | O numero dos 30 dias nao era recuperavel pela acao que o proprio aviso mandava fazer — a contagem ignorava `filtroTipo`, que nem estava no contexto | `filtroTipo` entrou no `AvisosContexto`; a contagem passa por `contaBateTipo` e `!valor_estimado`, e a instrucao virou `Use a aba "Pagas" com "Todos os meses"` — os N contados sao os N que reaparecem |
+| 3 | O aviso do mes aparecia nas abas "Atrasadas" e "Falta vencimento", onde o filtro de mes nao recorta nada | Guarda `filtroDeMesSeAplica` — ver a nota abaixo |
+| 4 | "recorta pelo VENCIMENTO" generalizava: para conta encerrada SEM vencimento recorta pelo pagamento | Frase completada |
+| 5 | Tooltip mandava "veja o aviso acima"; as tarjas ficam ABAIXO do botao | Uma palavra |
+| 6 | Mutante vivo: tirar `status === 'paga'` da contagem dos 30 dias anunciava conta DISPENSADA como pagamento escondido | `it` novo |
+| 7 | Mutante vivo: o teste da contagem de "sem data" so matava metade do `contasExportaveis` | `it` com paga + estimada + sem data |
+
+**A guarda do achado 3 e REDUNDANTE, e fica de proposito.** Medido: `contaBateFiltro`
+exige `!ENCERRADAS.has(status)` nas duas abas, entao conta paga nunca cai la e a
+contagem do achado 1 — que exige `status === 'paga'` — ja daria zero. Tira-la nao
+faz teste nenhum reprovar. Ela existe para `exportar.ts` nao DEPENDER desse detalhe
+de `filtros.ts`: se aquelas abas um dia mostrarem conta paga, o aviso aqui nao
+comeca a mentir junto. E ortogonalidade, nao protecao ativa — esta dito assim no
+codigo e no teste, para ninguem confiar em guarda que nao reclama.
+
+Onze mutantes rodados, dez mortos; o unico sobrevivente e essa guarda, pelo motivo
+acima. Quatro dos dez sao de regressao das rodadas 1-3.
+
 ### 3a rodada — 01/09/2026
 
 Sete achados no commit do filtro de so-pagas. Todos corrigidos antes do PR:

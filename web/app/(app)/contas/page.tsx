@@ -301,6 +301,7 @@ export default function ContasPage() {
     contasFiltradas,
     contasCarregadas: contas,
     filtroStatus: filtro,
+    filtroTipo,
     filtroMes,
     hoje,
   })
@@ -557,7 +558,7 @@ export default function ContasPage() {
             title={
               contasNoArquivo.length === 0
                 ? (contasFiltradas.length > 0
-                    ? 'Nenhuma conta deste recorte entra no arquivo — veja o aviso acima'
+                    ? 'Nenhuma conta deste recorte entra no arquivo — veja o aviso abaixo'
                     : 'Nada para exportar com os filtros atuais')
                 : `Baixar ${contasNoArquivo.length} pagamentos em Excel (formato livro caixa)`
             }

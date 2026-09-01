@@ -116,10 +116,14 @@ morreu. Onde ele está de verdade continua em aberto, e o palpite de 1.000 no
 ## 🔨 Exportar Contas no formato do LIVRO CAIXA — 01/09/2026 — **na branch**
 
 > Ramo `feat/contas-livro-caixa`. Só `web/` — nenhuma migration, nenhuma ordem
-> de deploy. **Duas rodadas do Apolo**, 20 achados no total; a 2ª pegou o pior
-> deles (parcela DUPLICADA no histórico de toda conta de NF-e parcelada) e um
-> erro da 1ª rodada dele mesmo. Os consertos que mudam comportamento foram
-> conferidos por mutação — código revertido, suíte reprovando. **SUBSTITUI a exportação do PR #76 descrita logo abaixo**, que
+> de deploy. **Quatro rodadas do Apolo**, 34 achados no total. As piores:
+> a 2ª pegou a parcela DUPLICADA no histórico de toda conta de NF-e parcelada
+> (e um erro da 1ª rodada dele mesmo); a 3ª pegou um conselho meu que produzia
+> exatamente o livro caixa furado que ele dizia evitar; a 4ª pegou a tarja âmbar
+> permanente renascendo na linha de baixo daquela que acabara de ser consertada.
+> Os consertos que mudam comportamento foram conferidos por mutação — código
+> revertido, suíte reprovando. Um único mutante sobrevive de propósito, e o
+> motivo está escrito no código. **SUBSTITUI a exportação do PR #76 descrita logo abaixo**, que
 > ficou obsoleta: aquele bloco descreve 13 colunas próprias e um rodapé de
 > TOTAL que este trabalho apagou. Leia os dois juntos, nesta ordem.
 

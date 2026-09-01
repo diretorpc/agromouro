@@ -90,7 +90,7 @@ describe('avisosDoArquivo', () => {
   const avisos = (lista: ContaAPI[], over: Partial<Parameters<typeof avisosDoArquivo>[0]> = {}) =>
     avisosDoArquivo({
       contasFiltradas: lista, contasCarregadas: lista,
-      filtroStatus: 'paga', filtroMes: 'todos', hoje: HOJE, ...over,
+      filtroStatus: 'paga', filtroTipo: 'todos', filtroMes: 'todos', hoje: HOJE, ...over,
     })
 
   it('não avisa nada quando todas do recorte foram pagas', () => {
@@ -111,9 +111,47 @@ describe('avisosDoArquivo', () => {
     const antiga = conta({ id: 'velha', data_pagamento: '2026-05-01' })
     const saida = avisosDoArquivo({
       contasFiltradas: [], contasCarregadas: [antiga],
-      filtroStatus: 'todas', filtroMes: 'todos', hoje: HOJE,
+      filtroStatus: 'todas', filtroTipo: 'todos', filtroMes: 'todos', hoje: HOJE,
     })
     expect(saida.some(a => a.includes('1 pagamento com mais de 30 dias está escondido'))).toBe(true)
+  })
+
+  // `contaBateFiltro(c,'todas')` esconde dispensada TAMBÉM. Sem este caso, um
+  // mutante que tire o `c.status === 'paga'` da contagem anuncia conta
+  // dispensada como "pagamento escondido" — o dono troca de aba e não acha.
+  // Mutante estava vivo; achado 6 da 4ª rodada do Apolo.
+  it('conta dispensada não é anunciada como pagamento escondido', () => {
+    const saida = avisos([conta({ status: 'dispensada' })], { filtroStatus: 'todas' })
+    expect(saida.some(a => a.includes('30 dias'))).toBe(false)
+  })
+
+  // O aviso conta o que o dono RECUPERA trocando de aba. A tela também filtra
+  // por tipo, e o contexto não carregava `filtroTipo`: o número prometia um
+  // dinheiro que a instrução não devolvia. Achado 2 da 4ª rodada.
+  it('a contagem dos 30 dias respeita o filtro de tipo da tela', () => {
+    const deNota = conta({ id: 'n', data_pagamento: '2026-05-01', nota_fiscal_id: 'nf1' })
+    const semAba = avisos([deNota], { filtroStatus: 'todas', filtroTipo: 'todos' })
+    expect(semAba.some(a => a.includes('1 pagamento com mais de 30 dias'))).toBe(true)
+    // Com a tela em "Contas fixas", esse pagamento de nota não é recuperável
+    // trocando só de aba — então não pode ser contado.
+    const soFixas = avisos([deNota], { filtroStatus: 'todas', filtroTipo: 'fixas' })
+    expect(soFixas.some(a => a.includes('30 dias'))).toBe(false)
+  })
+
+  // Paga, estimada e antiga: ela não entraria no arquivo de jeito nenhum, então
+  // anunciá-la como "escondida pela aba" mandaria o dono trocar de filtro atrás
+  // de um pagamento que não ia aparecer. Mutante que tira o `!valor_estimado`
+  // estava vivo — sobrevivente da 1ª tentativa de conserto do achado 2.
+  it('conta paga E estimada não conta nos 30 dias — ela não entraria de todo jeito', () => {
+    const saida = avisos([conta({ data_pagamento: '2026-05-01', valor_estimado: true })],
+      { filtroStatus: 'todas' })
+    expect(saida.some(a => a.includes('30 dias'))).toBe(false)
+  })
+
+  it('e manda "Todos os meses" junto, que é o que devolve o número contado', () => {
+    const antiga = conta({ data_pagamento: '2026-05-01' })
+    const saida = avisos([antiga], { filtroStatus: 'todas' })
+    expect(saida.some(a => a.includes('Use a aba "Pagas" com "Todos os meses"'))).toBe(true)
   })
 
   it('não avisa dos 30 dias na aba "Pagas", que não tem limite de data', () => {
@@ -125,14 +163,58 @@ describe('avisosDoArquivo', () => {
   // pagamento. A 1ª versão deste aviso mandava "exporte pela aba Pagas para o
   // mês fechado" — conselho que produzia justamente o livro caixa furado, com
   // linha de outro mês dentro. Achado 1 da 3ª rodada do Apolo.
-  it('avisa que o filtro de mês recorta pelo vencimento, não pelo pagamento', () => {
-    const saida = avisos([conta()], { filtroMes: '2026-08' })
+  // Venceu 28/07, foi paga 05/08: NÃO entra no recorte de agosto, embora o
+  // dinheiro tenha saído em agosto. É o furo que o aviso denuncia.
+  it('avisa o pagamento que o filtro de mês deixou no mês errado', () => {
+    const desalinhada = conta({ vencimento: '2026-07-28', data_pagamento: '2026-08-05' })
+    const saida = avisos([desalinhada], { filtroMes: '2026-08' })
+    expect(saida.some(a => a.includes('1 pagamento deste recorte está no mês errado'))).toBe(true)
     expect(saida.some(a => a.includes('recorta pelo VENCIMENTO'))).toBe(true)
-    expect(saida.some(a => a.includes('agosto de 2026'))).toBe(true)
   })
 
-  it('e não avisa isso em "Todos os meses", onde esse recorte não existe', () => {
-    expect(avisos([conta()], { filtroMes: 'todos' }).some(a => a.includes('VENCIMENTO'))).toBe(false)
+  // O outro lado: venceu 25/08 e foi paga 03/09 — entra no recorte de agosto
+  // carregando uma data de setembro.
+  it('pega também o pagamento de outro mês que ENTROU no recorte', () => {
+    const desalinhada = conta({ vencimento: '2026-08-25', data_pagamento: '2026-09-03' })
+    const saida = avisos([desalinhada], { filtroMes: '2026-08' })
+    expect(saida.some(a => a.includes('1 pagamento deste recorte está no mês errado'))).toBe(true)
+  })
+
+  // SEM CONTAGEM a tarja era permanente: `filtroMes` nasce no mês corrente,
+  // nunca em 'todos'. Toda abertura da tela mostraria âmbar, e âmbar permanente
+  // treina quem lê a ignorar os outros quatro avisos — que são a única defesa
+  // que sobrou depois que o formato tirou rodapé e coluna de status. Achado 1
+  // da 4ª rodada do Apolo, e é o mesmo defeito que o aviso dos 30 dias tinha.
+  it('não avisa quando todo pagamento do recorte está no mês certo', () => {
+    const alinhada = conta({ vencimento: '2026-08-10', data_pagamento: '2026-08-12' })
+    expect(avisos([alinhada], { filtroMes: '2026-08' })).toEqual([])
+  })
+
+  it('nem com a tela recém-aberta e o banco vazio', () => {
+    expect(avisos([], { filtroStatus: 'todas', filtroMes: '2026-09' })).toEqual([])
+  })
+
+  // COMPORTAMENTO, não a guarda. `contaBateFiltro` exige `!ENCERRADAS` nas duas
+  // abas, então conta paga nunca cai lá e a contagem já dá zero: tirar o
+  // `filtroDeMesSeAplica` do código NÃO faz este teste reprovar (conferido por
+  // mutação, e dito em voz alta no comentário da guarda). O que ele garante é
+  // o que o dono vê — nenhuma tarja falsa nessas abas —, e isso continua
+  // valendo qualquer que seja o caminho interno. Achado 3 da 4ª rodada.
+  it('não avisa do mês nas abas onde o filtro de mês não recorta nada', () => {
+    const desalinhada = conta({ vencimento: '2026-07-28', data_pagamento: '2026-08-05' })
+    for (const aba of ['atrasada', 'sem-vencimento'] as const) {
+      expect(
+        avisos([desalinhada], { filtroStatus: aba, filtroMes: '2026-08' })
+          .some(a => a.includes('mês errado')),
+        `aba ${aba}`,
+      ).toBe(false)
+    }
+  })
+
+  it('e não avisa em "Todos os meses", onde esse recorte não existe', () => {
+    const desalinhada = conta({ vencimento: '2026-07-28', data_pagamento: '2026-08-05' })
+    expect(avisos([desalinhada], { filtroMes: 'todos' })
+      .some(a => a.includes('VENCIMENTO'))).toBe(false)
   })
 
   // ─── O que o recorte tem e o arquivo não leva ──────────────────────────────
@@ -161,6 +243,17 @@ describe('avisosDoArquivo', () => {
   // data" não tem teste: um mutante que o troque por `contasFiltradas` conta
   // toda conta em aberto (que também não tem data_pagamento) como se estivesse
   // NO arquivo. Mutante estava vivo — achado 4 da 3ª rodada do Apolo.
+  // O `it` abaixo mata a metade do `status`; esta mata a do `!valor_estimado`.
+  // Sem ela, um mutante que troque `contasExportaveis(...)` por
+  // `filter(c => c.status === 'paga')` anuncia uma conta paga-e-estimada como
+  // estando NO arquivo — e ela não está. Mutante estava vivo; achado 7 da 4ª
+  // rodada do Apolo.
+  it('conta paga E estimada sai como estimada, nunca como "do arquivo sem data"', () => {
+    const saida = avisos([conta({ valor_estimado: true, data_pagamento: null })])
+    expect(saida.some(a => a.includes('ficou com valor ESTIMADO'))).toBe(true)
+    expect(saida.some(a => a.includes('sem data de pagamento'))).toBe(false)
+  })
+
   it('conta em aberto não é contada como "conta do arquivo sem data"', () => {
     const saida = avisos([conta({ status: 'aberta', data_pagamento: null })])
     expect(saida.some(a => a.includes('sem data de pagamento'))).toBe(false)
@@ -191,6 +284,14 @@ describe('avisosDoArquivo', () => {
   // mesmo erro nos outros — por isso a tabela cobre TODOS. Assert que para
   // antes do verbo final passa por acaso; estes vão até o fim da oração.
   const NUM_E_VERBO = [
+    { nome: 'mes errado', muda: { vencimento: '2026-07-28', data_pagamento: '2026-08-05' },
+      over: { filtroMes: '2026-08' },
+      um:     '1 pagamento deste recorte está no mês errado: o filtro de mês recorta pelo VENCIMENTO',
+      varios: '2 pagamentos deste recorte estão no mês errado: o filtro de mês recorta pelo VENCIMENTO' },
+    { nome: '30 dias', muda: { data_pagamento: '2026-05-01' },
+      over: { filtroStatus: 'todas' as const },
+      um:     '1 pagamento com mais de 30 dias está escondido pela aba "Todas" e não entra no arquivo',
+      varios: '2 pagamentos com mais de 30 dias estão escondidos pela aba "Todas" e não entram no arquivo' },
     { nome: 'nao pagas', muda: { status: 'aberta' as const },
       um:     '1 conta deste recorte não entra no arquivo porque ainda não foi paga',
       varios: '2 contas deste recorte não entram no arquivo porque ainda não foram pagas' },
@@ -207,9 +308,10 @@ describe('avisosDoArquivo', () => {
 
   for (const caso of NUM_E_VERBO) {
     it(`concorda em número do começo ao fim da frase — ${caso.nome}`, () => {
-      const um = avisos([conta(caso.muda)])
+      const over = 'over' in caso ? caso.over : {}
+      const um = avisos([conta(caso.muda)], over)
       expect(um.some(a => a.includes(caso.um)), `singular saiu: ${um.join(' | ')}`).toBe(true)
-      const dois = avisos([conta({ id: 'a', ...caso.muda }), conta({ id: 'b', ...caso.muda })])
+      const dois = avisos([conta({ id: 'a', ...caso.muda }), conta({ id: 'b', ...caso.muda })], over)
       expect(dois.some(a => a.includes(caso.varios)), `plural saiu: ${dois.join(' | ')}`).toBe(true)
     })
   }

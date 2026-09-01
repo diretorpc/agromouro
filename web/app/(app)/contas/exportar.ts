@@ -22,7 +22,10 @@
 
 import { categoriaLabel } from '@/lib/centro-custo'
 import type { LinhaLivroCaixa } from '@/lib/xlsx-livro-caixa'
-import { contaBateFiltro, type FiltroStatus, type FiltroTipo } from './filtros'
+import {
+  contaBateFiltro, contaBateMes, contaBateTipo, filtroDeMesSeAplica,
+  type FiltroStatus, type FiltroTipo,
+} from './filtros'
 import { labelMes } from './datas'
 import type { ContaAPI } from './tipos'
 
@@ -98,13 +101,19 @@ export type AvisosContexto = {
   /** TUDO que a tela carregou, antes dos filtros — é aqui que mora o que a aba escondeu. */
   contasCarregadas: ContaAPI[]
   filtroStatus: FiltroStatus
+  /**
+   * Precisa estar aqui, e a falta dele foi achado: as contagens têm que
+   * enxergar o MESMO recorte que a tela, senão o número promete um dinheiro
+   * que a instrução do aviso não devolve.
+   */
+  filtroTipo: FiltroTipo
   filtroMes: string
   /** 'AAAA-MM-DD'. Entra por parâmetro para o teste ser fixo. */
   hoje: string
 }
 
 export function avisosDoArquivo(ctx: AvisosContexto): string[] {
-  const { contasFiltradas, contasCarregadas, filtroStatus, filtroMes, hoje } = ctx
+  const { contasFiltradas, contasCarregadas, filtroStatus, filtroTipo, filtroMes, hoje } = ctx
   const avisos: string[] = []
 
   // ─── O que a TELA escondeu antes de a lista chegar aqui ───────────────────
@@ -121,8 +130,19 @@ export function avisosDoArquivo(ctx: AvisosContexto): string[] {
   //    ignorar o âmbar — regra escrita no cabeçalho desta função e violada na
   //    1ª versão. Achado 5 da 3ª rodada do Apolo.
   if (filtroStatus === 'todas') {
-    const escondidas = contasCarregadas
-      .filter(c => c.status === 'paga' && !contaBateFiltro(c, 'todas', hoje)).length
+    // A contagem tem que ser EXATAMENTE o que a instrução devolve, ou o dono
+    // troca de aba, não acha os N que leu, e vai procurar dinheiro sumido.
+    // Por isso passa pelo `contaBateTipo` (a tela também filtra por tipo) e
+    // pelo `!valor_estimado` (essa não entraria no arquivo de todo jeito) — e
+    // por isso NÃO passa pelo filtro de mês, com a instrução mandando
+    // "Todos os meses" junto: pagamento escondido pela aba E pelo mês ao mesmo
+    // tempo cairia no vão entre este aviso e o de baixo.
+    const escondidas = contasCarregadas.filter(c =>
+      c.status === 'paga'
+      && !c.valor_estimado
+      && contaBateTipo(c, filtroTipo)
+      && !contaBateFiltro(c, 'todas', hoje),
+    ).length
     if (escondidas > 0) {
       avisos.push(
         plural(
@@ -130,7 +150,7 @@ export function avisosDoArquivo(ctx: AvisosContexto): string[] {
           'pagamento com mais de 30 dias está escondido pela aba "Todas" e não entra no arquivo',
           'pagamentos com mais de 30 dias estão escondidos pela aba "Todas" e não entram no arquivo',
         ) +
-        '. Use a aba "Pagas".',
+        '. Use a aba "Pagas" com "Todos os meses".',
       )
     }
   }
@@ -146,13 +166,50 @@ export function avisosDoArquivo(ctx: AvisosContexto): string[] {
   //    fechado" — conselho que produzia exatamente esse arquivo. Achado 1 da 3ª
   //    rodada do Apolo, e o filtro de mês nasce no mês corrente, então o
   //    caminho errado era o caminho padrão.
-  if (filtroMes !== 'todos') {
-    avisos.push(
-      'O filtro de mês recorta pelo VENCIMENTO, não pela data do pagamento: uma conta paga' +
-      ` em ${labelMes(filtroMes)} mas vencida em outro mês fica de fora, e o contrário` +
-      ' também acontece. Para o livro caixa fechar, use "Todos os meses" e recorte a data' +
-      ' na planilha.',
-    )
+  //    `filtroDeMesSeAplica` porque nas abas "Atrasadas" e "Falta vencimento"
+  //    o `contaBateMes` devolve `true` para tudo — o filtro de mês não recorta
+  //    nada ali, e a frase seria falsa. O predicado já existia em `filtros.ts`,
+  //    criado quando a antiga descrição dentro da planilha mentia igual.
+  //
+  //    ESTA GUARDA É REDUNDANTE HOJE, e fica de propósito. Tirá-la não muda
+  //    nada e NENHUM teste reprova (conferido por mutação): `contaBateFiltro`
+  //    exige `!ENCERRADAS.has(status)` nas duas abas, então conta paga nunca
+  //    cai lá, e a contagem abaixo — que exige `status === 'paga'` — já daria
+  //    zero. A guarda existe para este arquivo não DEPENDER desse detalhe de
+  //    `filtros.ts`: se um dia aquelas abas passarem a mostrar conta paga, o
+  //    aviso aqui não começa a mentir junto. É ortogonalidade, não proteção
+  //    ativa — não espere um teste segurando.
+  //
+  //    E COM CONTAGEM. Sem ela a tarja é PERMANENTE: `filtroMes` nasce no mês
+  //    corrente (`page.tsx`), nunca em 'todos'. Seria o defeito que o aviso de
+  //    cima acabou de perder, renascido na linha de baixo — e âmbar permanente
+  //    treina quem lê a ignorar os outros quatro, que são a única defesa que
+  //    sobrou depois que o formato tirou o rodapé e a coluna de status.
+  if (filtroMes !== 'todos' && filtroDeMesSeAplica(filtroStatus)) {
+    // "Desalinhado" = o mês em que a conta ENTRA no recorte discorda do mês em
+    // que ela foi PAGA. Pega os dois lados de uma vez: a paga em agosto que
+    // ficou de fora do recorte de agosto, e a de outro mês que entrou nele com
+    // data de setembro. Zero desalinhados = o mês escolhido produz livro caixa
+    // correto, e não há o que avisar.
+    const desalinhados = contasCarregadas.filter(c =>
+      c.status === 'paga'
+      && !c.valor_estimado
+      && !!c.data_pagamento
+      && contaBateTipo(c, filtroTipo)
+      && contaBateFiltro(c, filtroStatus, hoje)
+      && contaBateMes(c, filtroMes, hoje) !== (c.data_pagamento.slice(0, 7) === filtroMes),
+    ).length
+    if (desalinhados > 0) {
+      avisos.push(
+        plural(
+          desalinhados,
+          'pagamento deste recorte está no mês errado: o filtro de mês recorta pelo VENCIMENTO',
+          'pagamentos deste recorte estão no mês errado: o filtro de mês recorta pelo VENCIMENTO',
+        ) +
+        ' — e, só quando não há vencimento, pela data do pagamento. Para o livro caixa' +
+        ' fechar, use "Todos os meses" e recorte a data na planilha.',
+      )
+    }
   }
 
   // ─── O que o recorte tem e o arquivo não leva ─────────────────────────────
