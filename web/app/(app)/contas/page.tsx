@@ -20,6 +20,7 @@ import { gerarXlsx, baixarBlob } from '@/lib/xlsx'
 import { CATEGORIAS_CONTAS_A_PAGAR } from '@/lib/centro-custo'
 import type { ResultadoGravarDocumento } from '@/lib/types'
 import { DialogoImportar } from '../controle/components/dialogo-importar'
+import { DialogoImportarBoleto } from './dialogo-importar-boleto'
 import { FormularioContaFixa } from './formulario-conta-fixa'
 import { FormularioContaAvulsa } from './formulario-conta-avulsa'
 import { DialogoVencimento } from './dialogo-vencimento'
@@ -526,6 +527,11 @@ export default function ContasPage() {
               pergunta dele. Na aba Controle o mesmo aviso apareceria em toda
               importação normal e treinaria o dono a ignorar o âmbar. */}
           <DialogoImportar onImportar={importarContrato} titulo="Importar contrato (PDF)" mostrarAvisoDeExtrato />
+          {/* Separado do "Importar contrato" de propósito: aquele lê um
+              documento e DECIDE no servidor o que ele é; este tem uma pergunta
+              própria que só o dono responde — a qual nota o boleto pertence.
+              Juntar os dois num botão só esconderia essa pergunta. */}
+          <DialogoImportarBoleto onGravado={load} />
           <Button
             size="sm"
             variant="outline"

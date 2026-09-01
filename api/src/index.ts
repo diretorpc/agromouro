@@ -127,6 +127,12 @@ app.use('/controle/documentos', express.json({ limit: '15mb' }))
 // ~13,7 MB em base64 — 15mb cobre isso mais o resto do JSON. Vale para o
 // prefixo /nfe inteiro (o DELETE não manda corpo, então não perde nada).
 app.use('/nfe', express.json({ limit: '15mb' }))
+// O upload de boleto viaja em base64 (infla ~33%) e `boletoPdf.ts` aceita PDF
+// de até 8 MB — ou seja, ~10,7 MB de corpo. No limite global de 2 MB um boleto
+// ESCANEADO de 3 MB (foto do papel, comum) devolvia "Erro interno do servidor",
+// e nem 413: o errorHandler transforma tudo em 500 genérico. Achado 6 do Apolo.
+// Precisa vir ANTES do global para valer.
+app.use('/contas/boleto', express.json({ limit: '12mb' }))
 app.use(express.json({ limit: '2mb' }))
 
 // ─── Health check — público, sem auth ────────────────────────────────────────

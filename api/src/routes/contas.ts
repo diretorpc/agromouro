@@ -1,6 +1,10 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import Anthropic from '@anthropic-ai/sdk'
 import { supabase } from '../services/supabase'
+import { lerBoletoEProcurarNotas, gravarBoletoConfirmado } from '../services/contas/importarBoleto'
+import { sugestaoParaPreSelecionar } from '../services/contas/casarNota'
+import { hojeSaoPauloISO } from '../services/contas/formato'
 import { sincronizarOcorrencias } from '../services/contas/sincronizar'
 import { precisaCriarLancamento, montarLancamento } from '../services/contas/pagamento'
 import { competenciaDoMes } from '../services/contas/datas'
@@ -90,6 +94,141 @@ contaRoutes.get('/', async (req, res, next) => {
 
     if (error) throw error
     res.json(data)
+  } catch (err) { next(err) }
+})
+
+// ─── Importar SÓ o boleto de uma nota que já está no sistema ──────────────────
+//
+// Nasceu do caso da nota 4507 (MIKAMI, 31/08/2026): a nota entrou em julho,
+// quando o sistema ainda não puxava boleto, e a conta a pagar nunca existiu.
+// Reimportar a nota duplicaria os itens. Ver `importarBoleto.ts` para o porquê
+// de serem DUAS rotas e não uma.
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+
+const boletoUploadSchema = z.object({
+  arquivo:     z.string().min(1),
+  nomeArquivo: z.string().min(1),
+})
+
+// O boleto volta do navegador na confirmação. Este schema é só a forma; as
+// travas de dinheiro (teto, janela de vencimento, data que existe) são
+// reaplicadas no serviço por `validarBoletoLido` — a MESMA função da leitura,
+// para as duas nunca divergirem.
+const boletoConfirmadoSchema = z.object({
+  nomeArquivo: z.string().min(1),
+  notaFiscalId: z.string().uuid().nullable(),
+  boleto: z.object({
+    valor:            z.number(),
+    vencimento:       z.string(),
+    beneficiario:     z.string().min(1),
+    cobradoPor:       z.string().nullable(),
+    documento:        z.string().nullable(),
+    totalDeCobrancas: z.number().int().min(1),
+  }),
+})
+
+// POST /contas/boleto/ler — passo 1: lê e SUGERE. Não grava nada.
+contaRoutes.post('/boleto/ler', async (req, res, next) => {
+  try {
+    const fazendaId = fazendaDe(req)
+    if (!fazendaId) return res.status(400).json({ error: 'Fazenda não identificada' })
+
+    const parsed = boletoUploadSchema.safeParse(req.body)
+    if (!parsed.success) return res.status(400).json({ error: 'Corpo inválido.' })
+
+    const pdf = Buffer.from(parsed.data.arquivo, 'base64')
+    const r = await lerBoletoEProcurarNotas(
+      pdf, parsed.data.nomeArquivo, hojeSaoPauloISO(), fazendaId, anthropic,
+    )
+
+    // Mesma separação de `controle.ts`: conclusão sobre o CONTEÚDO vira 422,
+    // problema de INFRA da chamada à IA vira 503 ("tente de novo"), e as duas
+    // mandam `error` em português — sem esse campo o front cai no genérico
+    // "API error: {status}" e a razão real nunca chega na tela.
+    if (r.status === 'nao-boleto') {
+      return res.status(422).json({ error: 'Este PDF não parece ser um boleto de cobrança.', ...r })
+    }
+    if (r.status === 'falha') {
+      return res.status(503).json({ error: 'O leitor de boletos está indisponível agora. Tente de novo em alguns minutos.', ...r })
+    }
+    // Quem vem pré-marcado é decisão sobre dinheiro e sai do SERVIDOR, onde
+    // tem teste (`casarNota.test.ts`). Antes a regra morava dentro do JSX e
+    // pré-marcava a nota errada — achado 9 do Apolo.
+    return res.json({ ...r, preSelecionar: sugestaoParaPreSelecionar(r.sugestoes) })
+  } catch (err) { next(err) }
+})
+
+// POST /contas/boleto — passo 2: grava o que o dono confirmou.
+contaRoutes.post('/boleto', async (req, res, next) => {
+  try {
+    const fazendaId = fazendaDe(req)
+    if (!fazendaId) return res.status(400).json({ error: 'Fazenda não identificada' })
+
+    const parsed = boletoConfirmadoSchema.safeParse(req.body)
+    if (!parsed.success) return res.status(400).json({ error: 'Corpo inválido.' })
+
+    const r = await gravarBoletoConfirmado(
+      {
+        boleto: { ...parsed.data.boleto },
+        nomeArquivo: parsed.data.nomeArquivo,
+        notaFiscalId: parsed.data.notaFiscalId,
+      },
+      hojeSaoPauloISO(),
+      fazendaId,
+    )
+
+    switch (r.status) {
+      case 'criada':
+        return res.status(201).json(r)
+      // A conta já existia SOLTA e foi amarrada agora. Não é erro nem
+      // duplicata: é o conserto do gasto que ia contar duas vezes.
+      case 'adotada':
+        return res.status(200).json(r)
+      // Reenviar o mesmo boleto é resposta válida do pedido, não erro de
+      // requisição — mesmo padrão de nfe.ts e controle.ts.
+      case 'duplicada':
+        return res.status(200).json(r)
+      case 'boleto-invalido':
+        return res.status(422).json({ error: 'Valor ou vencimento do boleto está fora do que o sistema aceita. Confira o papel.', ...r })
+      case 'nota-invalida':
+        return res.status(422).json({ error: 'A nota escolhida não existe nesta fazenda.', ...r })
+      // A nota existe mas não lançou gasto no Financeiro (caso ERCAL: nota de
+      // remessa, boleto cheio, gasto zero). Amarrar faria o dinheiro sair do
+      // banco sem virar despesa em tela nenhuma.
+      case 'nota-sem-gasto':
+        return res.status(409).json({
+          error: 'Esta nota não lançou gasto no Financeiro, então amarrar o boleto nela faria a despesa sumir. '
+            + 'Importe sem nota — assim o pagamento vira despesa.',
+          ...r,
+        })
+      // Mesmo valor E mesmo vencimento na MESMA nota: é o mesmo boleto, não
+      // outra parcela. Parcela diferente passa e vira conta nova.
+      case 'parcela-repetida':
+        return res.status(409).json({
+          error: 'Esta nota já tem uma conta com este mesmo valor e vencimento — é o mesmo boleto, já importado.',
+          ...r,
+        })
+      // Existe conta com este valor e vencimento, mas em estado que não pode
+      // ser amarrado. NÃO tranquiliza: manda conferir.
+      case 'conta-encerrada':
+        return res.status(409).json({
+          error: `Já existe uma conta com este valor e vencimento, mas ela está ${r.statusConta} `
+            + '— nada foi amarrado. Confira essa conta antes de importar de novo.',
+          ...r,
+        })
+      case 'erro':
+        return res.status(500).json({ error: 'Erro ao gravar o boleto.', detalhe: r.mensagem })
+      // `never` obriga o compilador a reclamar quando alguém acrescentar um
+      // status ao union (que é montado a partir de TRÊS arquivos) e esquecer
+      // deste switch. Sem isto o handler terminava sem responder e o navegador
+      // ficava pendurado — `web/lib/api.ts` não tem timeout. Achado 6 do Apolo.
+      default: {
+        const _exaustivo: never = r
+        console.error('[Boleto] Status não tratado:', _exaustivo)
+        return res.status(500).json({ error: 'Erro ao gravar o boleto.' })
+      }
+    }
   } catch (err) { next(err) }
 })
 

@@ -49,6 +49,62 @@ export const STATUS_LABEL: Record<Conta['status'], string> = {
   dispensada: 'Dispensada',
 }
 
+// ─── Importação de boleto avulso ─────────────────────────────────────────────
+// Espelham BoletoLido/NotaSugerida/PreviewBoleto de
+// api/src/services/contas/{boletoPdf,casarNota,importarBoleto}.ts. Repetidos
+// aqui porque o front não importa do back — os dois lados PRECISAM mudar juntos.
+
+export type BoletoLidoWeb = {
+  valor: number
+  vencimento: string          // 'YYYY-MM-DD'
+  /** O "Beneficiário Final" quando existe — é ele que bate com a nota. */
+  beneficiario: string
+  /** Banco/fundo que cobra, quando a cobrança foi cedida. Vai no extrato. */
+  cobradoPor: string | null
+  documento: string | null
+  /** > 1 é carnê ou nota parcelada: só esta cobrança vira conta. */
+  totalDeCobrancas: number
+}
+
+export type ContaDaNotaWeb = {
+  id: string
+  valor: number | null
+  vencimento: string | null
+  status: string
+}
+
+export type NotaSugeridaWeb = {
+  id: string
+  numero: string
+  emitente_nome: string
+  valor_total: number
+  data_emissao: string
+  /** Contas a pagar que a nota já tem — para o dono distinguir parcela nova de boleto repetido. */
+  contas: ContaDaNotaWeb[]
+  /**
+   * A nota lançou gasto no Financeiro? Amarrar numa que NÃO lançou faz o
+   * dinheiro sair do banco sem virar despesa em tela nenhuma — pior que
+   * dobrado, porque dobrado o dono enxerga. O servidor recusa; a tela avisa.
+   */
+  lancouGasto: boolean
+  /** Por que esta nota foi sugerida, em português. */
+  motivos: string[]
+}
+
+// Só a variante que chega como 200. 'nao-boleto' (422) e 'falha' (503) chegam
+// como erro HTTP lançado, com a mensagem em português pronta em `.message`.
+export type PreviewBoletoWeb = {
+  status: 'lido'
+  boleto: BoletoLidoWeb
+  sugestoes: NotaSugeridaWeb[]
+  /**
+   * Qual sugestão a tela pode deixar marcada, ou `null` para não marcar nada.
+   * Decidido no SERVIDOR (`sugestaoParaPreSelecionar`, com teste): é decisão
+   * sobre dinheiro e não pode morar dentro do JSX.
+   */
+  preSelecionar: string | null
+}
+
 // Começo do texto que a API grava em `observacao` quando o boleto nasceu apesar de a
 // nota dizer cartão/dinheiro (PREFIXO_CONFERIR em api/src/services/contas/deNotaFiscal.ts).
 // Repetido aqui porque o front não importa do back — os dois lados PRECISAM mudar juntos
