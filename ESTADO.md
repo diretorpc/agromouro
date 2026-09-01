@@ -113,7 +113,71 @@ morreu. Onde ele está de verdade continua em aberto, e o palpite de 1.000 no
 
 ---
 
+## 🔨 Exportar Contas no formato do LIVRO CAIXA — 01/09/2026 — **na branch**
+
+> Ramo `feat/contas-livro-caixa`. Só `web/` — nenhuma migration, nenhuma ordem
+> de deploy. **Quatro rodadas do Apolo**, 34 achados no total. As piores:
+> a 2ª pegou a parcela DUPLICADA no histórico de toda conta de NF-e parcelada
+> (e um erro da 1ª rodada dele mesmo); a 3ª pegou um conselho meu que produzia
+> exatamente o livro caixa furado que ele dizia evitar; a 4ª pegou a tarja âmbar
+> permanente renascendo na linha de baixo daquela que acabara de ser consertada.
+> Os consertos que mudam comportamento foram conferidos por mutação — código
+> revertido, suíte reprovando. Um único mutante sobrevive de propósito, e o
+> motivo está escrito no código. **SUBSTITUI a exportação do PR #76 descrita logo abaixo**, que
+> ficou obsoleta: aquele bloco descreve 13 colunas próprias e um rodapé de
+> TOTAL que este trabalho apagou. Leia os dois juntos, nesta ordem.
+
+O Matheus mandou um modelo de Excel ("extrato livro caixa", 18 colunas) e pediu
+**IDÊNTICO**. O modelo não é uma lista de contas — é um extrato bancário
+classificado, e o amarelo do cabeçalho marca as colunas que o contador preenche
+à mão. Desenho e decisões:
+`docs/superpowers/specs/2026-09-01-contas-livro-caixa-design.md`.
+O modelo está versionado ao lado do spec — os índices de estilo cravados no
+código só têm sentido contra ele, e um teste o abre do disco para comparar.
+
+**O que mudou de verdade, e vale conferir antes de mandar para a contabilidade:**
+
+- **VALOR sai NEGATIVO.** No modelo custo é negativo, e é o sinal que faz a
+  coluna C/D calcular "D" de débito. A exportação antiga mandava positivo.
+- **Sem cabeçalho congelado e sem autofiltro** — o modelo não tem nenhum dos
+  dois. É uma linha para devolver, se incomodar.
+- **DIA/MÊS/ANO saem da `data_pagamento`.** Conta não paga sai com as três em
+  branco. Linhas ordenadas por essa data, não pela ordem da tela.
+- **O arquivo leva SÓ CONTA PAGA.** Livro caixa registra dinheiro que saiu, e o
+  formato do modelo não tem coluna de status onde marcar "a pagar". Some do
+  arquivo: aberta, aguardando, atrasada, dispensada e (linha antiga) paga com
+  valor estimado. A tela conta quantas ficaram de fora, e por qual motivo.
+- **Para o livro caixa fechar: aba "Pagas" + "Todos os meses".** Duas armadilhas,
+  as duas avisadas na tela:
+  1. a aba "Todas" esconde pagamento com mais de 30 dias, e o que ela esconde não
+     entra no arquivo;
+  2. **o filtro de mês recorta pelo VENCIMENTO, não pela data do pagamento**
+     (`mesDaConta` em `filtros.ts`). Conta que venceu 28/07 e foi paga 05/08 NÃO
+     entra no recorte de agosto; a que venceu 25/08 e foi paga 03/09 entra, com
+     data de setembro. Exportar "Pagas + agosto" devolve um mês furado e com
+     linha de outro mês dentro. Recorte a data na planilha.
+  O conserto de verdade seria `contaBateMes` usar `data_pagamento` para conta
+  encerrada — mas isso mexe também no card "Total de contas pagas" e no seletor
+  de meses. **Decisão do dono, não deste PR.**
+- **Sumiram** o rodapé de TOTAL CONFIRMADO/ESTIMADO, a frase que descrevia o
+  recorte dentro do arquivo e a coluna "Estimado". O modelo não tem onde pôr.
+  Os avisos mudaram de lugar, não sumiram: viraram tarjas âmbar na TELA, ao
+  lado do botão, com texto testado em `avisosDoArquivo` (`exportar.ts`).
+
+**Números:** medir, não copiar daqui —
+`cd web && npm test` · `cd web && npx tsc --noEmit` · `cd web && npm run build`
+
+**Ponto encerrado:** o filtro de só-pagas foi pedido pelo Matheus e está no ar
+nesta branch. Todos os consertos que mudam comportamento foram conferidos por
+mutação — código revertido, suíte reprovando.
+
+---
+
 ## ✅ Exportar Excel na aba Contas a Pagar — 31/08/2026 — **NO AR** (PR #76)
+
+> ⚠️ **OBSOLETO desde 01/09/2026** — ver o bloco acima. Fica registrado pelo
+> histórico: as decisões de recorte, o teto do PostgREST e os achados do Apolo
+> continuam valendo; as 13 colunas e o rodapé de TOTAL, não.
 
 > Mergeado em 31/08/2026 (`666ef18`), 4 rodadas do Apolo. Só `web/` — nenhuma
 > migration, nenhuma ordem de deploy. Conferido por CONTEÚDO na `main`, não pelo

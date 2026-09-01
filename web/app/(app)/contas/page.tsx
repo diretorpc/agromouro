@@ -16,7 +16,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Combobox } from '@/components/ui/combobox'
 import { api } from '@/lib/api'
 import { useFazenda } from '@/context/fazenda-context'
-import { gerarXlsx, baixarBlob } from '@/lib/xlsx'
+import { baixarBlob } from '@/lib/xlsx'
+import { gerarLivroCaixa } from '@/lib/xlsx-livro-caixa'
 import { CATEGORIAS_CONTAS_A_PAGAR } from '@/lib/centro-custo'
 import type { ResultadoGravarDocumento } from '@/lib/types'
 import { DialogoImportar } from '../controle/components/dialogo-importar'
@@ -31,7 +32,9 @@ import {
   type FiltroStatus, type FiltroTipo,
 } from './filtros'
 import { hojeISO, diasEntre, labelMes } from './datas'
-import { colunasExport, montarRodape, nomeArquivoExport, pareceTruncado } from './exportar'
+import {
+  avisosDoArquivo, contasExportaveis, linhasLivroCaixa, nomeArquivoExport, pareceTruncado,
+} from './exportar'
 
 // ─── Cálculo dos três números (task-9-brief.md, verbatim — não alterar) ───────
 // Erra calada se mexido: um total que soma confirmado + estimado vira um
@@ -282,6 +285,27 @@ export default function ContasPage() {
   // somando dados incompletos sem dizer nada.
   const listaTruncada = pareceTruncado(contas.length)
 
+  // O que o arquivo REALMENTE leva, e o que ele deixa de fora ou distorce.
+  //
+  // O formato do livro caixa não tem rodapé, coluna de status nem crachá — não
+  // sobrou lugar DENTRO do arquivo para dizer que uma conta é palpite, que
+  // outra foi dispensada ou que uma terceira ainda não foi paga. Estes avisos
+  // são o último ponto antes do arquivo virar anexo de e-mail.
+  //
+  // O TEXTO deles mora em `exportar.ts`, com teste, e não solto aqui: `web/`
+  // não tem teste de render (vitest em ambiente `node`, sem jsdom), então um
+  // refactor de layout apagaria estes parágrafos com a suíte inteira verde.
+  // Achado 6 do Apolo.
+  const contasNoArquivo = contasExportaveis(contasFiltradas)
+  const avisosExport = avisosDoArquivo({
+    contasFiltradas,
+    contasCarregadas: contas,
+    filtroStatus: filtro,
+    filtroTipo,
+    filtroMes,
+    hoje,
+  })
+
   // ─── Exportar para Excel ─────────────────────────────────────────────────
 
   // Exporta o que está NA TELA — os mesmos filtros de status, tipo e mês. Duas
@@ -292,31 +316,21 @@ export default function ContasPage() {
   // arquivo com as 50 primeiras de 180 contas seria um relatório errado sem
   // avisar que é.
   async function handleExportar() {
-    if (contasFiltradas.length === 0) return
+    // `contasNoArquivo`, não `contasFiltradas`: com todas as contas do recorte
+    // estimadas, o filtro acha coisa e o arquivo sairia vazio.
+    if (contasNoArquivo.length === 0) return
     setExportando(true)
     setErroExport(null)
     try {
-      // Um contexto só para o rodapé e para o nome: se os dois lessem filtros
-      // diferentes, o arquivo poderia se chamar "pagas" e trazer a descrição de
-      // outro recorte dentro.
-      const ctx = {
+      const fazenda = fazendaAtiva?.codigo ?? null
+      const blob = await gerarLivroCaixa(linhasLivroCaixa(contasFiltradas, fazenda))
+      baixarBlob(blob, nomeArquivoExport({
         filtroStatus: filtro,
         filtroTipo,
         filtroMes,
-        fazenda: fazendaAtiva?.codigo ?? null,
-        geradoEm: hoje,
+        fazenda,
         parcial: listaTruncada,
-      }
-      // Uma lista de colunas só, usada pelas duas chamadas: o rodapé precisa
-      // pôr o total embaixo da coluna que o arquivo REALMENTE tem.
-      const colunas = colunasExport()
-      const blob = await gerarXlsx(
-        colunas,
-        contasFiltradas,
-        'Contas a Pagar',
-        montarRodape(contasFiltradas, ctx, colunas),
-      )
-      baixarBlob(blob, nomeArquivoExport(ctx))
+      }))
     } catch (err) {
       // Sem este log, a falha mais provável em campo — o pedaço do jszip não
       // baixar numa conexão ruim — vira "Tente novamente" para sempre, e
@@ -326,7 +340,8 @@ export default function ContasPage() {
       // "Tente novamente" é resposta certa pro jszip não baixar numa conexão
       // ruim, e resposta ERRADA pro defeito de configuração da planilha: esse
       // vai falhar igual na segunda, na terceira e na centésima tentativa.
-      const defeitoDeCodigo = err instanceof Error && err.message.includes('exportar.ts')
+      const defeitoDeCodigo = err instanceof Error
+        && (err.message.includes('exportar.ts') || err.message.includes('xlsx-livro-caixa.ts'))
       setErroExport(defeitoDeCodigo
         ? 'A planilha está mal configurada e não pode ser gerada. Avise o suporte — tentar de novo não resolve.'
         : 'Erro ao gerar a planilha. Tente novamente.')
@@ -539,11 +554,13 @@ export default function ContasPage() {
             // Espera a fazenda carregar: exportar antes disso geraria um
             // arquivo SEM o código da fazenda no nome, indistinguível do de
             // outra propriedade na pasta de Downloads.
-            disabled={exportando || contasFiltradas.length === 0 || !fazendaAtiva}
+            disabled={exportando || contasNoArquivo.length === 0 || !fazendaAtiva}
             title={
-              contasFiltradas.length === 0
-                ? 'Nada para exportar com os filtros atuais'
-                : `Baixar ${contasFiltradas.length} contas em Excel`
+              contasNoArquivo.length === 0
+                ? (contasFiltradas.length > 0
+                    ? 'Nenhuma conta deste recorte entra no arquivo — veja o aviso abaixo'
+                    : 'Nada para exportar com os filtros atuais')
+                : `Baixar ${contasNoArquivo.length} pagamentos em Excel (formato livro caixa)`
             }
           >
             <Download className="h-4 w-4 mr-1.5" aria-hidden="true" />
@@ -567,6 +584,18 @@ export default function ContasPage() {
           <strong>Pode haver contas de fora</strong> dos totais acima e do arquivo exportado.
         </p>
       )}
+
+      {/* O único lugar onde ainda dá para dizer que o arquivo não leva tudo —
+          ou que leva coisa que ainda não virou dinheiro. As frases vêm de
+          `avisosDoArquivo`, que tem teste; aqui só a moldura. */}
+      {avisosExport.map(aviso => (
+        <p
+          key={aviso}
+          className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2"
+        >
+          {aviso}
+        </p>
+      ))}
 
       {erroExport && (
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
