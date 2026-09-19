@@ -22,6 +22,62 @@
 
 ---
 
+## 🔴 ABERTO — dose em `ml` subtraída de saldo em `L`, erro de 1000× — achado em 19/09/2026
+
+Achado pelo Apolo durante a revisão do isolamento multi-fazenda, no mesmo arquivo.
+**É maior que o defeito que aquele PR conserta, e dispara HOJE** — enquanto o
+isolamento é latente (ver o bloco logo abaixo).
+
+**A corrente, em três elos, todos em `api/src/webhooks/whatsapp.ts`:**
+
+1. Linha ~53 — o system prompt **ensina** o Haiku: `"300ml de adjuvante" → dose_valor: 300, dose_unidade: "ml"`. `ml` e `g` estão na lista de unidades que o modelo pode devolver.
+2. Linha ~303 — `resolverInsumos` faz `unidade: item.dose_unidade || insumo.unidade`. A unidade **da mensagem** ganha da **cadastrada**.
+3. Linha ~343 — `decrementarEstoque` faz `linha.atual - item.quantidade`, sem olhar unidade nenhuma.
+
+**Cenário executado** (adjuvante cadastrado em `L`, 200 L em estoque, "300 ml/ha" em 100 ha):
+
+```
+SALDO NO BANCO DEPOIS:  -29800
+RESPOSTA NO WHATSAPP:   📦 Adjuvante: 30000ml (estoque: -29800ml) ⚠️ abaixo do mín. (20ml)
+```
+
+Erro de 1000×, **gravado**, com "✅ Registrado!" para o agricultor. O alerta de mínimo
+mente até na unidade (`20ml` é `20L`). Não é edge case: "300 ml de adjuvante" é fala
+normal de pulverização.
+
+**Correção pedida:** converter em `resolverInsumos` (ml→L, g→kg, tabela num lugar só);
+unidade incompatível (`sc` contra `L`) devolve `ok:false` e avisa em vez de subtrair;
+guarda de saldo negativo gravando em `alertas` — tabela que existe e que
+`whatsapp.ts` **nunca usa** (zero `.from('alertas')` no arquivo).
+
+Medir se ainda dói: `grep -n "dose_unidade\|linha.atual - item.quantidade" api/src/webhooks/whatsapp.ts`
+
+---
+
+## 🔴 ABERTO — 2ª instância Z-API leva 401 mudo — achado em 19/09/2026
+
+**Bloqueante antes de ligar o WhatsApp do Tejuco ou do MT.** `api/src/middleware/validateWebhook.ts`
+compara o header `z-api-token` contra **`process.env.ZAPI_TOKEN`, valor único**, enquanto
+`services/zapi.ts` e o `.env.example` trabalham com `ZAPI_TOKEN_<FAZENDA>`. Cada fazenda é
+uma instância Z-API com token próprio → a do Tejuco manda o token DELA, bate contra o da MG,
+e o middleware devolve **401 com um `console.warn` só**. O agricultor manda mensagem e o bot
+fica mudo, sem erro visível em lugar nenhum.
+
+Ou seja: **o multi-fazenda que o PR de isolamento habilita morre na porta de entrada.**
+
+Agravante: `validateZapiWebhook` **não tem teste nenhum**, e `whatsapp.route.test.ts` monta o
+router sem o middleware — a suíte nunca passa por essa porta.
+
+**Correção pedida:** aceitar o token de qualquer fazenda (`ZAPI_TOKEN_*` + genérico) com
+`timingSafeEqual` contra a lista e — melhor — **derivar a fazenda do token que casou**,
+tornando o `?fazenda=` da URL e o fallback `'mg'` desnecessários.
+
+**Conferir junto, no Railway:** `isAuthorized` com lista vazia libera **qualquer** número
+(`whatsapp.ts` ~497, retrocompatibilidade). Se `WHATSAPP_AUTHORIZED_PHONES*` estiver vazio em
+produção, qualquer telefone grava operação.
+
+---
+
 ## 🔧 Isolamento multi-fazenda no WhatsApp — escrito em 24/08/2026 — **PRONTO, aguardando merge**
 
 > **Integrado em 19/09/2026.** O conserto ficou 26 dias parado na branch
@@ -36,6 +92,34 @@
 > Conflito na integração: **um só**, neste arquivo, e nenhum em código. A resolução tomou
 > a versão da `main` inteira e recolou este bloco por cima — os 13 commits de registro do
 > outro lado não foram costurados à mão. Medir: `git diff --stat main...merge/whatsapp-isolamento-fazenda`
+>
+> **LATENTE, medido no banco em 19/09 — não é incidente em curso.** Ninguém deve calibrar
+> prioridade achando que já mordeu (o commit `4632292` da própria branch já dizia isso, e o
+> pedido de integração reintroduziu o enquadramento errado):
+>
+> ```
+> talhões:   mg → 18    tejuco → 0    mt → 0
+> operações: 5 no total, todas mg  (4 manual, 1 whatsapp)
+> estoque:   68 linhas, todas mg
+> operações cruzadas (talhão de A gravado como B):  0
+> ```
+>
+> 100% do dado está na MG e a rota resolve `mg` por default — o furo **nunca disparou**.
+> Vira bug ativo no minuto em que o Tejuco ou o MT ganharem o primeiro talhão. **Os dois
+> blocos 🔴 ABERTO acima são mais urgentes que este.**
+>
+> **Prova em produção: PENDENTE.** Não dá para provar "mensagem de uma fazenda não grava em
+> talhão de outra" quando só a MG tem talhão — a prova seria vazia. Alvo criado para isso:
+> talhão `Tejuco Teste Isolamento`, 0,01 ha (área pequena de propósito: `area_ha` entra em
+> totais de dashboard). Apagar depois da prova, ou promover a talhão de verdade.
+>
+> **Revisão: 3 rodadas do Apolo.** A 1ª aprovou o isolamento (10 `.from(` varridos, nenhum
+> sem filtro; nenhuma regressão da integração — a `main` mexeu em 21 arquivos de `api/src`
+> no intervalo, nenhum importado por `whatsapp.ts`) e achou os dois 🔴 acima. A 2ª e a 3ª
+> foram sobre a suíte: a integração tinha **trocado** 2 testes comportamentais por 3
+> espiões estruturais, e o espião prova que `.eq` foi CHAMADO, não que o resultado está
+> ISOLADO — com um fallback sem filtro instalado, os 3 espiões passam verdes. Os 5 ficam,
+> somados, com comentário explicando por que nenhum lado sai sozinho.
 
 **A raiz, que vale para o backend inteiro:** `api/src/services/supabase.ts` autentica com
 `SUPABASE_SERVICE_KEY` → **bypassa RLS por completo**. As policies `*_tenant` da migration
