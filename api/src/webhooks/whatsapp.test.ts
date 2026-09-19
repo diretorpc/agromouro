@@ -54,10 +54,17 @@ const { seed, estadoBanco } = vi.hoisted(() => {
       // diz fazenda-mt. Se alguma query perder o filtro de fazenda, este 999
       // vaza para a resposta da MG — e é isso que M5/M7+M8 vigiam.
       { insumo_id: 'insumo-corrompido-mg', fazenda_id: 'fazenda-mt', quantidade_atual: 999, quantidade_minima_alerta: 1 },
-      // MESMO insumo_id com linha nas DUAS fazendas — catálogo replicado, caso
-      // real. É o único seed que faz o UPDATE de decrementarEstoque REALMENTE
-      // rodar com duas linhas candidatas, e portanto o único que observa a ponta
-      // da ESCRITA por comportamento. Ver o teste no fim do arquivo.
+      // MESMO insumo_id com linha nas DUAS fazendas — fixture de mutação, NÃO uma
+      // forma garantida do banco: `api/src/database/schema.sql:64` declara
+      // `insumo_id ... unique` GLOBAL, e nenhuma migration derruba isso. Se a trava
+      // valer em produção, estas duas linhas são impossíveis lá. O teste continua
+      // valendo — travar a escrita é defesa em profundidade, e constraint some com
+      // um DROP INDEX. Conferir na fonte viva antes de acreditar no repo:
+      //   SELECT indexname, indexdef FROM pg_indexes
+      //   WHERE tablename IN ('estoque','insumos') ORDER BY tablename, indexname;
+      //
+      // É o único seed que faz o UPDATE de decrementarEstoque REALMENTE rodar com
+      // duas linhas candidatas. Ver o teste no fim do arquivo.
       { insumo_id: 'insumo-gemeo', fazenda_id: 'fazenda-mg', quantidade_atual: 100, quantidade_minima_alerta: 5 },
       { insumo_id: 'insumo-gemeo', fazenda_id: 'fazenda-mt', quantidade_atual: 777, quantidade_minima_alerta: 5 },
     ] as any[],
@@ -308,8 +315,12 @@ describe('consultarEstoque', () => {
   // refatorar o UPDATE para `.match({ insumo_id, fazenda_id })` — API normal do
   // supabase-js — deixa o espião do UPDATE vermelho com o código CERTO, e M5 e
   // M7+M8 verdes. (O mock deste arquivo ainda não implementa `.match`; quem fizer
-  // esse refactor soma 1 linha em `tabelaBuilder` antes, senão 5 testes quebram
-  // com TypeError e a comparação não diz nada.)
+  // esse refactor soma 1 linha em `tabelaBuilder` ANTES, senão um punhado de
+  // testes cai com `update(...).match is not a function` e a comparação não diz
+  // nada. Quantos, hoje: instale o refactor e rode
+  // `npx vitest run src/webhooks/whatsapp.test.ts` — o número muda toda vez que
+  // alguém soma um teste que chama decrementarEstoque, então não vale escrevê-lo
+  // aqui: já apodreceu uma vez neste comentário.)
   it('M5: linha de estoque rotulada com a fazenda ERRADA não pode virar resposta da MG', async () => {
     const resposta = await consultarEstoque('cloreto', 'fazenda-mg')
 
@@ -385,18 +396,25 @@ describe('decrementarEstoque + formatarSaidas', () => {
 
   // ⚠️ Par comportamental dos dois espiões acima — mesma regra: os dois ou nenhum.
   //
-  // Este vigia a ponta da LEITURA: se o SELECT batch vazar a linha rotulada com
-  // outra fazenda, o saldo dela vira resposta. A ponta da ESCRITA NÃO é exercida
-  // aqui — o SELECT filtrado volta vazio, `estoqueMap` fica sem a chave, e a
-  // função retorna em `if (!linha)` ANTES do UPDATE. Os 999 continuam 999 porque
-  // ninguém encostou neles, não porque o filtro protegeu. Quem cobre a escrita é
-  // o espião do UPDATE acima (e o teste `insumo-gemeo` logo abaixo) — por isso
-  // nenhum dos dois pode sair.
+  // Este teste só acende quando as DUAS pontas cedem JUNTAS: o SELECT vaza a linha
+  // da outra fazenda E o UPDATE grava nela. Sozinha, nenhuma das duas o acorda —
+  // e isso é medido, não suposto (mutantes instalados e revertidos em 19/09):
   //
-  // Medido na revisão de 19/09 (mutantes instalados e revertidos): com o UPDATE
-  // perdendo `.eq('fazenda_id')`, este teste fica VERDE. Ele só é o único a matar
-  // o mutante em que o SELECT vaza E o UPDATE usa o fazenda_id da linha lida.
-  it('M7+M8: decrementar não pode LER linha de estoque de outra fazenda', async () => {
+  //   UPDATE perde `.eq('fazenda_id')`  → este VERDE; quem grita é o espião do UPDATE
+  //   SELECT perde `.eq('fazenda_id')`  → este VERDE; quem grita é o espião do SELECT
+  //                                        e o teste `insumo-gemeo` abaixo
+  //   as duas juntas                     → este VERMELHO (`expected 994 to be null`)
+  //
+  // Na execução limpa ele nem chega no UPDATE: o SELECT filtrado volta vazio,
+  // `estoqueMap` fica sem a chave, e a função retorna em `if (!linha)`. Os 999
+  // continuam 999 porque ninguém encostou neles. Veja o log da rodada:
+  // `[WhatsApp] Sem linha em estoque para Cloreto`.
+  //
+  // Ou seja: ele tem ZERO mortes exclusivas contra mutante de uma ponta só. Isso
+  // NÃO é motivo para apagá-lo — é seguro barato contra regressão comportamental,
+  // e é o único que pega a falha combinada. É motivo para NÃO apagar os espiões
+  // achando que este cobre o que eles cobrem. Ele não cobre.
+  it('M7+M8: linha de outra fazenda não vira saldo nem gravação (as duas pontas juntas)', async () => {
     const okItems = [
       { ok: true as const, insumo_id: 'insumo-corrompido-mg', nome: 'Cloreto', quantidade: 5, unidade: 'kg', dose_por_ha: null },
     ]
@@ -407,11 +425,19 @@ describe('decrementarEstoque + formatarSaidas', () => {
     expect(linha.quantidade_atual).toBe(999)
   })
 
-  // A ponta da ESCRITA, por comportamento — o buraco que a revisão de 19/09 achou.
+  // O teste mais LARGO deste arquivo — o buraco que a revisão de 19/09 achou.
   // Aqui o UPDATE roda de verdade, com DUAS linhas candidatas para o mesmo
-  // insumo_id. Sem `.eq('fazenda_id')` no UPDATE, o decremento da MG cai na linha
-  // do MT. Medido: com esse mutante instalado, este teste fica VERMELHO
-  // (`expected 90 to be 777`) e os 3 espiões continuam VERDES.
+  // insumo_id, então ele observa leitura e escrita de uma vez. Medido:
+  //
+  //   UPDATE perde `.eq('fazenda_id')`  → VERMELHO (`expected 90 to be 777`),
+  //                                        junto com o espião do UPDATE; os
+  //                                        outros 2 espiões seguem verdes
+  //   SELECT perde `.eq('fazenda_id')`  → VERMELHO (`expected 767 to be 90`)
+  //   as duas juntas                     → VERMELHO
+  //   refactor legítimo para `.match()`  → VERDE, e só o espião do UPDATE cai
+  //
+  // Essa última linha é a prova viva do argumento lá em cima, no comentário do
+  // M5: comportamento sobrevive a refactor, espião não.
   it('decrementar a MG não pode encostar na linha do MT com o mesmo insumo_id', async () => {
     const okItems = [
       { ok: true as const, insumo_id: 'insumo-gemeo', nome: 'Gêmeo', quantidade: 10, unidade: 'L', dose_por_ha: null },
