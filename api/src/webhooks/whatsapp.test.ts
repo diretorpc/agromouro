@@ -31,6 +31,12 @@ const { seed, estadoBanco } = vi.hoisted(() => {
     insumos: [
       { id: 'insumo-glifosato-mg', nome: 'Glifosato', unidade: 'L', fazenda_id: 'fazenda-mg', estoque: [{ id: 'linha-estoque-mg' }] },
       { id: 'insumo-glifosato-mt', nome: 'Glifosato', unidade: 'L', fazenda_id: 'fazenda-mt', estoque: [{ id: 'linha-estoque-mt' }] },
+      // Insumo da MG cuja LINHA DE ESTOQUE está rotulada com fazenda_id do MT
+      // (ver seed de `estoque` abaixo). É o único dado do projeto capaz de
+      // simular rótulo de fazenda corrompido, e é o que sustenta os dois testes
+      // COMPORTAMENTAIS de isolamento no fim deste arquivo. Não remova sem
+      // remover os testes junto — e não remova os testes: ver o comentário lá.
+      { id: 'insumo-corrompido-mg', nome: 'Cloreto', unidade: 'kg', fazenda_id: 'fazenda-mg' },
     ] as any[],
     estoque: [
       { insumo_id: 'insumo-glifosato-mg', fazenda_id: 'fazenda-mg', quantidade_atual: 300, quantidade_minima_alerta: 20 },
@@ -44,6 +50,10 @@ const { seed, estadoBanco } = vi.hoisted(() => {
       // 0 linhas) — o caminho `if (updErr)` de decrementarEstoque não tinha
       // nenhum teste até o Apolo apontar (Item 3 da rodada de correção).
       { insumo_id: 'insumo-erro-update', fazenda_id: 'fazenda-mg', quantidade_atual: 40, quantidade_minima_alerta: 5, _updateGeraErro: true },
+      // Rótulo CORROMPIDO de propósito: o insumo é da MG, mas a linha de estoque
+      // diz fazenda-mt. Se alguma query perder o filtro de fazenda, este 999
+      // vaza para a resposta da MG — e é isso que M5/M7+M8 vigiam.
+      { insumo_id: 'insumo-corrompido-mg', fazenda_id: 'fazenda-mt', quantidade_atual: 999, quantidade_minima_alerta: 1 },
     ] as any[],
   }
   return { seed, estadoBanco: JSON.parse(JSON.stringify(seed)) }
@@ -273,13 +283,28 @@ describe('consultarEstoque', () => {
   // insumo já vem filtrado por fazenda (linha ~148), o `.in('insumo_id', ids)`
   // sozinho já restringe ao id certo em qualquer cenário de dado plausível — o
   // filtro de fazenda_id em ESTOQUE só importa como defesa contra uma linha de
-  // estoque corrompida (mesmo insumo_id, fazenda_id errado). Testar por dado
-  // exigiria simular corrupção; inspecionar a chamada prova o filtro existe.
+  // estoque corrompida (mesmo insumo_id, fazenda_id errado). O seed
+  // `insumo-corrompido-mg` simula essa corrupção, então dá para testar dos DOIS
+  // jeitos — e os dois são necessários. Ver o comentário do M5, logo abaixo.
   it('a query de ESTOQUE realmente chama .eq(fazenda_id, ...) — não só a de insumos', async () => {
     await consultarEstoque('glifosato', 'fazenda-mt')
 
     const builderEstoque = builderDaChamada('estoque', 0)
     expect(builderEstoque.eq).toHaveBeenCalledWith('fazenda_id', 'fazenda-mt')
+  })
+
+  // ⚠️ NÃO troque este teste pelo espião acima — SOME os dois ou MANTENHA os dois.
+  // O espião prova que `.eq` foi CHAMADO, não que o resultado está isolado. Na
+  // revisão de 19/09 o Apolo instalou o mutante mais plausível que existe (se a
+  // query filtrada volta vazia, repetir SEM o filtro, "para o bot parar de dizer
+  // que não tem estoque") e os 3 espiões passaram VERDES. Só este teste, que olha
+  // a RESPOSTA, pegou. Espião morre em refactor legítimo (`.match({...})` deixa
+  // ele vermelho com o código certo); comportamento não.
+  it('M5: linha de estoque rotulada com a fazenda ERRADA não pode virar resposta da MG', async () => {
+    const resposta = await consultarEstoque('cloreto', 'fazenda-mg')
+
+    expect(resposta).toContain('sem registro de estoque')
+    expect(resposta).not.toContain('999')
   })
 })
 
@@ -346,5 +371,20 @@ describe('decrementarEstoque + formatarSaidas', () => {
 
     const builderUpdate = builderDaChamada('estoque', 1) // 2ª chamada = UPDATE do item
     expect(builderUpdate.eq).toHaveBeenCalledWith('fazenda_id', 'fazenda-mg')
+  })
+
+  // ⚠️ Par comportamental dos dois espiões acima — mesma regra: os dois ou nenhum.
+  // Este vigia as duas pontas de uma vez: o SELECT não pode LER a linha rotulada
+  // com outra fazenda, e o UPDATE não pode GRAVAR nela. Os 999 do seed têm que
+  // continuar 999 no fim, e a resposta não pode inventar saldo.
+  it('M7+M8: decrementar não pode ler nem gravar linha de estoque de outra fazenda', async () => {
+    const okItems = [
+      { ok: true as const, insumo_id: 'insumo-corrompido-mg', nome: 'Cloreto', quantidade: 5, unidade: 'kg', dose_por_ha: null },
+    ]
+    const saidas = await decrementarEstoque(okItems, 'fazenda-mg')
+
+    expect(saidas[0].novaQuantidade).toBeNull()
+    const linha = estadoBanco.estoque.find((e: any) => e.insumo_id === 'insumo-corrompido-mg')
+    expect(linha.quantidade_atual).toBe(999)
   })
 })
