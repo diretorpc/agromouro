@@ -135,12 +135,17 @@ Responda SOMENTE em JSON válido, sem texto extra:
 }
 
 // ─── Consultar estoque de um insumo ──────────────────────────────────────────
-async function consultarEstoque(nomeInsumo: string): Promise<string> {
+// export: exercitado direto por whatsapp.test.ts (isolamento entre fazendas).
+// fazendaId é obrigatório: o cliente supabase daqui usa SERVICE_KEY (bypassa RLS
+// por completo — as policies dependem de auth.uid(), que não existe no backend).
+// Sem este filtro escrito à mão, a consulta do MT devolveria o número do MG.
+export async function consultarEstoque(nomeInsumo: string, fazendaId: string): Promise<string> {
   const nomeSanitizado = nomeInsumo.trim().slice(0, 100)
 
   const { data: insumos } = await supabase
     .from('insumos')
     .select('id, nome, unidade')
+    .eq('fazenda_id', fazendaId)
     .ilike('nome', `%${nomeSanitizado}%`)
     .limit(3)
 
@@ -152,6 +157,7 @@ async function consultarEstoque(nomeInsumo: string): Promise<string> {
   const { data: estoques } = await supabase
     .from('estoque')
     .select('insumo_id, quantidade_atual, quantidade_minima_alerta')
+    .eq('fazenda_id', fazendaId)
     .in('insumo_id', ids)
 
   if (!estoques || estoques.length === 0) {
@@ -166,19 +172,39 @@ async function consultarEstoque(nomeInsumo: string): Promise<string> {
 }
 
 // ─── Buscar talhão por nome/número ───────────────────────────────────────────
-// export: exercitado direto por whatsapp.test.ts (trava de área arrendada).
-export async function buscarTalhao(nomeTalhao: string) {
+// export: exercitado direto por whatsapp.test.ts (trava de área arrendada e
+// isolamento entre fazendas).
+// fazendaId é obrigatório: o cliente supabase daqui usa SERVICE_KEY (bypassa RLS
+// por completo — as policies dependem de auth.uid(), que não existe no backend).
+// Sem .eq('fazenda_id', ...), "talhão 5" da fazenda A podia casar com um talhão
+// de nome idêntico na fazenda B.
+export async function buscarTalhao(nomeTalhao: string, fazendaId: string) {
   const nomeSanitizado = nomeTalhao.trim().slice(0, 100)
 
   const { data } = await supabase
     .from('talhoes')
     .select('id, nome, area_ha')
+    .eq('fazenda_id', fazendaId)
     // Área arrendada é operada pela Usina Uberaba, não pela família — não pode
     // receber operação por NENHUMA porta (WhatsApp, form web, API direta).
     // Sem este filtro, "apliquei glifosato no Gogo" podia casar com um talhão
-    // arrendado de nome parecido (ilike frouxo, sem .order() = ordem indefinida).
+    // arrendado de nome parecido.
     .neq('status', 'arrendado')
     .ilike('nome', `%${nomeSanitizado}%`)
+    // .order('nome') dá DETERMINISMO ao ilike frouxo — medido em produção (18
+    // talhões): "Alvorada I"/"Alvorada II" e "Gogo I"/"Gogo II"/"Gogo III" são
+    // 4 pares que colidem por substring, e sem ordem o Postgres podia devolver
+    // qualquer um dos 3 "Gogo" para a busca "Gogo I" (decrementava a área
+    // errada — erro de até 44% no consumo por hectare, com "✅ Registrado!"
+    // na resposta). "Gogo I" < "Gogo II" < "Gogo III" alfabeticamente resolve
+    // os 4 pares de hoje, mas é SORTE da nomenclatura atual (nome mais curto =
+    // prefixo do mais longo), NÃO fuzzy match de verdade. Se um dia existir
+    // "Gogo 0" e "Gogo I" no mesmo talhão, ou dois talhões com nomes que não
+    // ordenam na ordem que o agricultor quer dizer, isto volta a colidir.
+    // Desambiguação de verdade (perguntar ao agricultor qual talhão) é feature
+    // nova, fora de escopo — muda o fluxo de conversa do WhatsApp e precisa de
+    // spec própria antes de entrar.
+    .order('nome')
     .limit(1)
     .single()
 
@@ -186,6 +212,7 @@ export async function buscarTalhao(nomeTalhao: string) {
 }
 
 // ─── Buscar insumo por nome ──────────────────────────────────────────────────
+// export: exercitado direto por whatsapp.test.ts (isolamento entre fazendas).
 // Decisão MVP: sem auto-criação. Se não achar, retorna null e o chamador avisa
 // o agricultor no WA. Fuzzy match + confirmação ficam para pós-MVP.
 //
@@ -193,13 +220,18 @@ export async function buscarTalhao(nomeTalhao: string) {
 // duplicatas no banco (mesmo nome, IDs diferentes — origem comum: importação
 // repetida de NF-e), o `.limit(1)` puro escolheria um aleatório, podendo
 // pegar um órfão sem estoque e falhar silenciosamente no UPDATE.
-async function buscarInsumo(nome: string) {
+//
+// fazendaId é obrigatório: o cliente supabase daqui usa SERVICE_KEY (bypassa RLS
+// por completo). Sem .eq('fazenda_id', ...), "glifosato" da fazenda A podia casar
+// com o glifosato da fazenda B e gravar movimentação de estoque cruzada.
+export async function buscarInsumo(nome: string, fazendaId: string) {
   const nomeSanitizado = nome.trim().slice(0, 100)
   if (!nomeSanitizado) return null
 
   const { data } = await supabase
     .from('insumos')
     .select('id, nome, unidade, estoque(id)')
+    .eq('fazenda_id', fazendaId)
     .ilike('nome', `%${nomeSanitizado}%`)
     .limit(5)
 
@@ -226,12 +258,21 @@ type InsumoResolvido =
   | { ok: true;  insumo_id: string; nome: string; quantidade: number; unidade: string; dose_por_ha: number | null }
   | { ok: false; nome: string; erro: string }
 
+type SaidaProcessada = {
+  nome: string
+  quantidade: number
+  unidade: string
+  novaQuantidade: number | null   // null = sem linha em estoque OU UPDATE que não gravou nenhuma linha
+  minimo: number | null
+}
+
 async function resolverInsumos(
   insumos: InsumoBruto[],
   talhao: { area_ha: number } | null,
+  fazendaId: string,
 ): Promise<InsumoResolvido[]> {
   return Promise.all(insumos.map(async (item): Promise<InsumoResolvido> => {
-    const insumo = await buscarInsumo(item.nome)
+    const insumo = await buscarInsumo(item.nome, fazendaId)
     if (!insumo) {
       return { ok: false, nome: item.nome, erro: 'insumo não encontrado no banco' }
     }
@@ -265,9 +306,89 @@ async function resolverInsumos(
   }))
 }
 
+// ─── Decrementar estoque após operação com insumos ───────────────────────────
+// export: exercitado direto por whatsapp.test.ts (UPDATE mudo de estoque).
+//
+// 1 SELECT batch pega todos os atuais + mínimos; N UPDATEs em paralelo, cada um
+// filtrado por fazenda_id (última linha de defesa contra insumo_id vazando de
+// outra fazenda — não deveria acontecer após o filtro em buscarInsumo, mas é
+// barato garantir de novo aqui). O Supabase retorna error:null mesmo quando o
+// .eq() não casa NENHUMA linha — por isso o UPDATE usa .select() e conta as
+// linhas retornadas para saber se realmente gravou. Sem essa checagem, a
+// resposta do WhatsApp afirmava um saldo que nunca chegou a ser escrito no banco.
+export async function decrementarEstoque(
+  okItems: Extract<InsumoResolvido, { ok: true }>[],
+  fazendaId: string,
+): Promise<SaidaProcessada[]> {
+  const insumoIds = okItems.map(i => i.insumo_id)
+  const { data: estoqueAtual } = await supabase
+    .from('estoque')
+    .select('insumo_id, quantidade_atual, quantidade_minima_alerta')
+    .eq('fazenda_id', fazendaId)
+    .in('insumo_id', insumoIds)
+
+  const estoqueMap = new Map(
+    (estoqueAtual ?? []).map(e => [
+      e.insumo_id,
+      { atual: Number(e.quantidade_atual ?? 0), minimo: Number(e.quantidade_minima_alerta ?? 0) },
+    ]),
+  )
+
+  return Promise.all(okItems.map(async (item): Promise<SaidaProcessada> => {
+    const linha = estoqueMap.get(item.insumo_id)
+    if (!linha) {
+      console.warn(`[WhatsApp] Sem linha em estoque para ${item.nome} (insumo_id ${item.insumo_id})`)
+      return { nome: item.nome, quantidade: item.quantidade, unidade: item.unidade, novaQuantidade: null, minimo: null }
+    }
+    const nova = linha.atual - item.quantidade
+    const { data: linhasAtualizadas, error: updErr } = await supabase
+      .from('estoque')
+      .update({ quantidade_atual: nova })
+      .eq('insumo_id', item.insumo_id)
+      .eq('fazenda_id', fazendaId)
+      .select('insumo_id')
+    if (updErr) {
+      console.error(`[WhatsApp] Falha ao decrementar estoque de ${item.nome}:`, updErr.message)
+      return { nome: item.nome, quantidade: item.quantidade, unidade: item.unidade, novaQuantidade: null, minimo: linha.minimo }
+    }
+    if (!linhasAtualizadas || linhasAtualizadas.length === 0) {
+      console.error(
+        `[WhatsApp] UPDATE de estoque não casou nenhuma linha — saldo NÃO foi gravado.`,
+        { nome: item.nome, insumo_id: item.insumo_id, fazenda_id: fazendaId },
+      )
+      return { nome: item.nome, quantidade: item.quantidade, unidade: item.unidade, novaQuantidade: null, minimo: linha.minimo }
+    }
+    return { nome: item.nome, quantidade: item.quantidade, unidade: item.unidade, novaQuantidade: nova, minimo: linha.minimo }
+  }))
+}
+
+// ─── Formatar linhas de saída processada para a resposta do WhatsApp ────────
+// export: exercitado direto por whatsapp.test.ts. novaQuantidade: null (sem
+// linha em estoque OU UPDATE que não gravou) nunca pode virar "(estoque: ...)"
+// na mensagem — seria afirmar um saldo que não existe no banco.
+export function formatarSaidas(saidas: SaidaProcessada[]): string {
+  return saidas.map(s => {
+    const restante  = s.novaQuantidade != null ? ` (estoque: ${s.novaQuantidade}${s.unidade})` : ''
+    const abaixoMin = s.novaQuantidade != null && s.minimo != null && s.minimo > 0 && s.novaQuantidade <= s.minimo
+    const aviso     = abaixoMin ? ` ⚠️ abaixo do mín. (${s.minimo}${s.unidade})` : ''
+    return `📦 ${s.nome}: ${s.quantidade}${s.unidade}${restante}${aviso}`
+  }).join('\n')
+}
+
 // ─── Processar mensagem recebida ──────────────────────────────────────────────
 async function processarMensagem(telefone: string, texto: string, fazenda_codigo: string = 'mg', fazenda_id?: string) {
   try {
+    // Sem fazenda_id não há como filtrar buscarTalhao por tenant — o cliente
+    // supabase daqui usa SERVICE_KEY e bypassa RLS por completo. Processar mesmo
+    // assim repetiria o bug desta correção. Na prática isso nunca acontece: a
+    // rota resolve a fazenda antes de chamar processarMensagem e retorna cedo se
+    // não encontrar. O guard existe para falhar alto se essa garantia quebrar.
+    if (!fazenda_id) {
+      console.error('[WhatsApp] processarMensagem chamado sem fazenda_id — mensagem recusada por segurança', { telefone, fazenda_codigo })
+      await enviarMensagem(telefone, `Tive um problema ao processar sua mensagem. Tente novamente em instantes.`, fazenda_codigo)
+      return
+    }
+
     const classificacao = await classificarMensagem(texto)
     const { tipo, dados } = classificacao
     let resposta = ''
@@ -276,11 +397,11 @@ async function processarMensagem(telefone: string, texto: string, fazenda_codigo
       Array.isArray(dados.insumos) ? dados.insumos : []
 
     if (tipo === 'CONSULTA_ESTOQUE' && insumos.length > 0) {
-      const respostas = await Promise.all(insumos.map(i => consultarEstoque(i.nome)))
+      const respostas = await Promise.all(insumos.map(i => consultarEstoque(i.nome, fazenda_id)))
       resposta = respostas.join('\n')
 
     } else if (tipo === 'OPERACAO' || tipo === 'APLICACAO_INSUMO') {
-      const talhao = dados.talhao ? await buscarTalhao(dados.talhao) : null
+      const talhao = dados.talhao ? await buscarTalhao(dados.talhao, fazenda_id) : null
       const dataOp = dados.data || new Date().toISOString().split('T')[0]
 
       // Insert da operação capturando o id gerado
@@ -301,17 +422,10 @@ async function processarMensagem(telefone: string, texto: string, fazenda_codigo
       const operacaoId = operacao.id
 
       // Resolve insumos (busca id no banco, calcula quantidade total)
-      const resolvidos = await resolverInsumos(insumos, talhao)
+      const resolvidos = await resolverInsumos(insumos, talhao, fazenda_id)
       const okItems   = resolvidos.filter((i): i is Extract<InsumoResolvido, { ok: true }>  => i.ok === true)
       const failItems = resolvidos.filter((i): i is Extract<InsumoResolvido, { ok: false }> => i.ok === false)
 
-      type SaidaProcessada = {
-        nome: string
-        quantidade: number
-        unidade: string
-        novaQuantidade: number | null   // null = sem linha em estoque
-        minimo: number | null
-      }
       let saidasProcessadas: SaidaProcessada[] = []
 
       if (okItems.length > 0) {
@@ -348,49 +462,12 @@ async function processarMensagem(telefone: string, texto: string, fazenda_codigo
         }
 
         // Decrementar quantidade_atual em estoque (Passo 6)
-        // 1 SELECT batch pega todos os atuais + mínimos; N UPDATEs em paralelo
-        const insumoIds = okItems.map(i => i.insumo_id)
-        const { data: estoqueAtual } = await supabase
-          .from('estoque')
-          .select('insumo_id, quantidade_atual, quantidade_minima_alerta')
-          .in('insumo_id', insumoIds)
-
-        const estoqueMap = new Map(
-          (estoqueAtual ?? []).map(e => [
-            e.insumo_id,
-            { atual: Number(e.quantidade_atual ?? 0), minimo: Number(e.quantidade_minima_alerta ?? 0) },
-          ]),
-        )
-
-        saidasProcessadas = await Promise.all(okItems.map(async (item): Promise<SaidaProcessada> => {
-          const linha = estoqueMap.get(item.insumo_id)
-          if (!linha) {
-            console.warn(`[WhatsApp] Sem linha em estoque para ${item.nome} (insumo_id ${item.insumo_id})`)
-            return { nome: item.nome, quantidade: item.quantidade, unidade: item.unidade, novaQuantidade: null, minimo: null }
-          }
-          const nova = linha.atual - item.quantidade
-          const estoqueUpdate = supabase
-            .from('estoque')
-            .update({ quantidade_atual: nova })
-            .eq('insumo_id', item.insumo_id)
-          const { error: updErr } = fazenda_id
-            ? await estoqueUpdate.eq('fazenda_id', fazenda_id)
-            : await estoqueUpdate
-          if (updErr) {
-            console.error(`[WhatsApp] Falha ao decrementar estoque de ${item.nome}:`, updErr.message)
-          }
-          return { nome: item.nome, quantidade: item.quantidade, unidade: item.unidade, novaQuantidade: nova, minimo: linha.minimo }
-        }))
+        saidasProcessadas = await decrementarEstoque(okItems, fazenda_id)
       }
 
       // Compor resposta no WhatsApp
       const nomeLocal = talhao ? `Talhão ${talhao.nome} (${talhao.area_ha}ha)` : 'talhão não identificado'
-      const linhasOk = saidasProcessadas.map(s => {
-        const restante  = s.novaQuantidade != null ? ` (estoque: ${s.novaQuantidade}${s.unidade})` : ''
-        const abaixoMin = s.novaQuantidade != null && s.minimo != null && s.minimo > 0 && s.novaQuantidade <= s.minimo
-        const aviso     = abaixoMin ? ` ⚠️ abaixo do mín. (${s.minimo}${s.unidade})` : ''
-        return `📦 ${s.nome}: ${s.quantidade}${s.unidade}${restante}${aviso}`
-      }).join('\n')
+      const linhasOk = formatarSaidas(saidasProcessadas)
       const linhasFail = failItems.map(f => `❌ ${f.nome}: ${f.erro}`).join('\n')
 
       resposta = `✅ Registrado!\n📍 ${nomeLocal}\n🔧 ${dados.operacao_tipo || 'Operação'}\n📅 ${dados.data || 'hoje'}`
@@ -434,45 +511,93 @@ whatsappWebhook.post('/', async (req, res) => {
 
   res.status(200).json({ ok: true })
 
-  const fazenda_codigo = (req.query.fazenda as string) ?? 'mg'
+  // Tudo a partir daqui roda DEPOIS do res.status(200).json() já ter saído —
+  // o handler é async e o Express 4 não captura rejeição de promise de
+  // handler (não existe process.on('unhandledRejection') em api/src). Sem
+  // este try/catch, qualquer throw aqui dentro (inclusive erro de rede no
+  // .single() de fazendas, pré-existente) derruba o PROCESSO INTEIRO, não só
+  // a mensagem. Foi exatamente assim que req.query.fazenda como array
+  // (?fazenda=mg&fazenda=mt, que o `qs` do Express produz de verdade) crashou
+  // o serviço num round anterior desta correção.
+  try {
+    // Fallback 'mg' proposital, NÃO remover às cegas: hoje existem 3 fazendas
+    // (mg, tejuco, mt) e todo o dado de produção está em mg (18 talhões, 56
+    // insumos, 55 linhas de estoque — tejuco e mt vazias). Se a URL do webhook
+    // configurada na Z-API não passar ?fazenda=, qualquer mensagem de qualquer
+    // fazenda cairia sempre em mg, e cairia CERTA por coincidência (é o único
+    // banco com dado) — não daria pra perceber pelo comportamento do bot. Ainda
+    // não sabemos se a URL configurada passa o parâmetro (o .env local não tem
+    // ZAPI_CLIENT_TOKEN para consultar a config em produção). O fallback continua
+    // ligado por segurança (não pode derrubar o bot), mas grita em log toda vez
+    // que precisar adivinhar. Sai assim que o log confirmar que a URL passa
+    // ?fazenda= de verdade.
+    //
+    // req.query.fazenda NÃO é sempre string — Express 4 usa `qs` com extended
+    // por padrão: "fazenda=mg&fazenda=mt" vira ["mg","mt"], "fazenda[]=mg" vira
+    // ["mg"], "fazenda[a]=1" vira {a:"1"}. Só o caso `typeof === 'string'` é
+    // válido; qualquer outra forma cai no fallback em vez de chamar .trim() num
+    // array/objeto.
+    const rawFazenda = req.query.fazenda
+    const fazendaQuery = typeof rawFazenda === 'string' ? rawFazenda.trim() : undefined
+    if (!fazendaQuery) {
+      console.error(
+        `[WhatsApp] assumindo fazenda 'mg' por falta (ou formato inválido) do parâmetro ?fazenda= na URL do webhook`,
+        { telefone: `...${normalizarPhone(phone).slice(-4)}`, valorRecebido: rawFazenda },
+      )
+    }
+    const fazenda_codigo = fazendaQuery || 'mg'
 
-  const { data: fazenda } = await supabase
-    .from('fazendas')
-    .select('id, codigo')
-    .eq('codigo', fazenda_codigo)
-    .single()
+    const { data: fazenda } = await supabase
+      .from('fazendas')
+      .select('id, codigo')
+      .eq('codigo', fazenda_codigo)
+      .single()
 
-  if (!fazenda) {
-    console.warn(`[WA] Fazenda não encontrada: ${fazenda_codigo}`)
-    return
+    if (!fazenda) {
+      // Mensagem NUNCA pode ser engolida em silêncio — é o pior modo de falha
+      // deste projeto, porque o agricultor não tem outro canal. Alcançável de
+      // verdade: o .env.example chegou a documentar um código de fazenda 'sp'
+      // que não existe; se a URL na Z-API tiver ?fazenda=sp, toda mensagem cai
+      // aqui. [WhatsApp] (não [WA]) para casar com o grep usado no resto do
+      // arquivo (9 outros logs) — quem caçar por "[WA]" no Railway não acha isto.
+      console.error(`[WhatsApp] Fazenda não encontrada: ${fazenda_codigo} — avisando o agricultor`)
+      await enviarMensagem(
+        phone,
+        `Não consegui identificar sua fazenda no sistema. Avise o suporte.`,
+        'mg',
+      )
+      return
+    }
+
+    // Prefixo de ativação — calculado antes da proteção anti-loop porque mensagens
+    // do próprio número COM o prefixo são propositais (uso single-tenant), não loop
+    const prefix     = (process.env.WHATSAPP_TRIGGER_PREFIX || '').trim().toLowerCase()
+    const rawMessage = text.message.trim()
+    const hasExplicitTrigger = prefix.length > 0 && rawMessage.toLowerCase().startsWith(prefix)
+
+    // Anti-loop: ignorar mensagens do próprio bot SALVO quando começam com o prefixo
+    // (no setup single-tenant o agricultor manda pra própria conta com "!agro …")
+    const botPhone = normalizarPhone(process.env[`ZAPI_PHONE_${fazenda_codigo.toUpperCase()}`] ?? process.env.ZAPI_PHONE ?? '')
+    if (normalizarPhone(phone) === botPhone && !hasExplicitTrigger) {
+      return
+    }
+
+    const authorizedPhones = getAuthorizedPhones(fazenda_codigo)
+
+    // Whitelist: só números autorizados acionam o bot
+    if (!isAuthorized(phone, authorizedPhones)) return
+
+    // Prefixo obrigatório (quando configurado)
+    if (prefix && !hasExplicitTrigger) return
+
+    // Strip do prefixo antes de passar ao Claude
+    const texto = (prefix ? rawMessage.slice(prefix.length).trim() : rawMessage).slice(0, 1000)
+    if (!texto) return
+
+    processarMensagem(phone, texto, fazenda_codigo, fazenda.id).catch((err) =>
+      console.error('[WhatsApp] Erro inesperado em background:', err instanceof Error ? err.message : err)
+    )
+  } catch (err) {
+    console.error('[WhatsApp] Erro inesperado no handler do webhook:', err instanceof Error ? err.message : err)
   }
-
-  // Prefixo de ativação — calculado antes da proteção anti-loop porque mensagens
-  // do próprio número COM o prefixo são propositais (uso single-tenant), não loop
-  const prefix     = (process.env.WHATSAPP_TRIGGER_PREFIX || '').trim().toLowerCase()
-  const rawMessage = text.message.trim()
-  const hasExplicitTrigger = prefix.length > 0 && rawMessage.toLowerCase().startsWith(prefix)
-
-  // Anti-loop: ignorar mensagens do próprio bot SALVO quando começam com o prefixo
-  // (no setup single-tenant o agricultor manda pra própria conta com "!agro …")
-  const botPhone = normalizarPhone(process.env[`ZAPI_PHONE_${fazenda_codigo.toUpperCase()}`] ?? process.env.ZAPI_PHONE ?? '')
-  if (normalizarPhone(phone) === botPhone && !hasExplicitTrigger) {
-    return
-  }
-
-  const authorizedPhones = getAuthorizedPhones(fazenda_codigo)
-
-  // Whitelist: só números autorizados acionam o bot
-  if (!isAuthorized(phone, authorizedPhones)) return
-
-  // Prefixo obrigatório (quando configurado)
-  if (prefix && !hasExplicitTrigger) return
-
-  // Strip do prefixo antes de passar ao Claude
-  const texto = (prefix ? rawMessage.slice(prefix.length).trim() : rawMessage).slice(0, 1000)
-  if (!texto) return
-
-  processarMensagem(phone, texto, fazenda_codigo, fazenda.id).catch((err) =>
-    console.error('[WhatsApp] Erro inesperado em background:', err instanceof Error ? err.message : err)
-  )
 })

@@ -22,6 +22,117 @@
 
 ---
 
+## 🔧 Isolamento multi-fazenda no WhatsApp — escrito em 24/08/2026 — **PRONTO, aguardando merge**
+
+> **Integrado em 19/09/2026.** O conserto ficou 26 dias parado na branch
+> `fix/whatsapp-isolamento-fazenda` — **11 commits, todos de 24/08** — enquanto o defeito
+> seguia vivo em produção. A integração foi feita **na direção inversa**: branch
+> `merge/whatsapp-isolamento-fazenda` saindo da `main` e trazendo a `fix/` para dentro,
+> porque a `fix/` está checada na checkout principal e duas worktrees não compartilham
+> branch. Consequência a lembrar: o ref `fix/whatsapp-isolamento-fazenda` fica parado onde
+> está e vai **parecer não mergeado**. Confira por CONTEÚDO, nunca pelo identificador —
+> este projeto já se enganou assim antes.
+>
+> Conflito na integração: **um só**, neste arquivo, e nenhum em código. A resolução tomou
+> a versão da `main` inteira e recolou este bloco por cima — os 13 commits de registro do
+> outro lado não foram costurados à mão. Medir: `git diff --stat main...merge/whatsapp-isolamento-fazenda`
+
+**A raiz, que vale para o backend inteiro:** `api/src/services/supabase.ts` autentica com
+`SUPABASE_SERVICE_KEY` → **bypassa RLS por completo**. As policies `*_tenant` da migration
+`supabase/migrations/001_multi_fazenda.sql` dependem de `auth.uid()`, que não existe no
+backend. Logo o RLS **não protege nada do lado da API** — o único isolamento é o
+`.eq('fazenda_id', …)` escrito à mão em cada query. Não presuma proteção do banco aqui.
+
+**O que estava quebrado no `api/src/webhooks/whatsapp.ts`:** `buscarTalhao`,
+`buscarInsumo`, `consultarEstoque` e o SELECT batch do decremento de estoque rodavam sem
+filtro de fazenda.
+
+Havia ainda um defeito **LATENTE — nunca observado**, e a distinção importa. O UPDATE de
+estoque JÁ filtrava por `fazenda_id`, enquanto o SELECT que calcula o novo saldo não. Se o
+SELECT trouxesse linha de outra fazenda, o UPDATE casaria ZERO linhas — e **Supabase não
+retorna erro em UPDATE de zero linhas** —, então o bot responderia um saldo que nunca foi
+gravado. Isso NÃO aconteceu em produção: com 100% do dado em `mg` e a rota sempre
+resolvendo `mg`, o UPDATE sempre casou. Registrado como risco fechado, não como incidente:
+quem ler isto daqui a seis meses não deve calibrar prioridade achando que já mordeu.
+Mesma família do `rls-escrita-silenciosa`.
+
+**Consertado:** os quatro filtros; o UPDATE agora usa `.select()`, conta linhas e grita
+com contexto quando não grava (e a resposta no WhatsApp deixa de afirmar o saldo).
+
+**Deixado de PROPÓSITO:** o `?? 'mg'` em `req.query.fazenda` continua ali. Não sabemos se
+a URL do webhook na Z-API passa `?fazenda=` — remover às cegas emudece o bot. Agora ele
+emite `console.error` toda vez que adivinha. **Próximo passo é OLHAR O LOG DE ERRO DO
+RAILWAY:** se a mensagem "assumindo fazenda 'mg'" aparecer, a URL precisa ser corrigida no
+console da Z-API ANTES de remover o fallback; se não aparecer, a remoção é uma linha.
+
+Para conferir a suíte: `cd api && npm test`
+
+### História congelada — medição do banco em 24/08/2026
+
+Não é número vivo, é o retrato que motivou a prioridade. Para o valor de hoje, conte no banco.
+
+- 3 fazendas: `mg`, `tejuco`, `mt`
+- 100% do dado na `mg`: 18 talhões, 56 insumos, 55 linhas de estoque. Tejuco e MT vazias.
+- Consequência: mensagem que chegasse como `mt`/`tejuco` acharia **sempre** dado da MG —
+  não é colisão ocasional de nome, é 100%, porque não há alternativa no banco.
+
+Isso torna o bug uma **bomba armada**, não um incêndio: enquanto o `?? 'mg'` manda tudo
+para a MG, o cruzamento não aparece. Ele aparece inteiro no dia que a 2ª instância Z-API
+entrar no ar.
+
+Mais três medições da revisão, mesmo dia:
+
+- `operacoes` com `fonte='whatsapp'`: **1 na vida**, em 22/06/2026 ("pulverização talhão
+  lagoa, 1k de cutlass"). Nada depois, de fonte nenhuma. O canal principal do produtor
+  está praticamente parado — vale investigar POR QUÊ antes de investir mais nele.
+- `talhoes` com `status='arrendado'`: **2** — São Domingos (92,3 ha) e Rio Claro (123 ha).
+  A trava do PR #66 protege terra real, não hipótese.
+- **4 colisões reais de nome entre os 18 talhões:** "Gogo I" casa por `ilike` com Gogo II
+  e Gogo III; "Alvorada I" casa com Alvorada II. Sem `.order()`, a escolha era indefinida
+  e a dose `por_ha` saía sobre a área errada (152,76 L em vez de 273,12 L — 44% de erro,
+  com o bot respondendo "✅ Registrado!"). Corrigido nesta branch com `.order('nome')`.
+  ⚠️ Isso dá DETERMINISMO, e acerta os nomes de hoje por sorte da nomenclatura (o nome
+  mais curto ordena primeiro). **Desambiguação de verdade — perguntar ao agricultor qual
+  talhão — continua EM ABERTO** e precisa de spec.
+
+---
+
+## 🔴 ABERTO — vazamento multi-fazenda nas rotas Express — achado em 24/08/2026
+
+**Este está vazando AGORA**, diferente do anterior. Chip criado, fora da branch acima.
+
+`api/src/middleware/auth.ts` (`requireAuth`) valida o JWT e seta `req.user`, mas **nunca
+resolve nem impõe a fazenda ativa**. As rotas então consultam com a service key sem filtro:
+
+- `api/src/routes/alertas.ts` — 38 linhas, ZERO `fazenda_id`. `GET /alertas` devolve
+  alerta de todas as fazendas; `PATCH /alertas/:id/lida` deixa marcar como lido o alerta
+  alheio só sabendo o ID. **Em uso pelo front:** `web/app/(app)/alertas/page.tsx:37,46,53`.
+- `api/src/routes/talhoes.ts` — 2 queries, sem filtro.
+- `api/src/routes/operacoes.ts` — 3 queries, sem filtro; a busca de talhão por id no POST
+  não checa fazenda, então dá para anexar operação a talhão alheio.
+
+Rotas que JÁ acertam e servem de modelo: `contas.ts`, `cartoes.ts`, `controle.ts`,
+`estoque.ts`. Copiar o padrão delas, não inventar outro.
+
+Para relistar os suspeitos: procurar em `api/src/routes` e `api/src/webhooks` os arquivos
+que chamam `.from(` e não mencionam `fazenda_id`.
+
+---
+
+## 📌 `.env.example` mentia sobre as fazendas — corrigido em 24/08/2026
+
+Documentava um bloco `ZAPI_*_SP`. **Não existe fazenda `sp`.** A `tejuco`, que existe, não
+tinha variável nenhuma documentada. O erro é mudo: `getZapiConfig()`
+(`api/src/services/zapi.ts:5`) cai calado nas vars genéricas — as da MG — quando a
+específica falta, então a resposta destinada ao Tejuco sairia pelo **WhatsApp da MG**.
+Corrigido no commit `999aff9`, com comentário no próprio arquivo explicando a armadilha.
+
+⚠️ Falta conferir no Railway se as vars `ZAPI_*_TEJUCO` existem lá. O `.env` local também
+não tem `ZAPI_CLIENT_TOKEN` — foi por isso que não deu para ler a URL do webhook direto da
+Z-API (ela responde `"your client-token is not configured"`).
+
+---
+
 ## ✅ Importar SÓ o boleto de uma nota que já está no sistema — 01/09/2026 — **NO AR** (PR #78)
 
 > Mergeado em 01/09/2026 (`8a9ef94`), 2 rodadas do Apolo. Mexe em `api/` E em
