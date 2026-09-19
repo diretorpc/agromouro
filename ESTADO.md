@@ -76,6 +76,21 @@ tornando o `?fazenda=` da URL e o fallback `'mg'` desnecessários.
 (`whatsapp.ts` ~497, retrocompatibilidade). Se `WHATSAPP_AUTHORIZED_PHONES*` estiver vazio em
 produção, qualquer telefone grava operação.
 
+**E um terceiro, do mesmo dia-D — a trava de nome de insumo não conhece fazenda.**
+`api/src/database/migrations/008_unique_insumo_nome.sql` (27/05) cria
+`CREATE UNIQUE INDEX insumos_nome_lower_unique ON insumos (LOWER(nome))` — **sem
+`fazenda_id`** — e o multi-fazenda (`supabase/migrations/001_multi_fazenda.sql`, 01/06) não
+a refaz. Se valer em produção, cadastrar "Glifosato" no Tejuco quando a MG já tem dá
+`23505 unique_violation`: o onboarding da 2ª fazenda trava no primeiro insumo de nome
+repetido. **Não confirmado na fonte viva** — os 69 insumos estão todos na MG, então a
+ausência de duplicata não prova nem refuta, e o teste que provaria escreve no banco.
+Medir antes de acreditar no repo, colando no SQL Editor do Supabase:
+
+```sql
+SELECT indexname, indexdef FROM pg_indexes
+WHERE tablename IN ('estoque','insumos') ORDER BY tablename, indexname;
+```
+
 ---
 
 ## 🔧 Isolamento multi-fazenda no WhatsApp — escrito em 24/08/2026 — **PRONTO, aguardando merge**
