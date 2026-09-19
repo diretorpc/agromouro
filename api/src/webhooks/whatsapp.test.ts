@@ -54,6 +54,12 @@ const { seed, estadoBanco } = vi.hoisted(() => {
       // diz fazenda-mt. Se alguma query perder o filtro de fazenda, este 999
       // vaza para a resposta da MG — e é isso que M5/M7+M8 vigiam.
       { insumo_id: 'insumo-corrompido-mg', fazenda_id: 'fazenda-mt', quantidade_atual: 999, quantidade_minima_alerta: 1 },
+      // MESMO insumo_id com linha nas DUAS fazendas — catálogo replicado, caso
+      // real. É o único seed que faz o UPDATE de decrementarEstoque REALMENTE
+      // rodar com duas linhas candidatas, e portanto o único que observa a ponta
+      // da ESCRITA por comportamento. Ver o teste no fim do arquivo.
+      { insumo_id: 'insumo-gemeo', fazenda_id: 'fazenda-mg', quantidade_atual: 100, quantidade_minima_alerta: 5 },
+      { insumo_id: 'insumo-gemeo', fazenda_id: 'fazenda-mt', quantidade_atual: 777, quantidade_minima_alerta: 5 },
     ] as any[],
   }
   return { seed, estadoBanco: JSON.parse(JSON.stringify(seed)) }
@@ -298,8 +304,12 @@ describe('consultarEstoque', () => {
   // revisão de 19/09 o Apolo instalou o mutante mais plausível que existe (se a
   // query filtrada volta vazia, repetir SEM o filtro, "para o bot parar de dizer
   // que não tem estoque") e os 3 espiões passaram VERDES. Só este teste, que olha
-  // a RESPOSTA, pegou. Espião morre em refactor legítimo (`.match({...})` deixa
-  // ele vermelho com o código certo); comportamento não.
+  // a RESPOSTA, pegou. Espião morre em refactor legítimo: medido em 19/09,
+  // refatorar o UPDATE para `.match({ insumo_id, fazenda_id })` — API normal do
+  // supabase-js — deixa o espião do UPDATE vermelho com o código CERTO, e M5 e
+  // M7+M8 verdes. (O mock deste arquivo ainda não implementa `.match`; quem fizer
+  // esse refactor soma 1 linha em `tabelaBuilder` antes, senão 5 testes quebram
+  // com TypeError e a comparação não diz nada.)
   it('M5: linha de estoque rotulada com a fazenda ERRADA não pode virar resposta da MG', async () => {
     const resposta = await consultarEstoque('cloreto', 'fazenda-mg')
 
@@ -374,10 +384,19 @@ describe('decrementarEstoque + formatarSaidas', () => {
   })
 
   // ⚠️ Par comportamental dos dois espiões acima — mesma regra: os dois ou nenhum.
-  // Este vigia as duas pontas de uma vez: o SELECT não pode LER a linha rotulada
-  // com outra fazenda, e o UPDATE não pode GRAVAR nela. Os 999 do seed têm que
-  // continuar 999 no fim, e a resposta não pode inventar saldo.
-  it('M7+M8: decrementar não pode ler nem gravar linha de estoque de outra fazenda', async () => {
+  //
+  // Este vigia a ponta da LEITURA: se o SELECT batch vazar a linha rotulada com
+  // outra fazenda, o saldo dela vira resposta. A ponta da ESCRITA NÃO é exercida
+  // aqui — o SELECT filtrado volta vazio, `estoqueMap` fica sem a chave, e a
+  // função retorna em `if (!linha)` ANTES do UPDATE. Os 999 continuam 999 porque
+  // ninguém encostou neles, não porque o filtro protegeu. Quem cobre a escrita é
+  // o espião do UPDATE acima (e o teste `insumo-gemeo` logo abaixo) — por isso
+  // nenhum dos dois pode sair.
+  //
+  // Medido na revisão de 19/09 (mutantes instalados e revertidos): com o UPDATE
+  // perdendo `.eq('fazenda_id')`, este teste fica VERDE. Ele só é o único a matar
+  // o mutante em que o SELECT vaza E o UPDATE usa o fazenda_id da linha lida.
+  it('M7+M8: decrementar não pode LER linha de estoque de outra fazenda', async () => {
     const okItems = [
       { ok: true as const, insumo_id: 'insumo-corrompido-mg', nome: 'Cloreto', quantidade: 5, unidade: 'kg', dose_por_ha: null },
     ]
@@ -386,5 +405,22 @@ describe('decrementarEstoque + formatarSaidas', () => {
     expect(saidas[0].novaQuantidade).toBeNull()
     const linha = estadoBanco.estoque.find((e: any) => e.insumo_id === 'insumo-corrompido-mg')
     expect(linha.quantidade_atual).toBe(999)
+  })
+
+  // A ponta da ESCRITA, por comportamento — o buraco que a revisão de 19/09 achou.
+  // Aqui o UPDATE roda de verdade, com DUAS linhas candidatas para o mesmo
+  // insumo_id. Sem `.eq('fazenda_id')` no UPDATE, o decremento da MG cai na linha
+  // do MT. Medido: com esse mutante instalado, este teste fica VERMELHO
+  // (`expected 90 to be 777`) e os 3 espiões continuam VERDES.
+  it('decrementar a MG não pode encostar na linha do MT com o mesmo insumo_id', async () => {
+    const okItems = [
+      { ok: true as const, insumo_id: 'insumo-gemeo', nome: 'Gêmeo', quantidade: 10, unidade: 'L', dose_por_ha: null },
+    ]
+    const saidas = await decrementarEstoque(okItems, 'fazenda-mg')
+
+    expect(saidas[0].novaQuantidade).toBe(90)
+    const linhas = estadoBanco.estoque.filter((e: any) => e.insumo_id === 'insumo-gemeo')
+    expect(linhas.find((e: any) => e.fazenda_id === 'fazenda-mg').quantidade_atual).toBe(90)
+    expect(linhas.find((e: any) => e.fazenda_id === 'fazenda-mt').quantidade_atual).toBe(777)
   })
 })
