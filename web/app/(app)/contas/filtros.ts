@@ -40,14 +40,22 @@ export function contaBateTipo(c: ContaAPI, filtroTipo: FiltroTipo): boolean {
   return c.nota_fiscal_id !== null
 }
 
-// "Todas" esconde dispensada sempre, e paga com mais de 30 dias (pedido de
-// 10/08/2026): a aba deixa de ser um histórico infinito e vira "o que ainda
-// pede atenção ou foi resolvido recentemente". Quem quiser o histórico
-// completo de pagamento usa a aba "Pagas" — essa continua sem limite de data.
-export function contaBateFiltro(c: ContaAPI, filtro: FiltroStatus, hoje: string): boolean {
+// "Todas" esconde dispensada sempre. A paga depende do filtro de mês:
+//  - "Todos os meses": só aparece se foi paga há até 30 dias (pedido de
+//    10/08/2026) — sem mês, a aba seria um histórico infinito; assim vira "o
+//    que ainda pede atenção ou foi resolvido recentemente".
+//  - Um mês escolhido: aparece sempre (quem decide se é do mês é
+//    `contaBateMes`). O corte de 30 dias conta a partir de HOJE, então num mês
+//    passado ele esvaziava a lista com o tempo: em 15/10/2026 setembro tinha
+//    25 pagas e "Todas" mostrava 12 — e em novembro mostraria 0. O mês já
+//    limita o tamanho da lista; o corte ali só escondia pagamento.
+// `filtroMes` é obrigatório de propósito: opcional, quem esquecesse de passar
+// voltaria calado ao defeito.
+// Quem quiser o histórico completo de pagamento usa a aba "Pagas".
+export function contaBateFiltro(c: ContaAPI, filtro: FiltroStatus, hoje: string, filtroMes: string): boolean {
   if (filtro === 'todas') {
     if (c.status === 'dispensada') return false
-    if (c.status === 'paga')       return diasEntre(c.data_pagamento ?? hoje, hoje) <= 30
+    if (c.status === 'paga')       return filtroMes !== 'todos' || diasEntre(c.data_pagamento ?? hoje, hoje) <= 30
     return true
   }
   if (filtro === 'sem-vencimento') return !ENCERRADAS.has(c.status) && !c.vencimento
@@ -131,7 +139,7 @@ export type EntradaSemVencimento = 'nenhuma' | 'sempre' | 'pelo-pagamento' | 'am
 export function comoEntraContaSemVencimento(filtro: FiltroStatus): EntradaSemVencimento {
   if (filtro === 'atrasada') return 'nenhuma'  // exige `!!c.vencimento`
   if (filtro === 'paga')     return 'pelo-pagamento'
-  if (filtro === 'todas')    return 'ambos'    // não encerrada + paga recente
+  if (filtro === 'todas')    return 'ambos'    // não encerrada + paga (recente em "Todos os meses")
   return 'sempre'
 }
 

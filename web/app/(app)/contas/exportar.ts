@@ -124,7 +124,11 @@ export function avisosDoArquivo(ctx: AvisosContexto): string[] {
   // conta em aberto isso era detalhe; agora que ele é só pagamento, é dinheiro
   // que saiu e sumiu.
 
-  // 1. A aba "Todas" esconde conta paga há mais de 30 dias (`contaBateFiltro`).
+  // 1. A aba "Todas" esconde conta paga há mais de 30 dias (`contaBateFiltro`)
+  //    — SÓ em "Todos os meses". Com um mês escolhido ela não esconde paga
+  //    nenhuma (15/10/2026), e a contagem abaixo dá zero sozinha porque passa
+  //    `filtroMes` para a mesma função da tela. A paga do mês que venceu em
+  //    outro mês continua coberta pelo aviso 2 ("mês errado").
   //    COM NÚMERO, e só quando existe: a tarja nasceria em toda abertura da
   //    tela (o filtro começa em 'todas'), e aviso permanente treina quem lê a
   //    ignorar o âmbar — regra escrita no cabeçalho desta função e violada na
@@ -134,14 +138,16 @@ export function avisosDoArquivo(ctx: AvisosContexto): string[] {
     // troca de aba, não acha os N que leu, e vai procurar dinheiro sumido.
     // Por isso passa pelo `contaBateTipo` (a tela também filtra por tipo) e
     // pelo `!valor_estimado` (essa não entraria no arquivo de todo jeito) — e
-    // por isso NÃO passa pelo filtro de mês, com a instrução mandando
-    // "Todos os meses" junto: pagamento escondido pela aba E pelo mês ao mesmo
-    // tempo cairia no vão entre este aviso e o de baixo.
+    // por isso NÃO passa por `contaBateMes`, com a instrução mandando
+    // "Todos os meses" junto. Já `filtroMes` vai para `contaBateFiltro`, porque
+    // é ele que decide se a aba corta: com um mês escolhido ela não corta, a
+    // contagem dá zero, e o pagamento do mês que venceu em outro mês fica com
+    // o aviso 2 — ali, a chamada com `filtroMes` é o que impede o vão.
     const escondidas = contasCarregadas.filter(c =>
       c.status === 'paga'
       && !c.valor_estimado
       && contaBateTipo(c, filtroTipo)
-      && !contaBateFiltro(c, 'todas', hoje),
+      && !contaBateFiltro(c, 'todas', hoje, filtroMes),
     ).length
     if (escondidas > 0) {
       avisos.push(
@@ -196,7 +202,7 @@ export function avisosDoArquivo(ctx: AvisosContexto): string[] {
       && !c.valor_estimado
       && !!c.data_pagamento
       && contaBateTipo(c, filtroTipo)
-      && contaBateFiltro(c, filtroStatus, hoje)
+      && contaBateFiltro(c, filtroStatus, hoje, filtroMes)
       && contaBateMes(c, filtroMes, hoje) !== (c.data_pagamento.slice(0, 7) === filtroMes),
     ).length
     if (desalinhados > 0) {

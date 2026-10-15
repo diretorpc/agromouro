@@ -154,6 +154,14 @@ describe('avisosDoArquivo', () => {
     expect(saida.some(a => a.includes('Use a aba "Pagas" com "Todos os meses"'))).toBe(true)
   })
 
+  // 15/10/2026: com um mês escolhido a aba "Todas" deixou de cortar paga
+  // antiga. Anunciar "escondido pela aba" ali mandaria o dono procurar um
+  // pagamento que a tela está mostrando.
+  it('não avisa dos 30 dias em "Todas" com um mês escolhido', () => {
+    const antiga = conta({ vencimento: '2026-05-01', data_pagamento: '2026-05-01' })
+    expect(avisos([antiga], { filtroStatus: 'todas', filtroMes: '2026-05' }).some(a => a.includes('30 dias'))).toBe(false)
+  })
+
   it('não avisa dos 30 dias na aba "Pagas", que não tem limite de data', () => {
     const antiga = conta({ data_pagamento: '2026-05-01' })
     expect(avisos([antiga], { filtroStatus: 'paga' }).some(a => a.includes('30 dias'))).toBe(false)
@@ -165,6 +173,16 @@ describe('avisosDoArquivo', () => {
   // linha de outro mês dentro. Achado 1 da 3ª rodada do Apolo.
   // Venceu 28/07, foi paga 05/08: NÃO entra no recorte de agosto, embora o
   // dinheiro tenha saído em agosto. É o furo que o aviso denuncia.
+  // Achado do Apolo, 15/10/2026: com um mês escolhido o aviso 1 (30 dias) dá
+  // zero, e este passa a ser a ÚNICA defesa do pagamento antigo que venceu em
+  // outro mês. O HOJE padrão do arquivo deixa todo pagamento recente e não
+  // enxerga isso — por isso o hoje distante aqui.
+  it('com mês escolhido, avisa o pagamento antigo que venceu em outro mês', () => {
+    const desalinhada = conta({ vencimento: '2026-07-20', data_pagamento: '2026-08-05' })
+    const saida = avisos([desalinhada], { filtroStatus: 'todas', filtroMes: '2026-08', hoje: '2026-10-15' })
+    expect(saida.some(a => a.includes('1 pagamento deste recorte está no mês errado'))).toBe(true)
+  })
+
   it('avisa o pagamento que o filtro de mês deixou no mês errado', () => {
     const desalinhada = conta({ vencimento: '2026-07-28', data_pagamento: '2026-08-05' })
     const saida = avisos([desalinhada], { filtroMes: '2026-08' })

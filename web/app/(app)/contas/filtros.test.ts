@@ -54,7 +54,7 @@ const SONDAS: Record<string, ContaAPI> = {
 /** O que sobra na tela para um dado filtro de status + o mês de agosto. */
 function passam(filtro: FiltroStatus): ContaAPI[] {
   return Object.values(SONDAS).filter(
-    c => contaBateFiltro(c, filtro, HOJE) && contaBateMes(c, MES, HOJE),
+    c => contaBateFiltro(c, filtro, HOJE, MES) && contaBateMes(c, MES, HOJE),
   )
 }
 
@@ -69,33 +69,53 @@ describe('contaBateTipo', () => {
 })
 
 describe('contaBateFiltro', () => {
-  it('"todas" esconde dispensada e paga com mais de 30 dias', () => {
-    expect(contaBateFiltro(SONDAS.dispensadaDoMes, 'todas', HOJE)).toBe(false)
-    expect(contaBateFiltro(SONDAS.pagaAntiga, 'todas', HOJE)).toBe(false)
-    expect(contaBateFiltro(SONDAS.pagaDoMes, 'todas', HOJE)).toBe(true)
-    expect(contaBateFiltro(SONDAS.abertaVencidaNoMes, 'todas', HOJE)).toBe(true)
+  it('"todas" em "Todos os meses" esconde dispensada e paga com mais de 30 dias', () => {
+    expect(contaBateFiltro(SONDAS.dispensadaDoMes, 'todas', HOJE, 'todos')).toBe(false)
+    expect(contaBateFiltro(SONDAS.pagaAntiga, 'todas', HOJE, 'todos')).toBe(false)
+    expect(contaBateFiltro(SONDAS.pagaDoMes, 'todas', HOJE, 'todos')).toBe(true)
+    expect(contaBateFiltro(SONDAS.abertaVencidaNoMes, 'todas', HOJE, 'todos')).toBe(true)
   })
 
-  // A planilha escreve esta regra por extenso dentro do arquivo ("exceto
-  // dispensadas e pagas há mais de 30 dias"), então ela virou promessa a
-  // terceiros. Sem sonda na borda, trocar 30 por 60 passava batido.
+  // O aviso da exportação anuncia esta regra por extenso ("pagamentos com mais
+  // de 30 dias estão escondidos pela aba Todas"), então ela é promessa ao
+  // dono. Sem sonda na borda, trocar 30 por 60 passava batido.
   it('a janela de "Todas" corta exatamente em 30 dias', () => {
     const noLimite  = conta({ status: 'paga', vencimento: '2026-08-01', data_pagamento: '2026-08-01' })
     const umDiaAlem = conta({ status: 'paga', vencimento: '2026-07-31', data_pagamento: '2026-07-31' })
-    expect(contaBateFiltro(noLimite, 'todas', HOJE)).toBe(true)
-    expect(contaBateFiltro(umDiaAlem, 'todas', HOJE)).toBe(false)
+    expect(contaBateFiltro(noLimite, 'todas', HOJE, 'todos')).toBe(true)
+    expect(contaBateFiltro(umDiaAlem, 'todas', HOJE, 'todos')).toBe(false)
+  })
+
+  // 15/10/2026: com "setembro" escolhido, "Todas" mostrava 12 e "Pagas" 25 —
+  // o corte de 30 dias conta a partir de HOJE e ia esvaziando o mês passado.
+  // Com um mês escolhido, "Todas" não corta paga nenhuma.
+  it('"todas" com um mês escolhido mostra a paga do mês, por mais antiga que seja', () => {
+    expect(contaBateFiltro(SONDAS.pagaAntiga, 'todas', HOJE, '2026-04')).toBe(true)
+    expect(contaBateMes(SONDAS.pagaAntiga, '2026-04', HOJE)).toBe(true)
+    // ...mas dispensada continua fora em qualquer mês
+    expect(contaBateFiltro(SONDAS.dispensadaDoMes, 'todas', HOJE, MES)).toBe(false)
+  })
+
+  it('"todas" nunca mostra menos contas pagas que "Pagas" no mesmo mês', () => {
+    const meses = ['2026-03', '2026-04', '2026-07', '2026-08', '2026-09']
+    for (const mes of meses) {
+      const pagasEm = (f: FiltroStatus) => Object.values(SONDAS)
+        .filter(c => c.status === 'paga' && contaBateFiltro(c, f, HOJE, mes) && contaBateMes(c, mes, HOJE))
+        .length
+      expect(pagasEm('todas'), mes).toBe(pagasEm('paga'))
+    }
   })
 
   it('"atrasada" exige vencimento no passado e conta não encerrada', () => {
-    expect(contaBateFiltro(SONDAS.atrasadaDeMarco, 'atrasada', HOJE)).toBe(true)
-    expect(contaBateFiltro(SONDAS.semVencimento, 'atrasada', HOJE)).toBe(false)
-    expect(contaBateFiltro(SONDAS.abertaAVencerNoMes, 'atrasada', HOJE)).toBe(false)
-    expect(contaBateFiltro(SONDAS.pagaAntiga, 'atrasada', HOJE)).toBe(false)
+    expect(contaBateFiltro(SONDAS.atrasadaDeMarco, 'atrasada', HOJE, 'todos')).toBe(true)
+    expect(contaBateFiltro(SONDAS.semVencimento, 'atrasada', HOJE, 'todos')).toBe(false)
+    expect(contaBateFiltro(SONDAS.abertaAVencerNoMes, 'atrasada', HOJE, 'todos')).toBe(false)
+    expect(contaBateFiltro(SONDAS.pagaAntiga, 'atrasada', HOJE, 'todos')).toBe(false)
   })
 
   it('"sem-vencimento" só pega conta não encerrada e sem data', () => {
-    expect(contaBateFiltro(SONDAS.semVencimento, 'sem-vencimento', HOJE)).toBe(true)
-    expect(contaBateFiltro(SONDAS.pagaSemVencMarco, 'sem-vencimento', HOJE)).toBe(false)
+    expect(contaBateFiltro(SONDAS.semVencimento, 'sem-vencimento', HOJE, 'todos')).toBe(true)
+    expect(contaBateFiltro(SONDAS.pagaSemVencMarco, 'sem-vencimento', HOJE, 'todos')).toBe(false)
   })
 })
 
@@ -162,7 +182,7 @@ describe('contaBateMes', () => {
   // aparecer em todo mês, discordando do filtro "Atrasadas", que mantém `< 0`.
   it('conta que vence HOJE não pega a carona das atrasadas', () => {
     expect(contaBateMes(SONDAS.abertaAVencerNoMes, '2026-09', HOJE)).toBe(false)
-    expect(contaBateFiltro(SONDAS.abertaAVencerNoMes, 'atrasada', HOJE)).toBe(false)
+    expect(contaBateFiltro(SONDAS.abertaAVencerNoMes, 'atrasada', HOJE, 'todos')).toBe(false)
   })
 
   // ACHADO 1 da rodada 2 do Apolo. Sem isto, o boleto sem vencimento pago em
@@ -208,8 +228,7 @@ describe('propriedades do recorte batem com o filtro real', () => {
     const jeitos = new Set(
       Object.values(SONDAS)
         .filter(c => !c.vencimento)
-        .filter(c => contaBateFiltro(c, filtro, HOJE))
-        .filter(c => meses.some(m => contaBateMes(c, m, HOJE)))
+        .filter(c => meses.some(m => contaBateFiltro(c, filtro, HOJE, m) && contaBateMes(c, m, HOJE)))
         .map(c => (mesDaConta(c) === null ? 'sempre' : 'pelo-pagamento')),
     )
     const real =
@@ -230,7 +249,7 @@ describe('propriedades do recorte batem com o filtro real', () => {
   // o filtro com dois meses diferentes e comparando os conjuntos.
   it.each(TODOS)('filtroDeMesSeAplica("%s") diz a verdade', filtro => {
     const ids = (mes: string) => Object.values(SONDAS)
-      .filter(c => contaBateFiltro(c, filtro, HOJE) && contaBateMes(c, mes, HOJE))
+      .filter(c => contaBateFiltro(c, filtro, HOJE, mes) && contaBateMes(c, mes, HOJE))
       .map(c => c.descricao + c.vencimento + c.data_pagamento)
       .sort()
       .join('|')

@@ -267,7 +267,7 @@ export default function ContasPage() {
   ).sort((a, b) => a.localeCompare(b, 'pt-BR')), [contas])
 
   const contasFiltradas = contas
-    .filter(c => contaBateTipo(c, filtroTipo) && contaBateFiltro(c, filtro, hoje) && contaBateMes(c, filtroMes, hoje))
+    .filter(c => contaBateTipo(c, filtroTipo) && contaBateFiltro(c, filtro, hoje, filtroMes) && contaBateMes(c, filtroMes, hoje))
     // Conta sem data sobe para o topo: é a única que exige ação do Matheus
     // para o sistema voltar a funcionar sozinho. Enterrada no meio da lista,
     // ela some — e é justamente a que o sistema não consegue vigiar.
@@ -734,7 +734,7 @@ export default function ContasPage() {
             </div>
             <div className="flex flex-wrap gap-2">
               {FILTROS.map(o => {
-                const n = contas.filter(c => contaBateTipo(c, filtroTipo) && contaBateFiltro(c, o.value, hoje) && contaBateMes(c, filtroMes, hoje)).length
+                const n = contas.filter(c => contaBateTipo(c, filtroTipo) && contaBateFiltro(c, o.value, hoje, filtroMes) && contaBateMes(c, filtroMes, hoje)).length
                 return (
                   <Button
                     key={o.value}
